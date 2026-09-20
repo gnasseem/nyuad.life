@@ -27,6 +27,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.File
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 
@@ -34,9 +35,9 @@ private const val Dimension = 512
 private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
 
 fun main(args: Array<String>) = runBlocking {
-    val key = System.getenv("VOYAGE_API_KEY").orEmpty()
+    val key = System.getenv("VOYAGE_API_KEY").orEmpty().ifBlank { savedVoyageKey() }
     if (key.isBlank()) {
-        System.err.println("Set VOYAGE_API_KEY before running the indexer.")
+        System.err.println("Set VOYAGE_API_KEY (or save the key in the app's Keys screen) before running the indexer.")
         exitProcess(1)
     }
 
@@ -68,7 +69,7 @@ fun main(args: Array<String>) = runBlocking {
     }
 
     Files.createDirectories(resourceDir)
-    Files.writeString(chunkFile, json.encodeToString(chunks))
+    Files.write(chunkFile, json.encodeToString(chunks).toByteArray(Charsets.UTF_8))
     writeVectors(vectorFile, vectors)
     val comments = posts.sumOf { it.comments.size }
     Files.writeString(
@@ -153,3 +154,10 @@ private fun projectRoot(): Path {
 }
 
 private fun snippet(body: String): String = body.replace('\n', ' ').trim().take(500)
+
+/** The key the app saved from its Keys screen, so the indexer can run after the user typed it there. */
+private fun savedVoyageKey(): String {
+    val file = File(System.getProperty("user.home"), ".ror-answers/keys.properties")
+    if (!file.exists()) return ""
+    return java.util.Properties().apply { file.inputStream().use(::load) }.getProperty("voyage_key").orEmpty()
+}
