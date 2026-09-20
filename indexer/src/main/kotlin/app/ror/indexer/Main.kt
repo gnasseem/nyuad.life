@@ -18,7 +18,13 @@ import java.nio.file.Path
 import kotlin.io.path.fileSize
 import kotlin.math.sqrt
 import kotlin.system.exitProcess
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -60,11 +66,20 @@ fun main(args: Array<String>) = runBlocking {
     val chunks = Chunker.chunk(posts)
     println("Read ${posts.size} posts and created ${chunks.size} chunks.")
 
-    val vectors = mutableListOf<FloatArray>()
-    HttpClient(OkHttp).use { client ->
-        chunks.chunked(64).forEach { batch ->
-            vectors += embed(client, key, batch.map { it.text })
-            println("Embedded ${vectors.size}/${chunks.size} chunks.")
+    // Six batches in flight at once; Voyage's rate limit is far above this.
+    val gate = Semaphore(6)
+    val done = AtomicInteger(0)
+    val vectors = HttpClient(OkHttp).use { client ->
+        coroutineScope {
+            chunks.chunked(64).map { batch ->
+                async {
+                    gate.withPermit {
+                        val result = embed(client, key, batch.map { it.text })
+                        println("Embedded ${done.addAndGet(batch.size)}/${chunks.size} chunks.")
+                        result
+                    }
+                }
+            }.awaitAll().flatten()
         }
     }
 
