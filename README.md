@@ -9,7 +9,7 @@ Everything is TypeScript, in one repository:
 | Piece | Where | What it is |
 | --- | --- | --- |
 | Backend API | `api/`, `lib/` | Vercel serverless functions. Holds the Gemini key and the archive. |
-| Web app | `web/` | Vite + React app for students. Installs to the phone home screen like a native app. |
+| Web app | `web/` | Vite + React website for students; works on phones and laptops. |
 | Scraper | `scripts/scrape.ts` | Pulls posts and comments out of the Facebook group with your own login (runs on your laptop). |
 | Indexer | `scripts/index.ts`, `.github/workflows/index.yml` | Embeds posts with Gemini, locally or automatically in GitHub Actions. |
 
@@ -88,12 +88,6 @@ npm run check                   # typecheck + tests + production build
 ```
 
 Without a Gemini key the API still serves browsing and keyword search; asking needs the key.
-
-## 5. Install it as an app
-
-On a phone, open the site and choose "Add to Home Screen" (Safari share menu on iOS, browser menu on Android). It
-opens full-screen with its own icon, and the app shell keeps working on flaky wifi. Desktop Chrome and Edge offer
-"Install" in the address bar.
 
 ## How answers are produced
 
