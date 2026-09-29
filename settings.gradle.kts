@@ -34,8 +34,6 @@ plugins {
 
 include(":shared")
 include(":desktopApp")
-include(":indexer")
-include(":server")
 
 if (
     System.getenv("ANDROID_HOME") != null ||

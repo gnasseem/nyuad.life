@@ -9,7 +9,7 @@ fun main() = application {
     Window(
         onCloseRequest = ::exitApplication,
         title = "ROR Answers",
-        state = rememberWindowState(width = 900.dp, height = 720.dp),
+        state = rememberWindowState(width = 1120.dp, height = 780.dp),
     ) {
         App()
     }

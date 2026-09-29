@@ -49,7 +49,7 @@ kotlin {
             implementation(libs.compose.foundation)
             implementation(libs.compose.material3)
             implementation(libs.compose.ui)
-            implementation(libs.compose.components.resources)
+            implementation("org.jetbrains.compose.ui:ui-backhandler:${libs.versions.compose.multiplatform.get()}")
             implementation(libs.compose.uiToolingPreview)
 
             implementation(libs.kotlinx.coroutines.core)
@@ -62,8 +62,4 @@ kotlin {
             implementation(kotlin("test"))
         }
     }
-}
-
-compose.resources {
-    packageOfResClass = "app.ror.generated.resources"
 }

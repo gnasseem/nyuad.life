@@ -9,13 +9,14 @@
   },
   "scripts": {
     "dev": "tsx scripts/dev-server.ts",
-    "build": "vite build",
+    "build": "tsx scripts/ensure-index.ts && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "test": "vitest run",
     "index": "tsx scripts/index.ts",
     "scrape": "tsx scripts/scrape.ts",
-    "check": "npm run typecheck && npm run test && npm run build"
+    "check": "npm run typecheck && npm run test && npm run build",
+    "ensure-index": "tsx scripts/ensure-index.ts"
   },
   "dependencies": {
     "react": "^19.2.0",

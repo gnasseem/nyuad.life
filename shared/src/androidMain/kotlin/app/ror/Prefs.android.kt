@@ -2,9 +2,9 @@ package app.ror
 
 import android.content.Context
 
-actual object KeyStore {
+actual object Prefs {
     private fun preferences() = (AppContext.android as? Context)
-        ?.getSharedPreferences("ror_answers_keys", Context.MODE_PRIVATE)
+        ?.getSharedPreferences("ror_answers_settings", Context.MODE_PRIVATE)
 
     actual fun get(name: String): String? = preferences()?.getString(name, null)
 
@@ -14,6 +14,6 @@ actual object KeyStore {
     }
 }
 
-fun KeyStore.init(context: Context) {
+fun Prefs.init(context: Context) {
     AppContext.android = context.applicationContext
 }

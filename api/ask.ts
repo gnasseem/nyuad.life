@@ -4,7 +4,7 @@ import { ask, validateAsk } from '../lib/rag.ts';
 import { loadArchive } from '../lib/store.ts';
 import type { AskRequest } from '../lib/types.ts';
 
-export const config = { maxDuration: 90 };
+export const config = { maxDuration: 60 };
 
 export default route(['POST'], async (req, res) => {
   requireAccess(req);

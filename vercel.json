@@ -5,18 +5,27 @@
   "framework": null,
   "functions": {
     "api/**/*.ts": {
-      "includeFiles": "data/index/**",
-      "maxDuration": 90,
+      "includeFiles": "data/**",
+      "excludeFiles": "{data/index/cache-*,data/scrape-state.json,data/*.tmp}",
+      "maxDuration": 60,
       "memory": 1024
     }
   },
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
   ],
   "headers": [
     {
       "source": "/api/(.*)",
-      "headers": [{ "key": "cache-control", "value": "no-store" }]
+      "headers": [
+        {
+          "key": "cache-control",
+          "value": "no-store"
+        }
+      ]
     }
   ]
 }

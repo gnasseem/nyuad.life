@@ -4,9 +4,9 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Properties
 
-actual object KeyStore {
+actual object Prefs {
     private val directory: Path = Path.of(System.getProperty("user.home"), ".ror-answers")
-    private val file: Path = directory.resolve("keys.properties")
+    private val file: Path = directory.resolve("settings.properties")
 
     actual fun get(name: String): String? = synchronized(this) {
         if (!Files.exists(file)) return@synchronized null
