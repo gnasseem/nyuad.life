@@ -97,7 +97,7 @@ function storyFromNode(node: Record<string, unknown>): StoryRecord | null {
     idFromStoryId(str(node.id)) ||
     idFromUrl(str(deepFirst(node, (key, value) => (key === 'wwwURL' || key === 'url' || key === 'permalink_url') && typeof value === 'string' && value.includes('/posts/'))));
   if (!postId) return null;
-  const url = str(deepFirst(node, (key, value) => (key === 'wwwURL' || key === 'permalink_url' || key === 'url') && typeof value === 'string' && /facebook\.com\/.*\/(posts|permalink)/.test(value)));
+  const url = str(deepFirst(node, (key, value) => (key === 'wwwURL' || key === 'permalink_url' || key === 'url') && typeof value === 'string' && /\/(posts|permalink)\/\d+/.test(value)));
   const message = deepFirst(node, (key, value, parentKey) => key === 'text' && typeof value === 'string' && (parentKey === 'message' || parentKey === 'message_preview' || parentKey === 'title'));
   const actors = deepFirst(node, (key, value) => key === 'actors' && Array.isArray(value)) as Array<Record<string, unknown>> | undefined;
   const author = str(actors?.[0]?.name) || str(deepFirst(node, (key, value, parentKey) => key === 'name' && typeof value === 'string' && (parentKey === 'author' || parentKey === 'owning_profile')));
@@ -242,6 +242,95 @@ function walk(root: unknown, visit: (node: unknown) => void, depth = 0): void {
     if (SKIP_KEYS.has(key)) continue;
     walk(value, visit, depth + 1);
   }
+}
+
+/** Like `walk`, but tells the visitor the key each value sits under and the key of the object that holds it. */
+function walkKeyed(root: unknown, visit: (value: unknown, key: string, parentKey: string) => void, key = '', parentKey = '', depth = 0): void {
+  if (depth > 60 || root === null || typeof root !== 'object') return;
+  if (Array.isArray(root)) {
+    for (const item of root) walkKeyed(item, visit, key, parentKey, depth + 1);
+    return;
+  }
+  for (const [childKey, value] of Object.entries(root as Record<string, unknown>)) {
+    if (SKIP_KEYS.has(childKey)) continue;
+    visit(value, childKey, key);
+    walkKeyed(value, visit, childKey, key, depth + 1);
+  }
+}
+
+/* ---------- GraphQL pagination helpers (used by scripts/scrape.ts to page through the feed itself) ---------- */
+
+export interface PageInfo {
+  endCursor: string;
+  hasNextPage: boolean;
+}
+
+/**
+ * The `page_info` (cursor for the next page) of a feed connection such as `group_feed`. When a response holds several
+ * connections (comments have page_info too) the one whose parent key mentions "feed" wins.
+ */
+export function extractFeedPageInfo(root: unknown): PageInfo | null {
+  let best: PageInfo | null = null;
+  let bestScore = -1;
+  walkKeyed(root, (value, key, parentKey) => {
+    if (key !== 'page_info' || !isRecord(value) || typeof value.has_next_page !== 'boolean') return;
+    const score = /feed/i.test(parentKey) ? 2 : /stories|posts/i.test(parentKey) ? 1 : 0;
+    if (score > bestScore) {
+      bestScore = score;
+      best = { endCursor: typeof value.end_cursor === 'string' ? value.end_cursor : '', hasNextPage: value.has_next_page };
+    }
+  });
+  return best;
+}
+
+export interface GraphqlRequest {
+  friendlyName: string;
+  docId: string;
+  variables: Record<string, unknown>;
+}
+
+/** Parses the x-www-form-urlencoded body Facebook's client posts to /api/graphql/. */
+export function parseGraphqlForm(postData: string | null | undefined): GraphqlRequest | null {
+  if (!postData) return null;
+  const fields = new URLSearchParams(postData);
+  const raw = fields.get('variables');
+  if (!raw) return null;
+  try {
+    const variables = JSON.parse(raw) as unknown;
+    if (!isRecord(variables)) return null;
+    return { friendlyName: fields.get('fb_api_req_friendly_name') ?? '', docId: fields.get('doc_id') ?? '', variables };
+  } catch {
+    return null;
+  }
+}
+
+/** The same form body with different `variables`; every other field (session tokens, doc_id, …) is kept as it was. */
+export function withGraphqlVariables(postData: string, variables: Record<string, unknown>): string {
+  const fields = new URLSearchParams(postData);
+  fields.set('variables', JSON.stringify(variables));
+  return fields.toString();
+}
+
+/** True for the request Facebook's client sends to load more group posts: the one worth replaying with new cursors. */
+export function isFeedPaginationRequest(request: GraphqlRequest): boolean {
+  const variables = request.variables;
+  if (!('cursor' in variables)) return false;
+  if (/feed/i.test(request.friendlyName) && /pagination/i.test(request.friendlyName)) return true;
+  return 'sortingSetting' in variables || 'feedType' in variables || variables.feedLocation === 'GROUP';
+}
+
+/** Error messages Facebook reports inside an otherwise successful GraphQL response (rate limits, expired sessions…). */
+export function graphqlErrors(docs: unknown[]): string[] {
+  const out: string[] = [];
+  for (const doc of docs) {
+    if (!isRecord(doc) || !Array.isArray(doc.errors)) continue;
+    for (const error of doc.errors) {
+      if (!isRecord(error)) continue;
+      const code = typeof error.code === 'number' ? ` (code ${error.code})` : '';
+      out.push(`${str(error.summary) || str(error.description) || str(error.message) || 'unknown error'}${code}`);
+    }
+  }
+  return out;
 }
 
 /** Breadth-first search for the first (shallowest) value whose key/value/parentKey satisfy the predicate. */

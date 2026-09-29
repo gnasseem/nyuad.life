@@ -30,6 +30,15 @@ describe('mergePosts', () => {
     expect(first.date).toBe('2026-01-01');
     expect(first.comments.map((comment) => comment.text)).toEqual(['one', 'two']);
   });
+  it('leaves a post untouched when a re-scrape only brings a new timestamp', () => {
+    const existing = [{ id: '1', url: 'u', author: 'A', date: '2026-01-01', text: 'same', comments: [], commentCount: 0, scrapedAt: '2026-01-02T00:00:00.000Z' }];
+    const same = mergePosts(existing, [{ ...existing[0]!, scrapedAt: '2026-09-01T00:00:00.000Z' }]);
+    expect(same.updated).toBe(0);
+    expect(same.posts[0]!.scrapedAt).toBe('2026-01-02T00:00:00.000Z');
+    const changed = mergePosts(existing, [{ ...existing[0]!, text: 'same, edited later', scrapedAt: '2026-09-01T00:00:00.000Z' }]);
+    expect(changed.updated).toBe(1);
+    expect(changed.posts[0]!.scrapedAt).toBe('2026-09-01T00:00:00.000Z');
+  });
 });
 
 describe('enrichment', () => {

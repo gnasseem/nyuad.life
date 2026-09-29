@@ -87,10 +87,14 @@ export function mergePosts(existing: SourcePost[], incoming: SourcePost[]): { po
       date: post.date || current.date,
       url: post.url || current.url,
       comments: unionComments(current.comments, post.comments),
+      // Compared without the timestamp so a re-scrape that found nothing new leaves the line untouched.
+      scrapedAt: current.scrapedAt,
     };
     merged.commentCount = Math.max(current.commentCount ?? 0, post.commentCount ?? 0, merged.comments.length);
     merged.reactions = Math.max(current.reactions ?? 0, post.reactions ?? 0) || undefined;
-    if (JSON.stringify(merged) !== JSON.stringify(current)) updated++;
+    if (JSON.stringify(merged) === JSON.stringify(current)) continue;
+    updated++;
+    if (post.scrapedAt) merged.scrapedAt = post.scrapedAt;
     byId.set(post.id, merged);
   }
   return { posts: sortNewestFirst([...byId.values()]), added, updated };
