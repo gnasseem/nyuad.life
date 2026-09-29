@@ -8,10 +8,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createApiServer } from '../lib/devserver.ts';
-import { geminiConfig, normalize } from '../lib/gemini.ts';
-import { buildIndex } from '../lib/indexer.ts';
-import { resetArchive } from '../lib/store.ts';
+import { createApiServer } from './devserver.ts';
+import { geminiConfig, normalize } from './gemini.ts';
+import { buildIndex } from './indexer.ts';
+import { resetArchive } from './store.ts';
 
 const DIMS = 16;
 const posts = [
