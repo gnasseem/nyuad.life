@@ -2,7 +2,7 @@
   "name": "ror-answers",
   "version": "2.0.0",
   "private": true,
-  "description": "ROR Answers: ask the NYUAD Room of Requirement archive. Vercel backend (Gemini) + web app + scraper/indexer.",
+  "description": "The Room: answers for NYU Abu Dhabi students from the Room of Requirement archive, a student question board and an announcements feed.",
   "type": "module",
   "engines": {
     "node": "22.x"

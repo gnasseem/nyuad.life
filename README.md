@@ -1,47 +1,59 @@
-# ROR Answers
+# The Room
 
-Ask the NYU Abu Dhabi **Room of Requirement** archive. Students type a question, the backend finds the threads that
-answer it (hybrid keyword + Gemini vector search), and Gemini writes a short answer that cites the actual posts.
-Every citation opens the original thread with all its comments. The site is open: no login and no access code.
+Answers for NYU Abu Dhabi students. The name is a nod to the Room of Requirement group and lives in one constant
+(`web/src/brand.ts`), so it is easy to change.
 
-Everything is TypeScript, in one repository:
+Three things happen here:
+
+- **Ask.** A question goes to the archive of the Room of Requirement Facebook group (hybrid keyword + vector search,
+  reranked by Gemini) and comes back as a short, plain answer that cites the threads it used, says how sure it is, and
+  flags advice that is old or disputed. Answers students wrote on the board and current announcements are cited too.
+- **Questions.** When the archive falls short, the question goes to people. Students who want to help give their name,
+  NetID, major and class year once, then get questions one at a time, flashcard style: answer or skip. Questions are
+  tagged by the lite model for the majors and years best placed to answer, and handed out least-seen first, with views,
+  skips and answers tracked. Answered questions feed straight back into Ask.
+- **Announcements.** Events, deadlines, opportunities, club notices. Dated ones drop off the day after; undated ones
+  after two weeks.
+
+What the site refuses to be: a marketplace. Feed ads, Falcon-dirham trades and bare listings are filtered out of the
+archive, and so are the "bump", tag-a-friend and emoji comments. A question that is really a trade, a listing, a ride
+or a lost-and-found request is sent to Falcon Market or to the group itself instead of being answered from old posts.
+
+Everything is TypeScript in one repository:
 
 | Piece | Where | What it is |
 | --- | --- | --- |
-| Backend API | `api/`, `lib/` | Vercel serverless functions. Holds the Gemini key and the archive. |
-| Web app | `web/` | Vite + React website for students; works on phones and laptops. |
+| API | `api/`, `lib/` | Vercel serverless functions. Holds the keys, the archive and the board. |
+| Web app | `web/` | Vite + React. Sidebar shell, works on phones. |
 | Scraper | `scripts/scrape.ts` | Pulls posts and comments out of the Facebook group with your own login (runs on your laptop). |
-| Indexer | `scripts/index.ts`, `.github/workflows/index.yml` | Embeds posts with Gemini, locally or automatically in GitHub Actions. |
+| Indexer | `scripts/index.ts`, `.github/workflows/index.yml` | Cleans and embeds posts, locally or in GitHub Actions. |
+| Board schema | `supabase/schema.sql` | Tables and functions for questions, answers, profiles and announcements. |
 
 ## 1. Deploy on Vercel
 
-1. Import this repository into Vercel (Add New → Project). `vercel.json` already sets the build and output; no
-   framework preset is needed.
+1. Import this repository into Vercel (Add New → Project). `vercel.json` already sets the build and output.
 2. Add environment variables under Settings → Environment Variables:
 
    | Variable | Required | Meaning |
    | --- | --- | --- |
-   | `GEMINI_API_KEY` | yes | Google AI Studio key. Writes the answers, reranks threads and suggests follow-ups. |
-   | `VOYAGE_API_KEY` | for semantic search | Embeds each question the same way the index was embedded (section 3). |
-   | `GEMINI_CHAT_MODEL` | no | Defaults to `gemini-2.5-flash` (free tier: 250 requests a day). |
-   | `GEMINI_CHAT_FALLBACK_MODELS` | no | Tried in order when the chat model is out of quota. Defaults to `gemini-2.5-flash-lite` (1,000 a day). |
-   | `GEMINI_LITE_MODEL` | no | Defaults to `gemini-2.5-flash-lite` (rerank, follow-ups, query rewriting). |
+   | `GEMINI_API_KEY` | yes | Google AI Studio key. Writes answers, reranks threads, tags board questions, suggests follow-ups. |
+   | `VOYAGE_API_KEY` | for semantic search | Embeds each question the way the index was embedded (section 3). |
+   | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | for the board | Section 4. Without them the Questions and Announcements pages say the board is not set up. |
+   | `ROR_GROUP_URL` | no | Where listings, rides and lost-and-found requests are sent. Defaults to the group. |
+   | `GEMINI_CHAT_MODEL`, `GEMINI_CHAT_FALLBACK_MODELS`, `GEMINI_LITE_MODEL` | no | Defaults: `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-flash-lite`. |
 
-   If you embed with Cloudflare instead of Voyage, set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` here instead.
-
-3. Deploy. If `data/index/` is not committed yet, the build makes a keyword-only index from `data/posts.jsonl`, so the
-   site works immediately; semantic search switches on as soon as an embedded index is committed (section 3).
-   `GET /api/health` shows what is active: `embeddings.semanticSearch` is true once both the vectors and the matching
-   key are in place.
+3. Deploy. `GET /api/health` shows what is active: `embeddings.semanticSearch`, `gemini.configured`,
+   `board.configured`.
 
 Routes: `GET /api/health`, `GET /api/home`, `GET /api/search`, `GET /api/post?id=`, `GET /api/courses`,
-`POST /api/ask` (server-sent events: `status`, `sources`, `delta`, `followups`, `done`, `error`). Asking is
-rate-limited per IP so one visitor cannot burn through the Gemini quota.
+`POST /api/ask` (server-sent events: `status`, `redirect`, `sources`, `delta`, `followups`, `done`, `error`), and
+`GET|POST /api/board` (`op=stats|question|mine|announcements` on GET; `profile|ask|next|answer|skip|announce|unannounce`
+on POST). Every route is rate-limited per IP and per purpose.
 
-## 2. Scrape the whole group (runs on your laptop)
+## 2. Scrape the group (runs on your laptop)
 
-The scraper drives a real Chromium window where you are logged in as yourself. It reads the JSON Facebook's own
-web client loads, so it does not depend on fragile page selectors, and it is incremental and resumable.
+The scraper drives a real Chromium window where you are logged in as yourself. It reads the JSON Facebook's own web
+client loads, so it does not depend on fragile page selectors, and it is incremental and resumable.
 
 ```bash
 npm install
@@ -51,87 +63,73 @@ npm run scrape -- --full        # first time: walk the group back to its first p
 npm run scrape                  # later: only new posts and threads whose comment counts changed
 ```
 
-What to expect:
+Log in in the window that opens; the login is kept in `.scraper-profile/` (git-ignored). Progress is saved every few
+minutes and on Ctrl+C, and an interrupted `--full` run continues where it stopped. Options: `--max-posts 200`,
+`--no-comments`, `--delay 2`, `--chrome`, `--debug`, `--restart-feed`, `--only-comments`. This is your personal export
+of a group you belong to; don't share the raw file outside the community. When a run finishes, commit and push
+`data/posts.jsonl`.
 
-- A window opens on facebook.com. Log in there (codes, "save this browser?" and so on are fine); the scraper waits
-  up to 30 minutes and carries on by itself once it can see the group. The login is kept in `.scraper-profile/`
-  (git-ignored), so you only do this once.
-- After the first scroll the scraper knows the request Facebook's client uses to load more posts and asks for the
-  next pages itself, cursor by cursor. That is much faster than scrolling and does not slow down as the page grows.
-  If Facebook refuses, it falls back to scrolling.
-- Progress is saved every few minutes, every 10 threads and on Ctrl+C. An interrupted `--full` run continues from
-  where it stopped the next time you run `--full` (new posts at the top are picked up first). `--restart-feed`
-  starts again from the newest post.
-- Comments are collected by opening each thread and expanding it. Threads that still look incomplete after two
-  visits (Facebook counts deleted comments) are skipped until you run `--only-comments`.
+## 3. Index (cleaning and semantic search)
 
-Options: `--max-posts 200` limits a run, `--no-comments` skips threads, `--delay 2` doubles every wait (gentler
-on Facebook), `--chrome` drives your installed Google Chrome instead of Playwright's Chromium, `--debug` dumps raw
-responses to `.scraper-debug/` if Facebook changes something and captures look wrong. `ROR_BROWSER_EXECUTABLE`
-points at a specific Chrome/Chromium binary. This is your personal export of a group you belong to; don't share the
-raw file outside the community.
+Indexing applies the noise filters (`lib/filters.ts`) and embeds what is left. The same filters run again whenever an
+older index is loaded, so the site is clean even before the next build. Keyword search finds posts that contain your
+words; embeddings let "who is chill for calc" find "Dania is very relaxed about deadlines".
 
-When a run finishes, commit and push `data/posts.jsonl`.
+| Provider | Key(s) | Free allowance |
+| --- | --- | --- |
+| Voyage AI (default) | `VOYAGE_API_KEY` | 200M tokens per account. `voyage-3.5`, 1024 dims. |
+| Cloudflare Workers AI | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | 10,000 neurons a day. |
+| Gemini | `GEMINI_API_KEY` | Small; kept for compatibility. |
 
-## 3. Embedding (semantic search)
+**Automatic:** add the provider's key as a repository secret (Settings → Secrets and variables → Actions). Every push
+to `main` that changes `data/posts.jsonl` or `lib/` runs `.github/workflows/index.yml`, which embeds only the chunks
+that changed and commits `data/index/`. The same key must be set on Vercel so questions can be embedded.
 
-Keyword search finds posts that contain your words. Embeddings let the search understand meaning, so
-"who is chill for calc" still finds "Dania is very relaxed about deadlines". Embedding the archive is a one-off job
-per post, so it runs separately from deploys and only new posts are embedded each time.
+**Manual:** `cp .env.example .env`, put the key in it, `npm run index`, then commit `data/index/`. Options:
+`--provider`, `--fresh`, `--limit 300`, `--batch 64 --concurrency 2`, `--no-embed` (keyword-only).
 
-Pick one embedding provider. The index records which one made it, and the API needs that provider's key to embed
-questions; everything else stays on Gemini.
+## 4. The board (Supabase)
 
-| Provider | Key(s) | Free allowance | Notes |
-| --- | --- | --- | --- |
-| Voyage AI (default) | `VOYAGE_API_KEY` | 200M tokens per account, no card needed | The whole archive costs a few million tokens once; re-runs only embed new posts. Model `voyage-3.5`, 1024 dims. |
-| Cloudflare Workers AI | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | 10,000 neurons a day, resets daily (about 9M tokens with `bge-m3`) | Token needs the Workers AI permission. |
-| Gemini | `GEMINI_API_KEY` | 30k tokens a minute, 1,000 requests a day | Too small for a full archive; kept for compatibility. |
+1. Create a Supabase project and open the SQL editor.
+2. Paste `supabase/schema.sql` and run it. It creates `board_profiles`, `board_questions`, `board_answers`,
+   `board_events` and `board_announcements`, with row level security on and no public policies: only the service role,
+   which the API holds, can read or write, so every request passes through the app's validation and rate limits.
+3. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (Project → Settings → API) on Vercel and in `.env`.
 
-When several keys are set, Voyage wins, then Cloudflare, then Gemini; `ROR_EMBED_PROVIDER` forces one. Switching
-providers re-embeds everything on the next run (the cache is per model).
+Locally, with nothing set, the board runs in memory so `npm run dev` works without a database (nothing survives a
+restart). In production it is switched off until the two variables exist, rather than silently losing questions.
 
-**Automatic (recommended):** add the provider's key(s) as repository secrets on GitHub (Settings → Secrets and
-variables → Actions). From then on, every push to `main` that changes `data/posts.jsonl` runs
-`.github/workflows/index.yml`, which embeds the new posts and commits `data/index/`. Vercel redeploys with it. The
-same key must also be set on Vercel so questions can be embedded.
+How questions are handed out (`lib/board.ts`): a helper never sees their own question, or one they answered or
+skipped, or one that already has three answers. Among the rest, unanswered questions rank first, then the ones fewest
+people have seen; a question tagged for the helper's major or year gets a lift, a question many people skipped sinks,
+and a little randomness keeps two helpers from getting the same card at the same moment.
 
-**Manual:**
-
-```bash
-cp .env.example .env            # put VOYAGE_API_KEY (or the Cloudflare pair) in it
-npm run index                   # embeds only chunks that changed since the last run
-git add data/index && git commit -m "Update archive index" && git push
-```
-
-`data/index/` holds `posts.json.gz`, `chunks.json.gz`, `meta.json` and `vectors.bin` (int8-quantised, about 1 KB per
-chunk at 1024 dims). Options: `--provider voyage|cloudflare|gemini`, `--fresh` re-embeds everything, `--limit 300`
-indexes only the newest 300 posts, `--batch 64 --concurrency 2` tune throughput (429s are retried automatically with
-the delay the provider asks for).
-
-## 4. Run everything locally
+## 5. Run everything locally
 
 ```bash
 npm install
-cp .env.example .env            # GEMINI_API_KEY
+cp .env.example .env            # GEMINI_API_KEY at least
 npm run dev                     # API on http://localhost:8787 (serves dist/ too, if built)
 npx vite                        # web app with hot reload on http://localhost:5173, proxying /api
 npm run check                   # typecheck + tests + production build
 ```
 
-Without a Gemini key the API still serves browsing and keyword search; asking needs the key. The test suite includes
-an end-to-end run of the scraper against a fake Facebook (`scripts/fake-facebook.ts`); it needs the Playwright
-Chromium and skips itself when that is not installed.
+Without a Gemini key the API still serves browsing and keyword search; asking needs the key. The tests run the whole
+API against a fake Gemini, including the board and the scraper (the scraper test needs Playwright's Chromium and skips
+itself otherwise).
 
 ## How answers are produced
 
-1. Follow-up questions are rewritten into standalone queries using the conversation.
-2. Retrieval fuses BM25 over chunks with cosine similarity over the embeddings (reciprocal-rank fusion, small recency prior).
-3. The lite model scores the 40 best threads for usefulness; the strongest 6–16 become numbered sources.
-4. `gemini-2.5-flash` streams a Markdown answer that must cite `[n]` after each claim, tally opinions and flag stale
-   advice. When its daily free quota is used up the answer comes from `gemini-2.5-flash-lite` instead, so the site keeps
-   working for everyone; quotas reset at midnight Pacific time.
-5. In parallel, three follow-up questions are suggested.
-
-Posts are tagged with topics (courses, professors, housing, study away, visas, jobs, …) and course codes such as
-`CS-UH 1001` at index time, which powers Browse filters and the Courses page.
+1. Off-platform requests are caught first (`lib/domains.ts`): Falcon trades go to Falcon Market; listings, rides,
+   lost-and-found and "does anyone have X right now" go to the group.
+2. Follow-ups are rewritten into standalone queries; NYUAD shorthand (D2, A5, core, J-Term) is expanded for search.
+3. Retrieval fuses BM25 over chunks with cosine similarity over the embeddings (reciprocal-rank fusion, small recency
+   prior). The lite model scores the 30 best threads for usefulness, preferring recent and well-discussed ones; the
+   strongest 5–14 become numbered sources. Each source carries its age and how much discussion it had.
+4. Answered board questions (keyword match plus stored embeddings) and current announcements that fit the question are
+   added as further numbered sources.
+5. `gemini-2.5-flash` streams the answer: one or two plain sentences first, then specifics with a `[n]` after every
+   claim, a "keep in mind" line when advice is old or disputed, and a final confidence line (high, medium, low with a
+   reason) that the client shows as a badge. When its daily quota is used up the fallback model answers instead.
+6. Three follow-up questions are suggested in parallel. A medium or low answer offers "Ask students", which carries the
+   question to the board.

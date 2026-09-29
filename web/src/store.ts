@@ -1,5 +1,5 @@
-/** Per-device state kept in localStorage: theme, past conversations. Everything degrades gracefully when storage is unavailable. */
-import type { ChatTurn, SourceCard } from './api';
+/** Per-device state in localStorage: theme, past conversations, the helper profile and the anonymous asker key. */
+import type { ChatTurn, Confidence, Profile, Redirect, SourceCard } from './api';
 
 export interface Message {
   id: string;
@@ -7,6 +7,8 @@ export interface Message {
   content: string;
   sources?: SourceCard[];
   followups?: string[];
+  confidence?: Confidence | null;
+  redirect?: Redirect;
   status?: string;
   error?: string;
   pending?: boolean;
@@ -20,8 +22,10 @@ export interface Conversation {
   messages: Message[];
 }
 
-const CONVERSATIONS_KEY = 'ror.conversations';
-const THEME_KEY = 'ror.theme';
+const CONVERSATIONS_KEY = 'room.conversations';
+const THEME_KEY = 'room.theme';
+const PROFILE_KEY = 'room.profile';
+const KEY_KEY = 'room.key';
 const MAX_CONVERSATIONS = 60;
 
 function read<T>(key: string, fallback: T): T {
@@ -45,6 +49,19 @@ export function uid(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+/* ---------- Conversations ---------- */
+
+const conversationListeners = new Set<() => void>();
+
+export function onConversationsChange(listener: () => void): () => void {
+  conversationListeners.add(listener);
+  return () => conversationListeners.delete(listener);
+}
+
+function notify(): void {
+  conversationListeners.forEach((listener) => listener());
+}
+
 export function loadConversations(): Conversation[] {
   return read<Conversation[]>(CONVERSATIONS_KEY, []);
 }
@@ -58,19 +75,60 @@ export function saveConversation(conversation: Conversation): void {
   if (cleaned.messages.length === 0) return;
   list.unshift(cleaned);
   write(CONVERSATIONS_KEY, list.slice(0, MAX_CONVERSATIONS));
+  notify();
 }
 
 export function deleteConversation(id: string): void {
   write(CONVERSATIONS_KEY, loadConversations().filter((entry) => entry.id !== id));
+  notify();
 }
 
 export function clearConversations(): void {
   write(CONVERSATIONS_KEY, []);
+  notify();
 }
 
 export function toHistory(messages: Message[]): ChatTurn[] {
-  return messages.filter((message) => !message.pending && !message.error && message.content).map((message) => ({ role: message.role, content: message.content }));
+  return messages.filter((message) => !message.pending && !message.error && message.content && !message.redirect).map((message) => ({ role: message.role, content: message.content }));
 }
+
+/* ---------- Identity ---------- */
+
+export function loadProfile(): Profile | null {
+  return read<Profile | null>(PROFILE_KEY, null);
+}
+
+export function saveProfile(profile: Profile | null): void {
+  if (profile) write(PROFILE_KEY, profile);
+  else {
+    try {
+      localStorage.removeItem(PROFILE_KEY);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** A random key that ties questions and announcements to this browser without asking who you are. */
+export function askerKey(): string {
+  let key = '';
+  try {
+    key = localStorage.getItem(KEY_KEY) ?? '';
+  } catch {
+    // ignore
+  }
+  if (!/^[a-z0-9-]{8,64}$/.test(key)) {
+    key = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : uid() + uid();
+    try {
+      localStorage.setItem(KEY_KEY, key);
+    } catch {
+      // ignore
+    }
+  }
+  return key;
+}
+
+/* ---------- Theme ---------- */
 
 export type Theme = 'light' | 'dark' | 'system';
 

@@ -4,7 +4,8 @@ import type { ReactNode } from 'react';
 export interface MarkdownProps {
   text: string;
   onCitation?(n: number): void;
-  onCitationHover?(n: number | null): void;
+  /** Hover with the pill's position, so a preview can be anchored to it. */
+  onCitationHover?(n: number | null, rect?: DOMRect): void;
   hot?: number | null;
 }
 
@@ -106,7 +107,7 @@ function parseBlocks(text: string): Block[] {
 
 interface InlineOptions {
   onCitation?(n: number): void;
-  onCitationHover?(n: number | null): void;
+  onCitationHover?(n: number | null, rect?: DOMRect): void;
   hot?: number | null;
 }
 
@@ -131,9 +132,9 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
             key={key++}
             type="button"
             className={`cite${options.hot === n ? ' hot' : ''}`}
-            title={`Source ${n}`}
+            aria-label={`Source ${n}`}
             onClick={() => options.onCitation?.(n)}
-            onMouseEnter={() => options.onCitationHover?.(n)}
+            onMouseEnter={(event) => options.onCitationHover?.(n, event.currentTarget.getBoundingClientRect())}
             onMouseLeave={() => options.onCitationHover?.(null)}
           >
             {n}

@@ -5,22 +5,24 @@ export function formatDate(date: string): string {
   return value.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 }
 
-/** "Mar–Sep 2026" or "2019–2026": the span the archive covers, for the footer. */
-export function formatRange(oldest: string, newest: string): string {
-  const from = /^(\d{4})-(\d{2})/.exec(oldest);
-  const to = /^(\d{4})-(\d{2})/.exec(newest);
-  if (!from || !to) return '';
-  const month = (m: string, y: string) => new Date(Date.UTC(Number(y), Number(m) - 1, 1)).toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' });
-  if (from[1] !== to[1]) return `${from[1]}–${to[1]}`;
-  if (from[2] === to[2]) return `${month(from[2]!, from[1]!)} ${from[1]}`;
-  return `${month(from[2]!, from[1]!)}–${month(to[2]!, to[1]!)} ${from[1]}`;
+/** "Fri 3 Oct, 18:00" in the reader's time zone. */
+export function formatWhen(iso: string): string {
+  const value = new Date(iso);
+  if (Number.isNaN(value.getTime())) return '';
+  const day = value.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  const time = value.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return time === '00:00' ? day : `${day}, ${time}`;
 }
 
 export function relativeDate(iso: string): string {
   const then = Date.parse(iso);
   if (Number.isNaN(then)) return '';
-  const days = Math.round((Date.now() - then) / 86_400_000);
-  if (days <= 0) return 'today';
+  const minutes = Math.round((Date.now() - then) / 60_000);
+  if (minutes < 2) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
   if (days === 1) return 'yesterday';
   if (days < 30) return `${days} days ago`;
   if (days < 365) return `${Math.round(days / 30)} months ago`;
@@ -43,7 +45,7 @@ const TOPIC_LABELS: Record<string, string> = {
   'visa-travel': 'Visa & travel',
   jobs: 'Jobs',
   money: 'Money',
-  marketplace: 'Buy & sell',
+  marketplace: 'Buying & renting',
   food: 'Food',
   health: 'Health',
   transport: 'Transport',
@@ -57,4 +59,19 @@ const TOPIC_LABELS: Record<string, string> = {
 
 export function topicLabel(id: string): string {
   return TOPIC_LABELS[id] ?? id.replace(/-/g, ' ');
+}
+
+export const STANDING_LABELS: Record<string, string> = { 'first-year': 'first year', sophomore: 'sophomore', junior: 'junior', senior: 'senior', alumni: 'alumni' };
+
+export function standingLabel(id: string): string {
+  return STANDING_LABELS[id] ?? id;
+}
+
+export function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]!.toUpperCase())
+    .join('');
 }

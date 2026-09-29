@@ -39,22 +39,22 @@ export default route(['GET', 'POST'], async (req, res) => {
 
   switch (op) {
     case 'stats':
-      rateLimit(req, 60, 60);
+      rateLimit(req, 60, 60, 'board-read');
       sendJson(res, 200, await store.stats());
       return;
     case 'announcements':
-      rateLimit(req, 60, 60);
+      rateLimit(req, 60, 60, 'board-read');
       sendJson(res, 200, { announcements: (await store.listAnnouncements(new Date())).map(publicAnnouncement) });
       return;
     case 'question': {
-      rateLimit(req, 60, 60);
+      rateLimit(req, 60, 60, 'board-read');
       const question = await store.getQuestion(queryString(req, 'id').trim());
       if (!question) throw new ApiError(404, 'That question is gone.', 'not_found');
       sendJson(res, 200, { question: publicQuestion(question), answers: (await store.listAnswers([question.id])).map(publicAnswer) });
       return;
     }
     case 'mine': {
-      rateLimit(req, 60, 60);
+      rateLimit(req, 60, 60, 'board-read');
       const key = validateKey(queryString(req, 'key'));
       const questions = await store.listByAsker(key);
       const answers = await store.listAnswers(questions.map((question) => question.id));
@@ -64,17 +64,17 @@ export default route(['GET', 'POST'], async (req, res) => {
       return;
     }
     case 'profile': {
-      rateLimit(req, 10, 10);
+      rateLimit(req, 10, 10, 'board-profile');
       const profile = await store.upsertProfile(validateProfile(body));
       sendJson(res, 200, { profile: publicProfile(profile) });
       return;
     }
     case 'ask':
-      rateLimit(req, 5, 3);
+      rateLimit(req, 5, 3, 'board-ask');
       sendJson(res, 200, await askQuestion(store, body));
       return;
     case 'next': {
-      rateLimit(req, 40, 30);
+      rateLimit(req, 40, 30, 'board-help');
       const profile = await requireProfile(store, body.netId);
       const [questions, events] = await Promise.all([store.listOpen(300), store.listEventsByHelper(profile.netId)]);
       const question = pickNext(questions, { profile, events });
@@ -86,7 +86,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       return;
     }
     case 'answer': {
-      rateLimit(req, 20, 15);
+      rateLimit(req, 20, 15, 'board-help');
       const profile = await requireProfile(store, body.netId);
       const question = await store.getQuestion(String(body.questionId ?? ''));
       if (!question || question.status === 'closed') throw new ApiError(404, 'That question is no longer open.', 'not_found');
@@ -97,7 +97,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       return;
     }
     case 'skip': {
-      rateLimit(req, 60, 60);
+      rateLimit(req, 60, 60, 'board-help');
       const profile = await requireProfile(store, body.netId);
       const question = await store.getQuestion(String(body.questionId ?? ''));
       if (question) await Promise.all([store.recordEvent({ questionId: question.id, netId: profile.netId, kind: 'skip' }), store.bump(question.id, { skips: 1 })]);
@@ -105,7 +105,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       return;
     }
     case 'announce': {
-      rateLimit(req, 5, 3);
+      rateLimit(req, 8, 3, 'board-announce');
       const profile = await requireProfile(store, body.netId);
       const posterKey = validateKey(body.key);
       const announcement = await store.createAnnouncement({ ...validateAnnouncement(body), posterKey, posterNetId: profile.netId, posterName: profile.name });
@@ -113,7 +113,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       return;
     }
     case 'unannounce': {
-      rateLimit(req, 20, 20);
+      rateLimit(req, 20, 20, 'board-announce');
       const removed = await store.deleteAnnouncement(String(body.id ?? ''), validateKey(body.key));
       if (!removed) throw new ApiError(404, 'Only the person who posted it can remove it.', 'not_found');
       sendJson(res, 200, { ok: true });

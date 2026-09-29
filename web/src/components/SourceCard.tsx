@@ -4,26 +4,34 @@ import { navigate } from '../router';
 
 interface Props {
   source: Source;
-  hot: boolean;
-  onHover(n: number | null): void;
+  hot?: boolean;
+  id?: string;
+  onHover?(n: number | null): void;
 }
 
-export function SourceCard({ source, hot, onHover }: Props) {
+export function SourceCard({ source, hot, id, onHover }: Props) {
+  const kind = source.kind === 'board' ? 'Student answer' : source.kind === 'announcement' ? 'Announcement' : '';
+  const open = () => {
+    if (source.kind === 'archive') navigate({ name: 'post', id: source.postId });
+    else if (source.kind === 'board') navigate({ name: 'question', id: source.postId });
+    else if (source.url) window.open(source.url, '_blank', 'noreferrer');
+    else navigate({ name: 'announcements' });
+  };
   return (
-    <div id={`source-${source.n}`} className={`source${hot ? ' hot' : ''}`} onMouseEnter={() => onHover(source.n)} onMouseLeave={() => onHover(null)}>
+    <div id={id} className={`source${hot ? ' hot' : ''}`} onMouseEnter={() => onHover?.(source.n)} onMouseLeave={() => onHover?.(null)}>
       <div className="source-top">
         <span className="source-n">{source.n}</span>
-        <span className="source-author">{source.author || 'Unknown'}</span>
-        <span className="faint small" style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
-          {formatDate(source.date)}
-        </span>
+        <span className="source-who">{source.author || 'Unknown'}</span>
+        <span className="source-date small">{formatDate(source.date)}</span>
       </div>
-      <div className="source-snippet">{source.snippet || source.text}</div>
-      <div className="source-actions">
-        <button type="button" onClick={() => navigate({ name: 'post', id: source.postId })}>
-          Open thread · {plural(source.commentCount, 'comment')}
+      {kind && <span className="source-kind">{kind}</span>}
+      {source.title && <div className="source-title">{source.title}</div>}
+      <div className="source-text">{source.snippet || source.text}</div>
+      <div className="source-links">
+        <button type="button" onClick={open}>
+          {source.kind === 'archive' ? `Open thread · ${plural(source.commentCount, 'comment')}` : source.kind === 'board' ? 'Open question' : source.url ? 'Open link' : 'See announcements'}
         </button>
-        {source.url && (
+        {source.kind === 'archive' && source.url && (
           <a href={source.url} target="_blank" rel="noreferrer">
             Facebook
           </a>

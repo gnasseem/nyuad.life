@@ -5,6 +5,7 @@ import { useApp } from '../context';
 import { formatDate, plural } from '../format';
 import { IconAsk, IconBack, IconSearch } from '../icons';
 import { navigate } from '../router';
+import { ArchiveHead } from './Browse';
 
 interface Props {
   code?: string;
@@ -45,20 +46,17 @@ function CourseIndex() {
   const shown = courses.filter((course) => (!dept || course.department === dept) && (!q || course.code.toLowerCase().includes(q.toLowerCase())));
 
   return (
-    <div className="page wide">
-      <div className="page-head">
-        <h1>Courses</h1>
-        <p>Every course code mentioned in the archive, with the number of threads that discuss it. Open one to read the threads or ask what students think.</p>
-      </div>
-      <label className="searchbar" style={{ maxWidth: 440 }}>
+    <div className="content wide">
+      <ArchiveHead view="courses" />
+      <label className="searchbar" style={{ maxWidth: 420 }}>
         <IconSearch />
-        <input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Filter by code, for example CS-UH or 1001" aria-label="Filter courses" />
+        <input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Course code, for example CS-UH or 1001" aria-label="Filter courses" />
       </label>
-      <div className="dept-row">
+      <div className="filters">
         <button type="button" className={`chip${dept ? '' : ' on'}`} aria-pressed={!dept} onClick={() => setDept('')}>
-          All departments
+          All
         </button>
-        {departments.slice(0, 24).map((id) => (
+        {departments.slice(0, 20).map((id) => (
           <button key={id} type="button" className={`chip${dept === id ? ' on' : ''}`} aria-pressed={dept === id} onClick={() => setDept(dept === id ? '' : id)}>
             {id}
           </button>
@@ -101,23 +99,25 @@ function CourseDetail({ code }: { code: string }) {
   }, [code]);
 
   const ask = () => {
-    setAskPrefill({ question: `What do students say about ${code}? Cover the workload, grading, professors and whether it is worth taking.`, autoSend: true });
+    setAskPrefill({ question: `What do students say about ${code}? Workload, grading, professors, and whether it is worth taking.`, autoSend: true });
     navigate({ name: 'ask' });
   };
 
   return (
-    <div className="page">
+    <div className="content">
       <button type="button" className="btn ghost sm back" onClick={() => navigate({ name: 'courses' })}>
         <IconBack /> All courses
       </button>
       <div className="page-head">
-        <h1 className="course-title">{code}</h1>
-        <p>{loading ? 'Loading…' : `${plural(total, 'thread mentions', 'threads mention')} this course.`}</p>
-        <div className="row" style={{ marginTop: 14 }}>
-          <button type="button" className="btn primary" onClick={ask}>
-            <IconAsk /> Ask what students think
-          </button>
+        <div>
+          <h1 className="mono" style={{ fontFamily: 'var(--mono)', fontSize: 26, fontWeight: 600 }}>
+            {code}
+          </h1>
+          <p>{loading ? 'Loading' : `${plural(total, 'thread mentions', 'threads mention')} this course.`}</p>
         </div>
+        <button type="button" className="btn primary" onClick={ask}>
+          <IconAsk /> What do students say?
+        </button>
       </div>
       {error && <div className="alert">{error}</div>}
       <div className="post-list">

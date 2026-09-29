@@ -65,7 +65,7 @@ export function createApiServer(options: DevServerOptions = {}): Server {
     if (!existsSync(dist)) {
       res.statusCode = 200;
       res.setHeader('content-type', 'text/html; charset=utf-8');
-      res.end('<p style="font-family:system-ui;padding:2rem">ROR Answers API is running. Run <code>npm run build</code> to serve the web app from here, or <code>npx vite</code> for live development.</p>');
+      res.end('<p style="font-family:system-ui;padding:2rem">The API is running. Run <code>npm run build</code> to serve the web app from here, or <code>npx vite</code> for live development.</p>');
       return;
     }
     let file = path.join(dist, pathname === '/' ? 'index.html' : pathname);

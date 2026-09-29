@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, type PostSummary, type SearchParams } from '../api';
+import { api, type PostSummary, type Redirect, type SearchParams } from '../api';
 import { PostCard } from '../components/PostCard';
+import { Segmented } from '../components/Segmented';
 import { useApp } from '../context';
 import { plural, topicLabel } from '../format';
 import { IconSearch } from '../icons';
@@ -17,6 +18,19 @@ const SORTS = [
   { id: 'oldest', label: 'Oldest' },
 ] as const;
 
+/** The page header shared by the thread list and the course index. */
+export function ArchiveHead({ view }: { view: 'threads' | 'courses' }) {
+  return (
+    <div className="page-head">
+      <div>
+        <h1>Archive</h1>
+        <p>What the group has already worked out, minus the noise.</p>
+      </div>
+      <Segmented value={view} label="Archive view" options={[{ id: 'threads', label: 'Threads' }, { id: 'courses', label: 'Courses' }]} onChange={(next) => navigate(next === 'courses' ? { name: 'courses' } : { name: 'browse' })} />
+    </div>
+  );
+}
+
 export function BrowsePage({ search }: Props) {
   const { home } = useApp();
   const [q, setQ] = useState(search.get('q') ?? '');
@@ -26,6 +40,7 @@ export function BrowsePage({ search }: Props) {
   const sort = (search.get('sort') as SearchParams['sort']) ?? (q ? 'relevance' : 'newest');
   const [results, setResults] = useState<PostSummary[]>([]);
   const [terms, setTerms] = useState<string[]>([]);
+  const [redirect, setRedirect] = useState<Redirect | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -41,7 +56,7 @@ export function BrowsePage({ search }: Props) {
     if (debounced) params.set('q', debounced);
     else params.delete('q');
     const next = params.toString();
-    if (next !== search.toString()) navigate({ name: 'browse' }, { replace: true, search: next });
+    if (next !== search.toString()) navigate({ name: 'browse' }, { replace: true, search: next, keepScroll: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounced]);
 
@@ -49,7 +64,7 @@ export function BrowsePage({ search }: Props) {
     const params = new URLSearchParams(search);
     if (value) params.set(key, value);
     else params.delete(key);
-    navigate({ name: 'browse' }, { replace: true, search: params.toString() });
+    navigate({ name: 'browse' }, { replace: true, search: params.toString(), keepScroll: true });
   };
 
   const years = useMemo(() => {
@@ -81,6 +96,7 @@ export function BrowsePage({ search }: Props) {
         setResults(result.results);
         setTerms(result.terms);
         setTotal(result.total);
+        setRedirect(result.redirect);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -108,14 +124,11 @@ export function BrowsePage({ search }: Props) {
   };
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <h1>Browse the archive</h1>
-        <p>Search every post and comment, or filter by topic and year.</p>
-      </div>
+    <div className="content">
+      <ArchiveHead view="threads" />
       <label className="searchbar">
         <IconSearch />
-        <input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search posts and comments" autoFocus={window.matchMedia('(min-width: 720px)').matches} aria-label="Search posts and comments" />
+        <input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search threads" aria-label="Search threads" />
         {q && (
           <button type="button" className="btn ghost sm" onClick={() => setQ('')}>
             Clear
@@ -140,23 +153,33 @@ export function BrowsePage({ search }: Props) {
             ))}
           </select>
         )}
-        {home && home.topics.length > 0 && <span className="sep" aria-hidden="true" />}
-        {home?.topics.slice(0, 12).map((entry) => (
+        {home?.topics.slice(0, 10).map((entry) => (
           <button key={entry.id} type="button" className={`chip${topic === entry.id ? ' on' : ''}`} aria-pressed={topic === entry.id} onClick={() => setParam('topic', topic === entry.id ? '' : entry.id)}>
             {topicLabel(entry.id)}
           </button>
         ))}
       </div>
+      {redirect && (
+        <div className="redirect" style={{ marginBottom: 16 }}>
+          <h3>{redirect.title}</h3>
+          <p>{redirect.message}</p>
+          <div className="row">
+            <a className="btn" href={redirect.link.url} target="_blank" rel="noreferrer">
+              {redirect.link.label}
+            </a>
+          </div>
+        </div>
+      )}
       {error && <div className="alert">{error}</div>}
       <div className="result-count" aria-live="polite">
-        {loading && results.length === 0 ? 'Searching…' : `${plural(total, 'post')}${debounced ? ` for “${debounced}”` : ''}${topic ? ` in ${topicLabel(topic)}` : ''}${year ? ` from ${year}` : ''}`}
+        {loading && results.length === 0 ? 'Searching' : `${plural(total, 'thread')}${debounced ? ` for “${debounced}”` : ''}${topic ? ` in ${topicLabel(topic)}` : ''}${year ? ` from ${year}` : ''}`}
       </div>
       <div className="post-list">
         {results.map((post) => (
           <PostCard key={post.id} post={post} terms={terms} />
         ))}
       </div>
-      {!loading && results.length === 0 && !error && (
+      {!loading && results.length === 0 && !error && !redirect && (
         <div className="empty">
           <h3>Nothing matched</h3>
           Try fewer words, a surname, or a course code such as CS-UH 1001.
@@ -165,7 +188,7 @@ export function BrowsePage({ search }: Props) {
       {results.length < total && (
         <div className="pager">
           <button type="button" className="btn" onClick={() => void loadMore()} disabled={loading}>
-            {loading ? 'Loading…' : `Show more (${(total - results.length).toLocaleString()} left)`}
+            {loading ? 'Loading' : `Show more (${(total - results.length).toLocaleString()} left)`}
           </button>
         </div>
       )}

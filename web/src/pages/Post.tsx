@@ -29,7 +29,7 @@ export function PostPage({ id }: Props) {
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Could not load this post.');
+        setError(err instanceof Error ? err.message : 'Could not load this thread.');
       });
     return () => {
       cancelled = true;
@@ -43,16 +43,14 @@ export function PostPage({ id }: Props) {
     navigate({ name: 'ask' });
   };
 
-  const missing = post ? post.commentCount - post.comments.length : 0;
-
   return (
-    <div className="page">
+    <div className="content">
       <button type="button" className="btn ghost sm back" onClick={() => (window.history.length > 1 ? window.history.back() : navigate({ name: 'browse' }))}>
         <IconBack /> Back
       </button>
       {error && <div className="alert">{error}</div>}
       {!post && !error && (
-        <div className="card pad" style={{ display: 'grid', gap: 10 }} aria-busy="true">
+        <div className="card" style={{ display: 'grid', gap: 10 }} aria-busy="true">
           <div className="skeleton" style={{ width: '40%' }} />
           <div className="skeleton" style={{ height: 60 }} />
           <div className="skeleton" style={{ height: 40 }} />
@@ -60,25 +58,24 @@ export function PostPage({ id }: Props) {
       )}
       {post && (
         <>
-          <article className="card pad">
+          <article className="card">
             <div className="meta" style={{ marginBottom: 12 }}>
               <b>{post.author || 'Unknown'}</b>
               <span>{formatDate(post.date)}</span>
-              <span>{plural(post.commentCount, 'comment')}</span>
               {post.reactions > 0 && <span>{plural(post.reactions, 'reaction')}</span>}
             </div>
             <div className="post-full">{post.text}</div>
             {(post.courses.length > 0 || post.topics.some((topic) => topic !== 'general')) && (
               <div className="chips" style={{ marginTop: 16 }}>
                 {post.courses.map((code) => (
-                  <button key={code} type="button" className="chip sm mono" onClick={() => navigate({ name: 'courses', code })}>
+                  <button key={code} type="button" className="chip mono" onClick={() => navigate({ name: 'courses', code })}>
                     {code}
                   </button>
                 ))}
                 {post.topics
                   .filter((topic) => topic !== 'general')
                   .map((topic) => (
-                    <button key={topic} type="button" className="chip sm" onClick={() => navigate({ name: 'browse' }, { search: `topic=${topic}` })}>
+                    <button key={topic} type="button" className="chip" onClick={() => navigate({ name: 'browse' }, { search: `topic=${topic}` })}>
                       {topicLabel(topic)}
                     </button>
                   ))}
@@ -96,19 +93,16 @@ export function PostPage({ id }: Props) {
             </div>
           </article>
 
-          <h2 className="section-title">
-            {plural(post.comments.length, 'comment')}
-            {missing > 0 ? ` (${missing} not captured yet)` : ''}
-          </h2>
+          <h2 className="section-title">{plural(post.comments.length, 'comment')}</h2>
           {post.comments.length === 0 ? (
-            <p className="muted">No comments were saved for this post.</p>
+            <p className="muted">No comments worth reading were saved for this thread.</p>
           ) : (
             <div className="comments">
               {post.comments.map((comment, index) => (
                 <div key={index} className="comment">
                   <div className="who">
                     <b>{comment.author || 'Someone'}</b>
-                    <span className="faint">{formatDate(comment.date)}</span>
+                    <span>{formatDate(comment.date)}</span>
                   </div>
                   <div className="what">{comment.text}</div>
                 </div>

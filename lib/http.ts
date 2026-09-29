@@ -71,10 +71,13 @@ export function clientIp(req: IncomingMessage): string {
   return (first ?? '').split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
 }
 
-/** In-memory token bucket per client IP; resets whenever the function instance recycles, which is fine for abuse control. */
+/**
+ * In-memory token bucket per client IP and scope, so browsing never eats into the ask budget; resets whenever the
+ * function instance recycles, which is fine for abuse control.
+ */
 const buckets = new Map<string, { tokens: number; updated: number }>();
-export function rateLimit(req: IncomingMessage, capacity: number, perMinute: number): void {
-  const ip = clientIp(req);
+export function rateLimit(req: IncomingMessage, capacity: number, perMinute: number, scope = 'default'): void {
+  const ip = `${scope}:${clientIp(req)}`;
   const now = Date.now();
   const bucket = buckets.get(ip) ?? { tokens: capacity, updated: now };
   bucket.tokens = Math.min(capacity, bucket.tokens + ((now - bucket.updated) / 60_000) * perMinute);
