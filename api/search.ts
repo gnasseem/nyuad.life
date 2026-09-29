@@ -1,3 +1,4 @@
+import { detectRedirect } from '../lib/domains.ts';
 import { ApiError, queryInt, queryString, route, sendJson } from '../lib/http.ts';
 import { retrieve } from '../lib/rag.ts';
 import { loadArchive, summarizePost } from '../lib/store.ts';
@@ -66,6 +67,7 @@ export default route(['GET'], async (req, res) => {
       sort,
       dense,
       terms,
+      redirect: q ? detectRedirect(q) : null,
       results: results.slice(start, start + pageSize).map((entry) => ({ ...summarizePost(entry.post, entry.snippet), score: Number(entry.score.toFixed(4)) })),
     },
     q ? 0 : 120,

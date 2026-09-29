@@ -123,15 +123,6 @@ export function sortNewestFirst<T extends SourcePost>(posts: T[]): T[] {
   });
 }
 
-/** Drops empty posts and obvious sponsored noise (pages advertising to the group). */
-export function isUsefulPost(post: SourcePost): boolean {
-  if (!post.id) return false;
-  if (!post.text.trim() && post.comments.length === 0) return false;
-  const text = post.text.toLowerCase();
-  const sponsored = /\b(t&cs apply|book now|register now|limited offer|sponsored|use code)\b/.test(text) && post.comments.length <= 1;
-  return !sponsored;
-}
-
 export function enrichPost(post: SourcePost): IndexedPost {
   const commentTexts = post.comments.map((comment) => comment.text);
   return {

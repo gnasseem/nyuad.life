@@ -1,3 +1,4 @@
+import { boardStore } from '../lib/board-store.ts';
 import { embedderForIndex, keysFor, providerForModel } from '../lib/embeddings.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { route, sendJson } from '../lib/http.ts';
@@ -5,6 +6,7 @@ import { loadArchive } from '../lib/store.ts';
 
 export default route(['GET'], async (_req, res) => {
   const cfg = geminiConfig();
+  const board = boardStore();
   let archive: Awaited<ReturnType<typeof loadArchive>> | undefined;
   let archiveError = '';
   try {
@@ -42,5 +44,7 @@ export default route(['GET'], async (_req, res) => {
         }
       : undefined,
     gemini: cfg ? { configured: true, chatModel: cfg.chatModel, chatFallbacks: cfg.chatFallbacks, liteModel: cfg.liteModel } : { configured: false },
+    // The board needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in production; locally it runs in memory.
+    board: board ? { configured: true, persistent: board.persistent } : { configured: false, hint: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (see supabase/schema.sql) to enable the board.' },
   });
 });

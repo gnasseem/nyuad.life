@@ -16,7 +16,7 @@ import { resetArchive } from './store.ts';
 
 const DIMS = 16;
 const posts = [
-  { id: 'p1', url: 'https://fb/p1', author: 'Ana', date: '2026-04-01', text: 'Who is the best professor for Calculus? Thinking about MATH-UH 1012.', comments: [{ author: 'Ben', date: '2026-04-01', text: 'Take it with Dania, she explains everything clearly and grades fairly.' }, { author: 'Cy', date: '2026-04-02', text: 'Agreed, Dania is great. Avoid the 8am section though.' }], reactions: 12 },
+  { id: 'p1', url: 'https://fb/p1', author: 'Ana', date: '2026-04-01', text: 'Who is the best professor for Calculus? Thinking about MATH-UH 1012.', comments: [{ author: 'Ben', date: '2026-04-01', text: 'Take it with Dania, she explains everything clearly and grades fairly.' }, { author: 'Cy', date: '2026-04-02', text: 'Agreed, Dania is great. Avoid the 8am section though.' }, { author: 'Ana', date: '2026-04-03', text: 'bump' }], reactions: 12, commentCount: 3 },
   { id: 'p2', url: 'https://fb/p2', author: 'Dee', date: '2026-03-10', text: 'Housing question: is A2 quieter than A5? Roommate situation matters to me.', comments: [{ author: 'Eli', date: '2026-03-10', text: 'A5 is the party building, A2 is chill.' }] },
   { id: 'p3', url: 'https://fb/p3', author: 'Fay', date: '2025-11-20', text: 'Visa renewal timeline? Mine took two weeks last year.', comments: [] },
   { id: 'p4', url: 'https://fb/p4', author: 'Gus', date: '2026-05-05', text: 'Calculus with Dania or with the new professor? CS-UH 1001 also on my plate.', comments: [{ author: 'Hal', date: '2026-05-05', text: 'Dania. The new professor is fine too but moves fast.' }] },
@@ -71,8 +71,8 @@ beforeAll(async () => {
       res.setHeader('content-type', 'text/event-stream');
       const prompt = body.contents.at(-1).parts[0].text as string;
       expect(prompt).toContain('Sources:');
-      expect(body.systemInstruction.parts[0].text).toContain('ROR Answers');
-      const pieces = ['**Dania** is the favourite', ' [1][4].', '\n\n- 3 of 3 commenters recommend her [1][4].'];
+      expect(body.systemInstruction.parts[0].text).toContain('Room of Requirement');
+      const pieces = ['**Dania** is the favourite', ' [1][4].', '\n\n- 3 of 3 commenters recommend her [1][4].', '\n\nConfidence: high – three people agree, all this year.'];
       for (const piece of pieces) res.write(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: piece }] } }] })}\n\n`);
       res.write(`data: ${JSON.stringify({ candidates: [{ content: { parts: [] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20, totalTokenCount: 120 } })}\n\n`);
       res.end();
@@ -87,6 +87,8 @@ beforeAll(async () => {
         text = JSON.stringify({ scores: Array.from({ length: count }, (_, i) => ({ i, s: i < 2 ? 9 : 5 })) });
       } else if (schema?.properties?.questions) {
         text = JSON.stringify({ questions: ['How is her grading?', 'Which section is best?', 'What about the new professor?'] });
+      } else if (schema?.properties?.majors) {
+        text = JSON.stringify({ summary: 'Calculus section choice', topics: ['courses', 'bogus'], majors: ['Mathematics', 'Not a major'], years: ['senior'] });
       } else {
         text = 'best calculus professor Dania';
       }
@@ -110,7 +112,7 @@ beforeAll(async () => {
   const embedder = embedderFromEnv()!;
   expect(embedder.provider).toBe('gemini');
   const result = await buildIndex({ postsFile: path.join(dataDir, 'posts.jsonl'), outDir: path.join(dataDir, 'index'), embedder, batchSize: 2, concurrency: 2 });
-  expect(result.meta.posts).toBe(5); // the sponsored post is dropped
+  expect(result.meta.posts).toBe(4); // the sponsored post and the fridge listing are dropped
   expect(result.meta.provider).toBe('gemini');
   expect(result.embedded).toBeGreaterThan(0);
 
@@ -137,7 +139,7 @@ describe('api', () => {
   it('reports health, including which embedding provider the index needs', async () => {
     const health = await getJson(`${apiUrl}/api/health`);
     expect(health.ok).toBe(true);
-    expect(health.archive).toMatchObject({ source: 'index', posts: 5, vectors: true, dimensions: DIMS });
+    expect(health.archive).toMatchObject({ source: 'index', posts: 4, vectors: true, dimensions: DIMS });
     expect(health.embeddings).toMatchObject({ provider: 'gemini', keyConfigured: true, semanticSearch: true });
     expect(health.gemini).toMatchObject({ configured: true, chatModel: 'gemini-2.5-flash', chatFallbacks: ['gemini-2.5-flash-lite'] });
     expect(health).not.toHaveProperty('accessCode');
@@ -154,7 +156,7 @@ describe('api', () => {
 
   it('serves the home payload', async () => {
     const home = await getJson(`${apiUrl}/api/home`, { headers });
-    expect(home.stats.posts).toBe(5);
+    expect(home.stats.posts).toBe(4);
     expect(home.stats.semantic).toBe(true);
     expect(home.suggestions.length).toBeGreaterThan(3);
     expect(home.courses.map((c: { code: string }) => c.code).sort()).toEqual(['CS-UH 1001', 'MATH-UH 1012']);
@@ -181,7 +183,8 @@ describe('api', () => {
 
   it('returns a post with comments and related posts', async () => {
     const result = await getJson(`${apiUrl}/api/post?id=p1`, { headers });
-    expect(result.post.comments).toHaveLength(2);
+    expect(result.post.comments).toHaveLength(2); // the "bump" is gone
+    expect(result.post.commentCount).toBe(2);
     expect(result.post.courses).toEqual(['MATH-UH 1012']);
     expect(result.related.map((r: { id: string }) => r.id)).toContain('p4');
     expect((await fetch(`${apiUrl}/api/post?id=nope`, { headers })).status).toBe(404);
@@ -220,6 +223,7 @@ describe('api', () => {
     expect(sources.map((s: { postId: string }) => s.postId)).toContain('p1');
     const answer = events.filter((e) => e.event === 'delta').map((e) => e.data.text).join('');
     expect(answer).toContain('Dania');
+    expect(events.at(-1)!.data.confidence).toEqual({ level: 'high', reason: 'three people agree, all this year' });
     // gemini-2.5-flash answered 429 (daily quota), so the answer came from the fallback model.
     expect(events.at(-1)!.data.model).toBe('gemini-2.5-flash-lite');
     expect(geminiCalls.some((call) => call.url.includes('gemini-2.5-flash:streamGenerateContent'))).toBe(true);
@@ -232,6 +236,8 @@ describe('api', () => {
   it('answers as plain JSON when streaming is off', async () => {
     const result = await getJson(`${apiUrl}/api/ask`, { method: 'POST', headers, body: JSON.stringify({ question: 'calculus professor', stream: false }) });
     expect(result.answer).toContain('Dania');
+    expect(result.answer).not.toMatch(/confidence:/i);
+    expect(result.confidence.level).toBe('high');
     expect(result.model).toBe('gemini-2.5-flash-lite');
     expect(result.sources.length).toBeGreaterThan(0);
     expect(result.retrieval.reranked).toBe(true);

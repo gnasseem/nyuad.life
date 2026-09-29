@@ -1,16 +1,23 @@
-/** Retrieval-augmented answering over the archive: retrieve, optionally rerank with Gemini, then stream a grounded answer. */
+/**
+ * Answering a question: retrieve archive threads, rerank them, add what the student board and the announcements feed
+ * know, then stream a grounded answer that cites every claim and says how sure it is.
+ */
+import { searchAnnouncements, searchBoard, STANDING_LABELS, type Announcement, type Answer, type Question } from './board.ts';
+import type { BoardStore } from './board-store.ts';
+import { detectRedirect } from './domains.ts';
 import { embedderForIndex, type Embedder } from './embeddings.ts';
 import { GeminiError, generateJson, generateStream, generateText, type GeminiConfig, type Message } from './gemini.ts';
 import { ApiError } from './http.ts';
 import { bm25Query, denseQuery, fuse, type Hit } from './search.ts';
 import type { Archive } from './store.ts';
-import { bestWindow, collapseWhitespace, formatDate, tokenize, truncate } from './text.ts';
-import type { AskRequest, AskResponse, ChatTurn, IndexedPost, SourceCard } from './types.ts';
+import { bestWindow, collapseWhitespace, dayNumber, formatDate, tokenize, truncate } from './text.ts';
+import type { AskRequest, AskResponse, ChatTurn, Confidence, IndexedPost, SourceCard } from './types.ts';
 
 export const MAX_QUESTION_CHARS = 600;
 const CANDIDATES = 40;
-const MAX_SOURCES = 16;
-const MIN_SOURCES = 6;
+const RERANK_CANDIDATES = 30;
+const MAX_SOURCES = 14;
+const MIN_SOURCES = 5;
 
 export interface RetrieveOptions {
   k?: number;
@@ -24,6 +31,8 @@ export interface Retrieval {
   hits: Hit[];
   terms: string[];
   dense: boolean;
+  /** The embedded query, when dense search ran, so callers can reuse it. */
+  vector?: Float32Array;
   ms: number;
 }
 
@@ -36,7 +45,7 @@ export async function retrieve(archive: Archive, query: string, options: Retriev
   const depth = Math.max(150, (options.k ?? CANDIDATES) * 4);
   const lexical = bm25Query(archive.bm25, terms, depth);
   let dense: Array<{ row: number; score: number }> = [];
-  let usedDense = false;
+  let vector: Float32Array | undefined;
   if (options.useDense !== false && archive.vectors.count > 0 && archive.meta.model !== 'none') {
     const embedder = options.embedder === undefined ? embedderForIndex(archive.meta) : options.embedder;
     if (!embedder) {
@@ -46,9 +55,8 @@ export async function retrieve(archive: Archive, query: string, options: Retriev
       }
     } else {
       try {
-        const [vector] = await embedder.embed([query], 'query', { retries: 1, timeoutMs: 15_000 });
+        [vector] = await embedder.embed([query], 'query', { retries: 1, timeoutMs: 15_000 });
         dense = denseQuery(archive.vectors, vector!, depth);
-        usedDense = true;
       } catch (error) {
         console.warn('[retrieve] dense search unavailable, using keywords only:', (error as Error).message);
       }
@@ -56,17 +64,19 @@ export async function retrieve(archive: Archive, query: string, options: Retriev
   }
   let hits = fuse(lexical, dense, { dates: archive.posts.map((post) => post.date), chunkPost: archive.chunkPost });
   if (options.filter) hits = hits.filter((hit) => options.filter!(archive.posts[hit.post]!));
-  return { hits: hits.slice(0, options.k ?? CANDIDATES), terms, dense: usedDense, ms: Date.now() - started };
+  return { hits: hits.slice(0, options.k ?? CANDIDATES), terms, dense: vector !== undefined, vector, ms: Date.now() - started };
 }
 
-export function toSourceCards(archive: Archive, hits: Hit[], terms: string[]): SourceCard[] {
+export function toSourceCards(archive: Archive, hits: Hit[], terms: string[], startAt = 1): SourceCard[] {
   return hits.map((hit, index) => {
     const post = archive.posts[hit.post]!;
     const chunk = archive.chunks[hit.chunk]!;
     const passage = chunk.text.split('\n').slice(1).join(' ');
     return {
-      n: index + 1,
+      n: startAt + index,
+      kind: 'archive',
       postId: post.id,
+      title: '',
       url: post.url,
       author: post.author,
       date: post.date,
@@ -81,12 +91,134 @@ export function toSourceCards(archive: Archive, hits: Hit[], terms: string[]): S
   });
 }
 
-/** Renders the numbered sources the model may cite. Whole threads, capped, so the answer can count opinions. */
-export function sourcesBlock(archive: Archive, cards: SourceCard[]): string {
+/* ---------- Live sources: the student board and the announcements feed ---------- */
+
+interface LiveSnapshot {
+  entries: Array<{ question: Question; answers: Answer[] }>;
+  announcements: Announcement[];
+  fetchedAt: number;
+}
+
+let liveCache: { store: BoardStore; snapshot: Promise<LiveSnapshot> } | null = null;
+const LIVE_TTL_MS = 60_000;
+
+async function liveSnapshot(store: BoardStore): Promise<LiveSnapshot> {
+  if (liveCache && liveCache.store === store) {
+    const current = await liveCache.snapshot.catch(() => null);
+    if (current && Date.now() - current.fetchedAt < LIVE_TTL_MS) return current;
+  }
+  const pending = (async (): Promise<LiveSnapshot> => {
+    const [questions, announcements] = await Promise.all([store.listAnswered(300), store.listAnnouncements(new Date())]);
+    const answers = await store.listAnswers(questions.map((question) => question.id));
+    const byQuestion = new Map<string, Answer[]>();
+    for (const answer of answers) byQuestion.set(answer.questionId, [...(byQuestion.get(answer.questionId) ?? []), answer]);
+    return { entries: questions.map((question) => ({ question, answers: byQuestion.get(question.id) ?? [] })), announcements, fetchedAt: Date.now() };
+  })();
+  liveCache = { store, snapshot: pending };
+  return pending;
+}
+
+/** Test hook. */
+export function resetLiveCache(): void {
+  liveCache = null;
+}
+
+export interface LiveSource {
+  card: SourceCard;
+  question?: Question;
+  answers?: Answer[];
+  announcement?: Announcement;
+}
+
+/** Board answers and announcements that speak to the question, as cards numbered after the archive threads. */
+export async function liveSources(store: BoardStore | null, query: string, terms: string[], vector: Float32Array | undefined, startAt: number): Promise<LiveSource[]> {
+  if (!store) return [];
+  try {
+    const snapshot = await liveSnapshot(store);
+    const out: LiveSource[] = [];
+    let n = startAt;
+    for (const hit of searchBoard(snapshot.entries, query, vector, 3)) {
+      const latest = hit.answers[hit.answers.length - 1]!;
+      const text = hit.answers.map((answer) => answer.text).join('\n');
+      out.push({
+        question: hit.question,
+        answers: hit.answers,
+        card: {
+          n: n++,
+          kind: 'board',
+          postId: hit.question.id,
+          title: hit.question.summary || truncate(collapseWhitespace(hit.question.text), 90),
+          url: '',
+          author: hit.answers.length === 1 ? `${latest.helperName}, ${latest.helperMajor}` : `${hit.answers.length} students`,
+          date: latest.createdAt.slice(0, 10),
+          text: truncate(text, 600),
+          commentCount: hit.answers.length,
+          reactions: 0,
+          topics: hit.question.topics,
+          courses: hit.question.courses,
+          snippet: bestWindow(text, terms, 300),
+          score: Number(hit.score.toFixed(4)),
+        },
+      });
+    }
+    for (const hit of searchAnnouncements(snapshot.announcements, query, 2)) {
+      const entry = hit.announcement;
+      out.push({
+        announcement: entry,
+        card: {
+          n: n++,
+          kind: 'announcement',
+          postId: entry.id,
+          title: entry.title,
+          url: entry.link,
+          author: entry.posterName,
+          date: (entry.startsAt ?? entry.createdAt).slice(0, 10),
+          text: truncate(entry.body || entry.title, 600),
+          commentCount: 0,
+          reactions: 0,
+          topics: [],
+          courses: [],
+          snippet: bestWindow(entry.body || entry.title, terms, 300),
+          score: Number(hit.score.toFixed(4)),
+        },
+      });
+    }
+    return out;
+  } catch (error) {
+    console.warn('[ask] live sources unavailable:', (error as Error).message);
+    return [];
+  }
+}
+
+/* ---------- Prompting ---------- */
+
+function age(date: string, today: number): string {
+  const day = dayNumber(date);
+  if (Number.isNaN(day)) return 'undated';
+  const days = Math.max(0, Math.round(today - day));
+  if (days < 14) return `${days} days ago`;
+  if (days < 60) return `${Math.round(days / 7)} weeks ago`;
+  if (days < 365) return `${Math.round(days / 30)} months ago`;
+  return `${(days / 365).toFixed(1)} years ago`;
+}
+
+/** Renders the numbered sources the model may cite: whole threads with their signals, board answers, announcements. */
+export function sourcesBlock(archive: Archive, cards: SourceCard[], live: LiveSource[] = [], today = Date.now() / 86_400_000): string {
+  const liveByN = new Map(live.map((entry) => [entry.card.n, entry]));
   return cards
     .map((card) => {
+      const entry = liveByN.get(card.n);
+      if (card.kind === 'board' && entry?.question) {
+        const lines = entry.answers!.map((answer) => `- ${answer.helperName} (${answer.helperMajor}, ${STANDING_LABELS[answer.helperYear].toLowerCase()}, ${formatDate(answer.createdAt.slice(0, 10))}): ${truncate(collapseWhitespace(answer.text), 700)}`);
+        return [`[${card.n}] Student answers on this site, to the question: "${truncate(collapseWhitespace(entry.question.text), 300)}"`, ...lines].join('\n');
+      }
+      if (card.kind === 'announcement' && entry?.announcement) {
+        const a = entry.announcement;
+        const when = a.startsAt ? `happens ${formatDate(a.startsAt.slice(0, 10))}` : `posted ${formatDate(a.createdAt.slice(0, 10))}`;
+        return [`[${card.n}] Announcement (${a.kind}) by ${a.posterName}, ${when}${a.location ? `, at ${a.location}` : ''}: ${a.title}`, truncate(collapseWhitespace(a.body), 800), a.link ? `Link: ${a.link}` : ''].filter(Boolean).join('\n');
+      }
       const post = archive.posts[archive.postPosition.get(card.postId)!]!;
-      const header = `[${card.n}] Post by ${post.author || 'Unknown'} on ${formatDate(post.date)} · ${card.commentCount} comments · ${card.reactions} reactions`;
+      const header = `[${card.n}] Post by ${post.author || 'Unknown'} on ${formatDate(post.date)} (${age(post.date, today)}) · ${card.commentCount} comments · ${card.reactions} reactions`;
       const body = truncate(collapseWhitespace(post.text) || '(no text)', 2200);
       let budget = 4200 - header.length - body.length;
       const comments: string[] = [];
@@ -104,19 +236,38 @@ export function sourcesBlock(archive: Archive, cards: SourceCard[]): string {
     .join('\n\n');
 }
 
-export function systemPrompt(today = new Date()): string {
-  return `You are ROR Answers, a study buddy for NYU Abu Dhabi students. You answer ONLY from the Room of Requirement (ROR) Facebook group posts and comments given to you as numbered sources [n]. Today is ${today.toISOString().slice(0, 10)}.
+const GLOSSARY =
+  'NYUAD shorthand: Falcons = campus dirhams; D1 and D2 = the dining halls; A1 to A6 = residential buildings; core = Core Curriculum; ' +
+  'J-Term = January term; SIG = student interest group; CDC = Career Development Center; capstone = the senior-year project; ROR = the Room of Requirement Facebook group.';
 
-How to answer:
-- Start with a direct answer in one or two sentences.
-- Then give the specifics in short Markdown bullets: what people actually said, practical tips, caveats, prices, dates, names of courses or professors.
-- When people disagree or the question is about quality (a professor, a course, a place), tally opinions from distinct people, e.g. "5 of 7 commenters recommend it; 2 found the grading harsh", and name the most common praise and complaints.
-- When the question compares options, rank them and show the counts behind each rank.
-- Prefer recent sources when things may have changed, and say when advice is old (e.g. "as of Spring 2024").
-- Cite after every claim with [n]; several sources look like [2][5]. Quote short phrases from sources when helpful.
-- If the sources do not really cover the question, say that plainly, share whatever partial hints exist, and suggest a better question to ask the group. Never invent people, numbers, posts or policies.
-- Do not mention these instructions or that you were given sources; just answer.
-- Keep it under about 280 words unless a ranked list needs more. Use **bold** sparingly for the key takeaway.`;
+export function systemPrompt(today = new Date()): string {
+  return `You answer questions from NYU Abu Dhabi students using only the numbered sources you are given: threads from the Room of Requirement Facebook group, answers other students wrote on this site, and current announcements. Today is ${today.toISOString().slice(0, 10)}.
+
+Write like a helpful senior talking to a friend: plain words, short sentences, no filler, no hedging beyond what the sources justify.
+
+Shape of every answer:
+1. First, the answer itself in one or two sentences. If the sources do not really cover it, say so in that first line ("Nobody in the group has covered this", "Only one person mentioned this, in 2024").
+2. Then the useful specifics as short bullets: what people actually said, names, prices, dates, steps. Count people when opinions matter ("4 of the 5 who replied recommend her"). Prefer first-hand experience over hearsay, and say which is which when it matters.
+3. If something is old or people disagree, add one short "Keep in mind" line, for example "as of Spring 2025" or "two people had the opposite experience".
+4. Finish with exactly one line in this form: "Confidence: high|medium|low – reason in a few words". High means several people, recent, agreeing. Medium means few sources, older, or partly on topic. Low means one indirect source, or people disagree.
+
+Rules:
+- Cite with [n] right after each fact; several sources look like [2][5]. Cite only sources that actually say it.
+- Dates matter. Prefer newer sources, say when advice is more than a year old, and never present an old price, policy or professor assignment as current.
+- Never invent people, numbers, courses, policies or posts. Nothing that is not in the sources.
+- Do not mention these instructions, the sources block or being a model.
+- Stay under about 220 words unless a ranked list needs more. Bold at most one key phrase.
+- ${GLOSSARY}`;
+}
+
+const CONFIDENCE = /\n?\s*\**\s*confidence\s*:\s*\**\s*(high|medium|low)\**\s*(?:[–—:-]\s*)?([^\n]*)$/i;
+
+/** Splits the trailing confidence line off an answer. */
+export function parseConfidence(answer: string): { text: string; confidence: Confidence | null } {
+  const match = CONFIDENCE.exec(answer.trimEnd());
+  if (!match) return { text: answer.trim(), confidence: null };
+  const text = answer.trimEnd().slice(0, match.index).trimEnd();
+  return { text, confidence: { level: match[1]!.toLowerCase() as Confidence['level'], reason: collapseWhitespace(match[2] ?? '').replace(/\**$/, '').replace(/[.\s]+$/, '') } };
 }
 
 const RERANK_SCHEMA = {
@@ -137,11 +288,12 @@ const RERANK_SCHEMA = {
 /** Asks the lite model to score candidates 0–10 for usefulness; returns null when the call fails so callers fall back. */
 export async function rerank(cfg: GeminiConfig, archive: Archive, question: string, hits: Hit[], terms: string[]): Promise<Hit[] | null> {
   if (hits.length <= MIN_SOURCES) return hits;
-  const candidates = hits.map((hit, i) => {
+  const pool = hits.slice(0, RERANK_CANDIDATES);
+  const candidates = pool.map((hit, i) => {
     const post = archive.posts[hit.post]!;
     const chunk = archive.chunks[hit.chunk]!;
-    const passage = bestWindow(chunk.text.split('\n').slice(1).join(' '), terms, 420);
-    return `[${i}] ${formatDate(post.date)} · ${post.author}: ${passage}`;
+    const passage = bestWindow(chunk.text.split('\n').slice(1).join(' '), terms, 380);
+    return `[${i}] ${formatDate(post.date)} · ${Math.max(post.commentCount ?? 0, post.comments.length)} comments · ${post.author}: ${passage}`;
   });
   try {
     const result = await generateJson<{ scores: Array<{ i: number; s: number }> }>(
@@ -152,18 +304,20 @@ export async function rerank(cfg: GeminiConfig, archive: Archive, question: stri
         maxOutputTokens: 1024,
         responseSchema: RERANK_SCHEMA,
         system:
-          'You rank forum posts for a student Q&A search engine. Score each candidate from 0 (unrelated) to 10 (directly answers the question with specifics). Posts that merely mention a keyword score low; posts with first-hand experience, advice or numbers relevant to the question score high. Return every index exactly once.',
+          'You rank forum threads for a student Q&A search. Score each candidate from 0 (unrelated) to 10 (answers the question directly with specifics). ' +
+          'Threads that merely share a keyword score low; first-hand experience, concrete advice, prices, names and numbers relevant to the question score high. ' +
+          'Among equally relevant threads prefer the more recent and the more discussed. Return every index exactly once.',
         messages: [{ role: 'user', text: `Question: ${question}\n\nCandidates:\n${candidates.join('\n')}` }],
       },
       { retries: 1, timeoutMs: 20_000 },
     );
     const scores = new Map<number, number>();
     for (const entry of result.scores ?? []) {
-      if (Number.isInteger(entry.i) && entry.i >= 0 && entry.i < hits.length) scores.set(entry.i, Math.max(0, Math.min(10, entry.s)));
+      if (Number.isInteger(entry.i) && entry.i >= 0 && entry.i < pool.length) scores.set(entry.i, Math.max(0, Math.min(10, entry.s)));
     }
-    if (scores.size < hits.length / 2) return null;
-    const maxFused = Math.max(...hits.map((hit) => hit.score)) || 1;
-    const rescored = hits.map((hit, i) => {
+    if (scores.size < pool.length / 2) return null;
+    const maxFused = Math.max(...pool.map((hit) => hit.score)) || 1;
+    const rescored = pool.map((hit, i) => {
       const llm = scores.get(i) ?? 2;
       return { hit: { ...hit, score: 0.7 * (llm / 10) + 0.3 * (hit.score / maxFused) }, llm };
     });
@@ -192,7 +346,9 @@ export async function standaloneQuestion(cfg: GeminiConfig, history: ChatTurn[],
         temperature: 0,
         maxOutputTokens: 120,
         system:
-          'Rewrite the student\'s latest message as one standalone search query that keeps every name, course code and detail it refers to from the conversation. Output only the query, no quotes or explanation. If it is already standalone, return it unchanged.',
+          "Rewrite the student's latest message as one standalone search query that keeps every name, course code and detail it refers to from the conversation. " +
+          'Output only the query, no quotes or explanation. If it is already standalone, return it unchanged. ' +
+          GLOSSARY,
         messages: [{ role: 'user', text: `Conversation:\n${transcript}\n\nLatest message: ${question}` }],
       },
       { retries: 1, timeoutMs: 12_000 },
@@ -238,6 +394,7 @@ export async function followups(cfg: GeminiConfig, question: string, cards: Sour
 
 export interface AskEvents {
   status?(message: string): void;
+  redirect?(redirect: NonNullable<AskResponse['redirect']>): void;
   sources?(cards: SourceCard[]): void;
   delta?(text: string): void;
   followups?(questions: string[]): void;
@@ -256,28 +413,41 @@ export function validateAsk(body: Partial<AskRequest>): AskRequest {
   return { question, history, stream: body.stream !== false };
 }
 
+export interface AskContext {
+  board?: BoardStore | null;
+}
+
 /** The full pipeline. Emits sources first, then answer deltas, then follow-ups; also returns everything at the end. */
-export async function ask(archive: Archive, cfg: GeminiConfig, request: AskRequest, events: AskEvents = {}, signal?: AbortSignal): Promise<AskResponse> {
+export async function ask(archive: Archive, cfg: GeminiConfig, request: AskRequest, events: AskEvents = {}, signal?: AbortSignal, context: AskContext = {}): Promise<AskResponse> {
   const started = Date.now();
   const history = request.history ?? [];
-  events.status?.('Understanding the question');
-  const searchQuery = await standaloneQuestion(cfg, history, request.question);
+  const board = context.board ?? null;
 
-  events.status?.(`Searching ${archive.posts.length.toLocaleString('en')} posts`);
-  const retrieval = await retrieve(archive, searchQuery, { k: CANDIDATES });
-  if (retrieval.hits.length === 0) {
-    const answer = "I couldn't find any Room of Requirement posts about that. Try different words (a course code, a professor's surname, a place) or ask the group directly.";
+  const redirect = history.length === 0 ? detectRedirect(request.question) : null;
+  if (redirect) {
+    events.redirect?.(redirect);
     events.sources?.([]);
-    events.delta?.(answer);
     events.followups?.([]);
-    return { answer, sources: [], followups: [], model: cfg.chatModel, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
+    return { answer: '', sources: [], followups: [], model: cfg.chatModel, confidence: null, redirect, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
   }
 
-  events.status?.('Picking the most useful threads');
-  const reranked = await rerank(cfg, archive, searchQuery, retrieval.hits, retrieval.terms);
-  const chosen = (reranked ?? retrieval.hits.slice(0, 14)).slice(0, MAX_SOURCES);
-  const cards = toSourceCards(archive, chosen, retrieval.terms);
+  events.status?.('Reading the question');
+  const searchQuery = await standaloneQuestion(cfg, history, request.question);
+
+  events.status?.('Searching the archive');
+  const retrieval = await retrieve(archive, searchQuery, { k: CANDIDATES });
+  const chosen = retrieval.hits.length ? ((await withStatus(events, 'Picking the best threads', rerank(cfg, archive, searchQuery, retrieval.hits, retrieval.terms))) ?? retrieval.hits.slice(0, 12)).slice(0, MAX_SOURCES) : [];
+  const archiveCards = toSourceCards(archive, chosen, retrieval.terms);
+  const live = await liveSources(board, searchQuery, retrieval.terms, retrieval.vector, archiveCards.length + 1);
+  const cards = [...archiveCards, ...live.map((entry) => entry.card)];
   events.sources?.(cards);
+
+  if (cards.length === 0) {
+    const answer = 'Nobody in the group has covered this yet, so there is nothing reliable to pass on. Ask the students on the board and someone who knows can answer you directly.';
+    events.delta?.(answer);
+    events.followups?.([]);
+    return { answer, sources: [], followups: [], model: cfg.chatModel, confidence: { level: 'low', reason: 'no matching threads' }, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
+  }
 
   const followupsPromise = followups(cfg, request.question, cards).then((questions) => {
     events.followups?.(questions);
@@ -286,17 +456,24 @@ export async function ask(archive: Archive, cfg: GeminiConfig, request: AskReque
 
   events.status?.('Writing the answer');
   const messages: Message[] = history.slice(-6).map((turn) => ({ role: turn.role, text: truncate(turn.content, 2500) }));
-  messages.push({ role: 'user', text: `Question: ${request.question}\n\nSources:\n${sourcesBlock(archive, cards)}` });
+  messages.push({ role: 'user', text: `Question: ${request.question}\n\nSources:\n${sourcesBlock(archive, cards, live)}` });
   const { answer, model } = await writeAnswer(cfg, messages, events, signal);
   if (!answer.trim()) throw new ApiError(502, 'The model returned an empty answer. Try again.', 'empty_answer');
   const questions = await followupsPromise;
+  const parsed = parseConfidence(answer);
   return {
-    answer: answer.trim(),
+    answer: parsed.text,
     sources: cards,
     followups: questions,
     model,
-    retrieval: { candidates: retrieval.hits.length, reranked: reranked !== null, ms: Date.now() - started },
+    confidence: parsed.confidence,
+    retrieval: { candidates: retrieval.hits.length, reranked: chosen.length > 0 && chosen !== retrieval.hits, ms: Date.now() - started },
   };
+}
+
+async function withStatus<T>(events: AskEvents, message: string, work: Promise<T>): Promise<T> {
+  events.status?.(message);
+  return work;
 }
 
 /**
@@ -310,7 +487,7 @@ async function writeAnswer(cfg: GeminiConfig, messages: Message[], events: AskEv
     const last = i === models.length - 1;
     let answer = '';
     try {
-      for await (const event of generateStream(cfg, { model, system: systemPrompt(), messages, temperature: 0.25, maxOutputTokens: 1800 }, { retries: last ? 1 : 0, signal })) {
+      for await (const event of generateStream(cfg, { model, system: systemPrompt(), messages, temperature: 0.2, maxOutputTokens: 1800 }, { retries: last ? 1 : 0, signal })) {
         if (event.text) {
           answer += event.text;
           events.delta?.(event.text);
@@ -324,7 +501,7 @@ async function writeAnswer(cfg: GeminiConfig, messages: Message[], events: AskEv
       const outOfQuota = error instanceof GeminiError && (error.status === 429 || error.status === 404);
       if (!outOfQuota || answer || last) throw error;
       console.warn(`[ask] ${model} unavailable (${error.message.slice(0, 100)}); trying ${models[i + 1]}.`);
-      events.status?.('Busy model, switching to a backup');
+      events.status?.('Switching to a backup model');
     }
   }
   throw new ApiError(503, 'All answer models are out of quota for now. Try again in a while.', 'quota');

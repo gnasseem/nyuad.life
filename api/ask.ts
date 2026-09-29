@@ -1,3 +1,4 @@
+import { boardStore } from '../lib/board-store.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, rateLimit, readJson, route, sendJson, startSse } from '../lib/http.ts';
 import { ask, validateAsk } from '../lib/rag.ts';
@@ -12,9 +13,10 @@ export default route(['POST'], async (req, res) => {
   if (!cfg) throw new ApiError(503, 'GEMINI_API_KEY is not configured on the server.', 'no_model');
   const request = validateAsk(await readJson<Partial<AskRequest>>(req));
   const archive = await loadArchive();
+  const board = boardStore();
 
   if (!request.stream) {
-    sendJson(res, 200, await ask(archive, cfg, request));
+    sendJson(res, 200, await ask(archive, cfg, request, {}, undefined, { board }));
     return;
   }
 
@@ -28,13 +30,15 @@ export default route(['POST'], async (req, res) => {
       request,
       {
         status: (message) => sse.send('status', { message }),
+        redirect: (redirect) => sse.send('redirect', redirect),
         sources: (sources) => sse.send('sources', { sources }),
         delta: (text) => sse.send('delta', { text }),
         followups: (questions) => sse.send('followups', { questions }),
       },
       controller.signal,
+      { board },
     );
-    sse.send('done', { model: result.model, retrieval: result.retrieval });
+    sse.send('done', { model: result.model, confidence: result.confidence, retrieval: result.retrieval });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!(error instanceof ApiError) || error.status >= 500) console.error('[ask]', error);

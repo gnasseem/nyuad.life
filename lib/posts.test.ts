@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { enrichPost, isUsefulPost, mergePosts, normalizeDate, normalizePost } from './posts.ts';
+import { enrichPost, mergePosts, normalizeDate, normalizePost } from './posts.ts';
 
 describe('normalizePost', () => {
   it('cleans whitespace, dates and comment counts', () => {
@@ -42,11 +42,6 @@ describe('mergePosts', () => {
 });
 
 describe('enrichment', () => {
-  it('drops empty and sponsored posts', () => {
-    expect(isUsefulPost({ id: '1', url: '', author: '', date: '', text: '', comments: [] })).toBe(false);
-    expect(isUsefulPost({ id: '2', url: '', author: 'Brand', date: '', text: 'Book now! T&Cs apply', comments: [] })).toBe(false);
-    expect(isUsefulPost({ id: '3', url: '', author: 'S', date: '', text: 'Which professor?', comments: [] })).toBe(true);
-  });
   it('tags topics and courses', () => {
     const post = enrichPost({ id: '1', url: '', author: 'S', date: '', text: 'Anyone taken CS-UH 1001 with a good professor? Which section is best for the course?', comments: [] });
     expect(post.courses).toEqual(['CS-UH 1001']);

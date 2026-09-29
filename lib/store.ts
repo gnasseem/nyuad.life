@@ -7,10 +7,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { chunkPosts } from './chunker.ts';
-import { enrichPost, isUsefulPost, readPostsJsonl, sortNewestFirst } from './posts.ts';
+import { cleanPosts } from './filters.ts';
+import { enrichPost, readPostsJsonl, sortNewestFirst } from './posts.ts';
 import { buildBm25, type Bm25Index } from './search.ts';
 import type { Chunk, IndexMeta, IndexedPost, SourcePost } from './types.ts';
-import { decodeTable, emptyTable, type VectorTable } from './vectors.ts';
+import { decodeTable, emptyTable, selectRows, type VectorTable } from './vectors.ts';
 
 export interface Archive {
   meta: IndexMeta;
@@ -75,11 +76,11 @@ async function load(): Promise<Archive> {
         vectors = emptyTable(meta.dimensions);
       }
     }
-    return assemble(meta, posts, chunks, vectors, 'index', started);
+    return assemble(meta, ...clean(posts, chunks, vectors), 'index', started);
   }
 
   const raw = await readPostsJsonl(postsFile());
-  const posts = sortNewestFirst(raw.filter(isUsefulPost).map(enrichPost));
+  const posts = sortNewestFirst(cleanPosts(raw).posts.map(enrichPost));
   const chunks = chunkPosts(posts, { model: 'none', dimensions: 0 });
   const meta: IndexMeta = {
     version: 2,
@@ -94,6 +95,25 @@ async function load(): Promise<Archive> {
     oldestPost: [...posts].reverse().find((post) => post.date)?.date ?? '',
   };
   return assemble(meta, posts, chunks, emptyTable(0), 'posts.jsonl', started);
+}
+
+/**
+ * Applies the current noise filters to an index built earlier, so a stale data/index still serves a clean archive.
+ * Chunks of dropped posts go, and their vector rows with them; chunk text itself is left as embedded.
+ */
+function clean(posts: IndexedPost[], chunks: Chunk[], vectors: VectorTable): [IndexedPost[], Chunk[], VectorTable] {
+  const result = cleanPosts(posts);
+  if (result.posts.length === posts.length && result.commentsDropped === 0) return [posts, chunks, vectors];
+  const keptIds = new Set(result.posts.map((post) => post.id));
+  const rows: number[] = [];
+  const keptChunks: Chunk[] = [];
+  chunks.forEach((chunk, row) => {
+    if (!keptIds.has(chunk.postId)) return;
+    rows.push(row);
+    keptChunks.push(chunk);
+  });
+  const keptVectors = vectors.count === chunks.length && vectors.count > 0 ? selectRows(vectors, rows) : vectors.count === 0 ? vectors : emptyTable(vectors.dims);
+  return [result.posts, keptChunks, keptVectors];
 }
 
 function assemble(
@@ -120,7 +140,7 @@ function assemble(
     for (const topic of post.topics) push(byTopic, topic, index);
   });
   return {
-    meta,
+    meta: { ...meta, posts: posts.length, comments: posts.reduce((sum, post) => sum + post.comments.length, 0), chunks: chunks.length },
     posts,
     postPosition,
     chunks,

@@ -7,7 +7,8 @@ import path from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { chunkPosts } from './chunker.ts';
 import { EmbeddingError, PROVIDER_LABELS, type Embedder } from './embeddings.ts';
-import { enrichPost, isUsefulPost, readPostsJsonl, sortNewestFirst } from './posts.ts';
+import { cleanPosts } from './filters.ts';
+import { enrichPost, readPostsJsonl, sortNewestFirst } from './posts.ts';
 import type { Chunk, IndexMeta, IndexedPost } from './types.ts';
 import { concatTables, decodeTable, emptyTable, encodeTable, quantize, selectRows, type VectorTable } from './vectors.ts';
 
@@ -45,10 +46,12 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
 
   const raw = await readPostsJsonl(options.postsFile);
   if (raw.length === 0) throw new Error(`No posts found in ${options.postsFile}. Run the scraper first.`);
-  let posts: IndexedPost[] = sortNewestFirst(raw.filter(isUsefulPost).map(enrichPost));
+  const cleaned = cleanPosts(raw);
+  let posts: IndexedPost[] = sortNewestFirst(cleaned.posts.map(enrichPost));
   if (options.limit) posts = posts.slice(0, options.limit);
   const chunks = chunkPosts(posts, { model, dimensions });
-  log(`Read ${raw.length} posts (${posts.length} kept) and made ${chunks.length} chunks.`);
+  const { ad, falcons, listing } = cleaned.dropped;
+  log(`Read ${raw.length} posts; kept ${posts.length} (dropped ${ad} ads, ${falcons} Falcon trades, ${listing} listings and ${cleaned.commentsDropped} noise comments) and made ${chunks.length} chunks.`);
 
   mkdirSync(options.outDir, { recursive: true });
   let table = emptyTable(dimensions);
