@@ -5,3 +5,12 @@ local.properties
 .idea/
 *.iml
 .DS_Store
+node_modules/
+dist/
+.env
+.env.*.local
+.scraper-profile/
+.scraper-debug/
+data/index/cache-*
+data/posts.jsonl.tmp
+data/scrape-state.json
