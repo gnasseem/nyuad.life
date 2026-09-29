@@ -1,0 +1,51 @@
+# Builds the search index whenever new posts land, so nobody has to run the indexer by hand.
+# Needs a repository secret named GEMINI_API_KEY (Settings → Secrets and variables → Actions).
+# The committed data/index/ is what Vercel deploys; only chunks that changed get embedded.
+name: Build search index
+
+on:
+  push:
+    paths:
+      - 'data/posts.jsonl'
+      - 'lib/**'
+      - 'scripts/index.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: index-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Embed new posts with Gemini and commit the index
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_EMBED_MODEL: ${{ vars.GEMINI_EMBED_MODEL }}
+          GEMINI_EMBED_DIMENSIONS: ${{ vars.GEMINI_EMBED_DIMENSIONS }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::warning::No GEMINI_API_KEY secret is set, so the index was not built. Add it under Settings → Secrets → Actions."
+            exit 0
+          fi
+          npm run index
+          rm -f data/index/cache-*
+          git config user.name "ror-indexer"
+          git config user.email "ror-indexer@users.noreply.github.com"
+          git add data/index
+          if git diff --cached --quiet; then
+            echo "Index unchanged."
+          else
+            git commit -m "Update search index [skip ci]"
+            git push
+          fi

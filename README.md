@@ -4,42 +4,40 @@ Ask the NYU Abu Dhabi **Room of Requirement** archive. Students type a question,
 answer it (hybrid keyword + Gemini vector search), and Gemini writes a short answer that cites the actual posts.
 Every citation opens the original thread with all its comments.
 
-Three pieces live in this repository:
+Everything is TypeScript, in one repository:
 
 | Piece | Where | What it is |
 | --- | --- | --- |
-| Backend API | `api/`, `lib/` | Vercel serverless functions (TypeScript). Holds the Gemini key and the archive. |
-| Web app | `web/` | Vite + React app for students, deployed with the API on Vercel. |
-| Native app | `shared/`, `desktopApp/`, `androidApp/` | Compose Multiplatform client (desktop + Android) that talks to the same API. |
+| Backend API | `api/`, `lib/` | Vercel serverless functions. Holds the Gemini key and the archive. |
+| Web app | `web/` | Vite + React app for students. Installs to the phone home screen like a native app. |
+| Scraper | `scripts/scrape.ts` | Pulls posts and comments out of the Facebook group with your own login (runs on your laptop). |
+| Indexer | `scripts/index.ts`, `.github/workflows/index.yml` | Embeds posts with Gemini, locally or automatically in GitHub Actions. |
 
-Plus two local tools: `scripts/scrape.ts` (pulls posts and comments out of the Facebook group with your own login)
-and `scripts/index.ts` (embeds them with Gemini).
+## 1. Deploy on Vercel
 
-## 1. Deploy the backend + web app on Vercel
-
-1. Import this repository into Vercel (Add New → Project). The `vercel.json` already sets the build (`npm run build`)
-   and output (`dist/`); no framework preset is needed.
+1. Import this repository into Vercel (Add New → Project). `vercel.json` already sets the build and output; no
+   framework preset is needed.
 2. Add environment variables under Settings → Environment Variables:
 
    | Variable | Required | Meaning |
    | --- | --- | --- |
    | `GEMINI_API_KEY` | yes | Google AI Studio key. Used for embeddings, reranking and answers. |
-   | `ROR_ACCESS_CODE` | recommended | A shared code students enter once. Without it the private archive is open to anyone with the URL. |
+   | `ROR_ACCESS_CODE` | recommended | A password you make up. Students type it once; without it anyone with the URL can read the private group's content and spend your Gemini quota. |
    | `GEMINI_CHAT_MODEL` | no | Defaults to `gemini-flash-latest`. |
    | `GEMINI_LITE_MODEL` | no | Defaults to `gemini-flash-lite-latest` (rerank, follow-ups, query rewriting). |
    | `GEMINI_EMBED_MODEL` / `GEMINI_EMBED_DIMENSIONS` | no | Defaults to `gemini-embedding-001` at 768 dimensions. |
 
-3. Deploy. The build creates a keyword-only index from `data/posts.jsonl` if `data/index/` is not committed, so the
-   site works immediately; commit a real index (step 3) for semantic search.
+3. Deploy. If `data/index/` is not committed yet, the build makes a keyword-only index from `data/posts.jsonl`, so the
+   site works immediately; semantic search switches on as soon as an embedded index is committed (section 3).
 
 Routes: `GET /api/health`, `GET /api/home`, `GET /api/search`, `GET /api/post?id=`, `GET /api/courses`,
 `POST /api/ask` (server-sent events: `status`, `sources`, `delta`, `followups`, `done`, `error`). Protected routes
-need the `x-ror-code` header when `ROR_ACCESS_CODE` is set.
+need the `x-ror-code` header when `ROR_ACCESS_CODE` is set; the web app adds it after the student enters the code.
 
 ## 2. Scrape the whole group (runs on your laptop)
 
-The scraper drives a real Chromium window where you are logged in as yourself. It intercepts the JSON Facebook's
-own web client loads, so it does not depend on fragile page selectors, and it is incremental and resumable.
+The scraper drives a real Chromium window where you are logged in as yourself. It reads the JSON Facebook's own
+web client loads, so it does not depend on fragile page selectors, and it is incremental and resumable.
 
 ```bash
 npm install
@@ -55,7 +53,19 @@ npm run scrape                  # later: only new posts and threads whose commen
 - Keep the pace polite (`--delay 2` doubles all waits). This is your personal export of a group you belong to;
   don't share the raw file outside the community.
 
-## 3. Embed with Gemini and publish the index
+When a run finishes, commit and push `data/posts.jsonl`.
+
+## 3. Embedding (semantic search)
+
+Keyword search finds posts that contain your words. Embeddings let the search understand meaning, so
+"who is chill for calc" still finds "Dania is very relaxed about deadlines". Embedding the archive is a one-off job
+per post, so it runs separately from deploys and only new posts are embedded each time.
+
+**Automatic (recommended):** add a repository secret `GEMINI_API_KEY` on GitHub (Settings → Secrets and variables →
+Actions). From then on, every push that changes `data/posts.jsonl` runs `.github/workflows/index.yml`, which embeds
+the new posts and commits `data/index/`. Vercel redeploys with it.
+
+**Manual:**
 
 ```bash
 cp .env.example .env            # put GEMINI_API_KEY in it
@@ -64,8 +74,7 @@ git add data/index && git commit -m "Update archive index" && git push
 ```
 
 `data/index/` holds `posts.json.gz`, `chunks.json.gz`, `meta.json` and `vectors.bin` (int8-quantised, about 0.8 KB per
-chunk). Embedding cache files (`data/index/cache-*`) stay local so re-indexing after a new scrape only embeds new
-posts. Options: `--fresh` re-embeds everything, `--limit 300` indexes only the newest 300 posts, `--batch 50 --concurrency 2`
+chunk). Options: `--fresh` re-embeds everything, `--limit 300` indexes only the newest 300 posts, `--batch 50 --concurrency 2`
 tune throughput against your Gemini quota (429s are retried automatically with the delay Google asks for).
 
 ## 4. Run everything locally
@@ -80,18 +89,11 @@ npm run check                   # typecheck + tests + production build
 
 Without a Gemini key the API still serves browsing and keyword search; asking needs the key.
 
-## 5. Native app (Compose Multiplatform)
+## 5. Install it as an app
 
-The desktop and Android apps are thin clients: open Settings, enter the server address (for example your Vercel URL)
-and the access code, then use Ask, Browse and Courses exactly as on the web.
-
-```bash
-./gradlew :desktopApp:run        # desktop
-./gradlew :shared:jvmTest        # shared unit tests
-./gradlew :androidApp:installDebug   # Android, when ANDROID_HOME points at an SDK
-```
-
-Settings are stored in `~/.ror-answers/settings.properties` on desktop and in SharedPreferences on Android.
+On a phone, open the site and choose "Add to Home Screen" (Safari share menu on iOS, browser menu on Android). It
+opens full-screen with its own icon, and the app shell keeps working on flaky wifi. Desktop Chrome and Edge offer
+"Install" in the address bar.
 
 ## How answers are produced
 
