@@ -1,5 +1,6 @@
 # Builds the search index whenever new posts land, so nobody has to run the indexer by hand.
-# Needs a repository secret named GEMINI_API_KEY (Settings → Secrets and variables → Actions).
+# Needs one embedding key as a repository secret (Settings → Secrets and variables → Actions):
+#   VOYAGE_API_KEY (recommended), or CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID, or GEMINI_API_KEY.
 # The committed data/index/ is what Vercel deploys; only chunks that changed get embedded.
 name: Build search index
 
@@ -23,6 +24,7 @@ concurrency:
 jobs:
   index:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,14 +32,22 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Embed new posts with Gemini and commit the index
+      - name: Embed new posts and commit the index
         env:
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          VOYAGE_EMBED_MODEL: ${{ vars.VOYAGE_EMBED_MODEL }}
+          VOYAGE_EMBED_DIMENSIONS: ${{ vars.VOYAGE_EMBED_DIMENSIONS }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_EMBED_MODEL: ${{ vars.CLOUDFLARE_EMBED_MODEL }}
+          CLOUDFLARE_EMBED_DIMENSIONS: ${{ vars.CLOUDFLARE_EMBED_DIMENSIONS }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_EMBED_MODEL: ${{ vars.GEMINI_EMBED_MODEL }}
           GEMINI_EMBED_DIMENSIONS: ${{ vars.GEMINI_EMBED_DIMENSIONS }}
+          ROR_EMBED_PROVIDER: ${{ vars.ROR_EMBED_PROVIDER }}
         run: |
-          if [ -z "$GEMINI_API_KEY" ]; then
-            echo "::warning::No GEMINI_API_KEY secret is set, so the index was not built. Add it under Settings → Secrets → Actions."
+          if [ -z "$VOYAGE_API_KEY" ] && [ -z "$CLOUDFLARE_API_TOKEN" ] && [ -z "$GEMINI_API_KEY" ]; then
+            echo "::warning::No embedding key is set (VOYAGE_API_KEY, CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID, or GEMINI_API_KEY), so the index was not built. Add one under Settings → Secrets → Actions."
             exit 0
           fi
           npm run index

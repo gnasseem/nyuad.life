@@ -7,25 +7,34 @@ export interface GeminiConfig {
   apiKey: string;
   baseUrl: string;
   embedModel: string;
+  /** Model that writes answers. */
   chatModel: string;
+  /** Models to try, in order, when the answer model is out of quota (free tiers reset daily). */
+  chatFallbacks: string[];
+  /** Cheaper model for reranking, follow-ups and query rewriting. */
   liteModel: string;
   dimensions: number;
 }
 
 export const DEFAULT_EMBED_MODEL = 'gemini-embedding-001';
-export const DEFAULT_CHAT_MODEL = 'gemini-flash-latest';
-export const DEFAULT_LITE_MODEL = 'gemini-flash-lite-latest';
+// Pinned rather than "-latest": the free tier is granted per model, and an alias can move to a model without one.
+export const DEFAULT_CHAT_MODEL = 'gemini-2.5-flash';
+export const DEFAULT_LITE_MODEL = 'gemini-2.5-flash-lite';
+export const DEFAULT_CHAT_FALLBACKS = ['gemini-2.5-flash-lite'];
 export const DEFAULT_DIMENSIONS = 768;
 
 /** Reads GEMINI_API_KEY and the optional model overrides; returns null when no key is configured. */
 export function geminiConfig(env: NodeJS.ProcessEnv = process.env): GeminiConfig | null {
   const apiKey = (env.GEMINI_API_KEY ?? env.GOOGLE_API_KEY ?? '').trim();
   if (!apiKey) return null;
+  const chatModel = env.GEMINI_CHAT_MODEL?.trim() || DEFAULT_CHAT_MODEL;
+  const fallbacks = env.GEMINI_CHAT_FALLBACK_MODELS === undefined ? DEFAULT_CHAT_FALLBACKS : env.GEMINI_CHAT_FALLBACK_MODELS.split(',').map((model) => model.trim()).filter(Boolean);
   return {
     apiKey,
     baseUrl: (env.GEMINI_BASE_URL ?? 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, ''),
     embedModel: env.GEMINI_EMBED_MODEL?.trim() || DEFAULT_EMBED_MODEL,
-    chatModel: env.GEMINI_CHAT_MODEL?.trim() || DEFAULT_CHAT_MODEL,
+    chatModel,
+    chatFallbacks: fallbacks.filter((model) => model !== chatModel),
     liteModel: env.GEMINI_LITE_MODEL?.trim() || DEFAULT_LITE_MODEL,
     dimensions: Number(env.GEMINI_EMBED_DIMENSIONS) || DEFAULT_DIMENSIONS,
   };

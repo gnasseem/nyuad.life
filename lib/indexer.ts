@@ -1,12 +1,12 @@
 /**
- * Builds data/index from data/posts.jsonl: enriched posts, chunks, and Gemini embeddings quantised to int8.
+ * Builds data/index from data/posts.jsonl: enriched posts, chunks, and embeddings quantised to int8.
  * Embeddings are cached by content hash, so re-running after a new scrape only embeds what changed.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { chunkPosts } from './chunker.ts';
-import { embedTexts, GeminiError, type GeminiConfig } from './gemini.ts';
+import { EmbeddingError, PROVIDER_LABELS, type Embedder } from './embeddings.ts';
 import { enrichPost, isUsefulPost, readPostsJsonl, sortNewestFirst } from './posts.ts';
 import type { Chunk, IndexMeta, IndexedPost } from './types.ts';
 import { concatTables, decodeTable, emptyTable, encodeTable, quantize, selectRows, type VectorTable } from './vectors.ts';
@@ -15,7 +15,7 @@ export interface BuildOptions {
   postsFile: string;
   outDir: string;
   /** null builds a keyword-only index (no vectors) so the app can run before a key exists. */
-  gemini: GeminiConfig | null;
+  embedder: Embedder | null;
   batchSize?: number;
   concurrency?: number;
   /** Only index the newest N posts (handy for smoke tests). */
@@ -39,8 +39,9 @@ interface Cache {
 
 export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
   const log = options.log ?? (() => {});
-  const model = options.gemini?.embedModel ?? 'none';
-  const dimensions = options.gemini?.dimensions ?? 0;
+  const embedder = options.embedder;
+  const model = embedder?.model ?? 'none';
+  const dimensions = embedder?.dimensions ?? 0;
 
   const raw = await readPostsJsonl(options.postsFile);
   if (raw.length === 0) throw new Error(`No posts found in ${options.postsFile}. Run the scraper first.`);
@@ -54,14 +55,14 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
   let embedded = 0;
   let reused = 0;
 
-  if (options.gemini) {
+  if (embedder) {
     const cache = options.fresh ? { model, dimensions, keys: [], table: emptyTable(dimensions) } : loadCache(options.outDir, model, dimensions);
     const known = new Map(cache.keys.map((key, row) => [key, row]));
     const missing = chunks.filter((chunk) => !known.has(chunk.hash));
     reused = chunks.length - missing.length;
-    log(`${reused} chunks already embedded, ${missing.length} to embed with ${model} (${dimensions} dims).`);
+    log(`${reused} chunks already embedded, ${missing.length} to embed with ${PROVIDER_LABELS[embedder.provider]} ${model} (${dimensions} dims).`);
     if (missing.length > 0) {
-      embedded = await embedMissing(options.gemini, missing, cache, options, log);
+      embedded = await embedMissing(embedder, missing, cache, options, log);
       saveCache(options.outDir, cache);
     }
     const rows = chunks.map((chunk) => {
@@ -84,6 +85,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
     newestPost: posts.find((post) => post.date)?.date ?? '',
     oldestPost: [...posts].reverse().find((post) => post.date)?.date ?? '',
   };
+  if (embedder) meta.provider = embedder.provider;
   writeFileSync(path.join(options.outDir, 'posts.json.gz'), gzipSync(JSON.stringify(posts)));
   writeFileSync(path.join(options.outDir, 'chunks.json.gz'), gzipSync(JSON.stringify(chunks satisfies Chunk[])));
   if (table.count > 0) writeFileSync(path.join(options.outDir, 'vectors.bin'), encodeTable(table));
@@ -92,9 +94,9 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
   return { meta, embedded, reused };
 }
 
-async function embedMissing(cfg: GeminiConfig, missing: Chunk[], cache: Cache, options: BuildOptions, log: (message: string) => void): Promise<number> {
-  const batchSize = Math.min(100, Math.max(1, options.batchSize ?? 50));
-  const concurrency = Math.max(1, options.concurrency ?? 2);
+async function embedMissing(embedder: Embedder, missing: Chunk[], cache: Cache, options: BuildOptions, log: (message: string) => void): Promise<number> {
+  const batchSize = Math.min(embedder.maxBatch, Math.max(1, options.batchSize ?? embedder.batchSize));
+  const concurrency = Math.max(1, options.concurrency ?? embedder.concurrency);
   const batches: Chunk[][] = [];
   for (let i = 0; i < missing.length; i += batchSize) batches.push(missing.slice(i, i + batchSize));
   let next = 0;
@@ -105,9 +107,9 @@ async function embedMissing(cfg: GeminiConfig, missing: Chunk[], cache: Cache, o
   const worker = async () => {
     while (next < batches.length) {
       const batch = batches[next++]!;
-      const vectors = await embedWithPatience(cfg, batch, log);
+      const vectors = await embedWithPatience(embedder, batch, log);
       cache.keys.push(...batch.map((chunk) => chunk.hash));
-      cache.table = concatTables(cache.table, quantize(vectors, cfg.dimensions));
+      cache.table = concatTables(cache.table, quantize(vectors, embedder.dimensions));
       done += batch.length;
       sinceCheckpoint += batch.length;
       const elapsed = (Date.now() - started) / 1000;
@@ -125,16 +127,20 @@ async function embedMissing(cfg: GeminiConfig, missing: Chunk[], cache: Cache, o
 }
 
 /** Retries a batch through quota errors for a long time: overnight indexing should survive a rate-limit blip. */
-async function embedWithPatience(cfg: GeminiConfig, batch: Chunk[], log: (message: string) => void): Promise<Float32Array[]> {
+async function embedWithPatience(embedder: Embedder, batch: Chunk[], log: (message: string) => void): Promise<Float32Array[]> {
   let attempt = 0;
   while (true) {
     try {
-      return await embedTexts(cfg, batch.map((chunk) => chunk.text), 'RETRIEVAL_DOCUMENT', { retries: 4 });
+      return await embedder.embed(
+        batch.map((chunk) => chunk.text),
+        'document',
+        { retries: 4 },
+      );
     } catch (error) {
       attempt++;
-      if (!(error instanceof GeminiError) || !error.retryable || attempt > 30) throw error;
+      if (!(error instanceof EmbeddingError) || !error.retryable || attempt > 30) throw error;
       const wait = Math.min(120_000, error.retryAfterMs ?? 5_000 * attempt);
-      log(`Gemini said "${error.message.slice(0, 120)}"; waiting ${Math.round(wait / 1000)}s.`);
+      log(`${PROVIDER_LABELS[embedder.provider]} said "${error.message.slice(0, 120)}"; waiting ${Math.round(wait / 1000)}s.`);
       await new Promise((resolve) => setTimeout(resolve, wait));
     }
   }

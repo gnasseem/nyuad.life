@@ -38,7 +38,10 @@ export interface Chunk {
 
 export interface IndexMeta {
   version: number;
+  /** Embedding model that produced vectors.bin, or "none" for a keyword-only index. */
   model: string;
+  /** Which API the model belongs to; missing on indexes built before providers other than Gemini existed. */
+  provider?: 'voyage' | 'cloudflare' | 'gemini';
   dimensions: number;
   builtAt: string;
   posts: number;

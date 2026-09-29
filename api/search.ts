@@ -1,4 +1,3 @@
-import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, queryInt, queryString, route, sendJson } from '../lib/http.ts';
 import { retrieve } from '../lib/rag.ts';
 import { loadArchive, summarizePost } from '../lib/store.ts';
@@ -41,7 +40,7 @@ export default route(['GET'], async (req, res) => {
   let dense = false;
   if (q) {
     if (q.length < 2) throw new ApiError(400, 'Search needs at least two characters.', 'query_too_short');
-    const retrieval = await retrieve(archive, semantic ? geminiConfig() : null, q, { k: 400, filter });
+    const retrieval = await retrieve(archive, q, { k: 400, filter, useDense: semantic });
     dense = retrieval.dense;
     results = retrieval.hits.map((hit) => {
       const post = archive.posts[hit.post]!;

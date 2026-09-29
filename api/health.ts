@@ -1,3 +1,4 @@
+import { embedderForIndex, keysFor, providerForModel } from '../lib/embeddings.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { route, sendJson } from '../lib/http.ts';
 import { loadArchive } from '../lib/store.ts';
@@ -11,6 +12,8 @@ export default route(['GET'], async (_req, res) => {
   } catch (error) {
     archiveError = (error as Error).message;
   }
+  const provider = archive ? (archive.meta.provider ?? providerForModel(archive.meta.model)) : null;
+  const queryEmbedder = archive ? embedderForIndex(archive.meta) : null;
   sendJson(res, archive ? 200 : 503, {
     ok: Boolean(archive && cfg),
     archive: archive
@@ -28,6 +31,16 @@ export default route(['GET'], async (_req, res) => {
           loadMs: archive.loadMs,
         }
       : { error: archiveError },
-    gemini: cfg ? { configured: true, chatModel: cfg.chatModel, liteModel: cfg.liteModel, embedModel: cfg.embedModel } : { configured: false },
+    // Semantic search needs vectors in the index AND the key of the provider that made them, to embed questions.
+    embeddings: archive
+      ? {
+          provider,
+          model: archive.meta.model,
+          keyConfigured: Boolean(queryEmbedder),
+          semanticSearch: archive.vectors.count > 0 && Boolean(queryEmbedder),
+          hint: archive.vectors.count === 0 ? 'The index has no vectors yet; run the Build search index workflow.' : queryEmbedder ? undefined : `Set ${provider ? keysFor(provider) : 'the embedding key'} on the server to enable semantic search.`,
+        }
+      : undefined,
+    gemini: cfg ? { configured: true, chatModel: cfg.chatModel, chatFallbacks: cfg.chatFallbacks, liteModel: cfg.liteModel } : { configured: false },
   });
 });

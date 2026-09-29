@@ -1,5 +1,6 @@
 /** Retrieval-augmented answering over the archive: retrieve, optionally rerank with Gemini, then stream a grounded answer. */
-import { embedQuery, generateJson, generateStream, generateText, type GeminiConfig, type Message } from './gemini.ts';
+import { embedderForIndex, type Embedder } from './embeddings.ts';
+import { GeminiError, generateJson, generateStream, generateText, type GeminiConfig, type Message } from './gemini.ts';
 import { ApiError } from './http.ts';
 import { bm25Query, denseQuery, fuse, type Hit } from './search.ts';
 import type { Archive } from './store.ts';
@@ -15,6 +16,8 @@ export interface RetrieveOptions {
   k?: number;
   useDense?: boolean;
   filter?: (post: IndexedPost) => boolean;
+  /** Overrides the embedder derived from the index (tests). */
+  embedder?: Embedder | null;
 }
 
 export interface Retrieval {
@@ -24,24 +27,31 @@ export interface Retrieval {
   ms: number;
 }
 
-/** Hybrid retrieval: BM25 over chunks plus Gemini dense search when vectors exist, fused by rank. */
-export async function retrieve(archive: Archive, cfg: GeminiConfig | null, query: string, options: RetrieveOptions = {}): Promise<Retrieval> {
+let warnedMissingKey = '';
+
+/** Hybrid retrieval: BM25 over chunks plus dense search when vectors exist and the matching embedding key is set, fused by rank. */
+export async function retrieve(archive: Archive, query: string, options: RetrieveOptions = {}): Promise<Retrieval> {
   const started = Date.now();
   const terms = tokenize(query);
   const depth = Math.max(150, (options.k ?? CANDIDATES) * 4);
   const lexical = bm25Query(archive.bm25, terms, depth);
   let dense: Array<{ row: number; score: number }> = [];
   let usedDense = false;
-  if (cfg && options.useDense !== false && archive.vectors.count > 0 && archive.meta.model !== 'none') {
-    try {
-      const vector = await embedQuery({ ...cfg, embedModel: archive.meta.model, dimensions: archive.meta.dimensions }, query, {
-        retries: 1,
-        timeoutMs: 15_000,
-      });
-      dense = denseQuery(archive.vectors, vector, depth);
-      usedDense = true;
-    } catch (error) {
-      console.warn('[retrieve] dense search unavailable, using keywords only:', (error as Error).message);
+  if (options.useDense !== false && archive.vectors.count > 0 && archive.meta.model !== 'none') {
+    const embedder = options.embedder === undefined ? embedderForIndex(archive.meta) : options.embedder;
+    if (!embedder) {
+      if (warnedMissingKey !== archive.meta.model) {
+        warnedMissingKey = archive.meta.model;
+        console.warn(`[retrieve] the index was embedded with ${archive.meta.model} but no key for that provider is set; using keywords only.`);
+      }
+    } else {
+      try {
+        const [vector] = await embedder.embed([query], 'query', { retries: 1, timeoutMs: 15_000 });
+        dense = denseQuery(archive.vectors, vector!, depth);
+        usedDense = true;
+      } catch (error) {
+        console.warn('[retrieve] dense search unavailable, using keywords only:', (error as Error).message);
+      }
     }
   }
   let hits = fuse(lexical, dense, { dates: archive.posts.map((post) => post.date), chunkPost: archive.chunkPost });
@@ -254,7 +264,7 @@ export async function ask(archive: Archive, cfg: GeminiConfig, request: AskReque
   const searchQuery = await standaloneQuestion(cfg, history, request.question);
 
   events.status?.(`Searching ${archive.posts.length.toLocaleString('en')} posts`);
-  const retrieval = await retrieve(archive, cfg, searchQuery, { k: CANDIDATES });
+  const retrieval = await retrieve(archive, searchQuery, { k: CANDIDATES });
   if (retrieval.hits.length === 0) {
     const answer = "I couldn't find any Room of Requirement posts about that. Try different words (a course code, a professor's surname, a place) or ask the group directly.";
     events.sources?.([]);
@@ -277,19 +287,8 @@ export async function ask(archive: Archive, cfg: GeminiConfig, request: AskReque
   events.status?.('Writing the answer');
   const messages: Message[] = history.slice(-6).map((turn) => ({ role: turn.role, text: truncate(turn.content, 2500) }));
   messages.push({ role: 'user', text: `Question: ${request.question}\n\nSources:\n${sourcesBlock(archive, cards)}` });
-  let answer = '';
-  let model = cfg.chatModel;
-  for await (const event of generateStream(cfg, { system: systemPrompt(), messages, temperature: 0.25, maxOutputTokens: 1800 }, { retries: 1, signal })) {
-    if (event.text) {
-      answer += event.text;
-      events.delta?.(event.text);
-    }
-    if (event.finishReason && event.finishReason !== 'STOP' && event.finishReason !== 'MAX_TOKENS') {
-      console.warn('[ask] generation finished with', event.finishReason);
-    }
-  }
+  const { answer, model } = await writeAnswer(cfg, messages, events, signal);
   if (!answer.trim()) throw new ApiError(502, 'The model returned an empty answer. Try again.', 'empty_answer');
-  model = cfg.chatModel;
   const questions = await followupsPromise;
   return {
     answer: answer.trim(),
@@ -298,4 +297,35 @@ export async function ask(archive: Archive, cfg: GeminiConfig, request: AskReque
     model,
     retrieval: { candidates: retrieval.hits.length, reranked: reranked !== null, ms: Date.now() - started },
   };
+}
+
+/**
+ * Streams the answer from the chat model, moving down the fallback list when a model is out of quota
+ * (free tiers are per model and reset daily). Only switches before any text has been sent.
+ */
+async function writeAnswer(cfg: GeminiConfig, messages: Message[], events: AskEvents, signal?: AbortSignal): Promise<{ answer: string; model: string }> {
+  const models = [cfg.chatModel, ...cfg.chatFallbacks];
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i]!;
+    const last = i === models.length - 1;
+    let answer = '';
+    try {
+      for await (const event of generateStream(cfg, { model, system: systemPrompt(), messages, temperature: 0.25, maxOutputTokens: 1800 }, { retries: last ? 1 : 0, signal })) {
+        if (event.text) {
+          answer += event.text;
+          events.delta?.(event.text);
+        }
+        if (event.finishReason && event.finishReason !== 'STOP' && event.finishReason !== 'MAX_TOKENS') {
+          console.warn('[ask] generation finished with', event.finishReason);
+        }
+      }
+      return { answer, model };
+    } catch (error) {
+      const outOfQuota = error instanceof GeminiError && (error.status === 429 || error.status === 404);
+      if (!outOfQuota || answer || last) throw error;
+      console.warn(`[ask] ${model} unavailable (${error.message.slice(0, 100)}); trying ${models[i + 1]}.`);
+      events.status?.('Busy model, switching to a backup');
+    }
+  }
+  throw new ApiError(503, 'All answer models are out of quota for now. Try again in a while.', 'quota');
 }

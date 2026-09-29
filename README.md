@@ -21,13 +21,18 @@ Everything is TypeScript, in one repository:
 
    | Variable | Required | Meaning |
    | --- | --- | --- |
-   | `GEMINI_API_KEY` | yes | Google AI Studio key. Used for embeddings, reranking and answers. |
-   | `GEMINI_CHAT_MODEL` | no | Defaults to `gemini-flash-latest`. |
-   | `GEMINI_LITE_MODEL` | no | Defaults to `gemini-flash-lite-latest` (rerank, follow-ups, query rewriting). |
-   | `GEMINI_EMBED_MODEL` / `GEMINI_EMBED_DIMENSIONS` | no | Defaults to `gemini-embedding-001` at 768 dimensions. |
+   | `GEMINI_API_KEY` | yes | Google AI Studio key. Writes the answers, reranks threads and suggests follow-ups. |
+   | `VOYAGE_API_KEY` | for semantic search | Embeds each question the same way the index was embedded (section 3). |
+   | `GEMINI_CHAT_MODEL` | no | Defaults to `gemini-2.5-flash` (free tier: 250 requests a day). |
+   | `GEMINI_CHAT_FALLBACK_MODELS` | no | Tried in order when the chat model is out of quota. Defaults to `gemini-2.5-flash-lite` (1,000 a day). |
+   | `GEMINI_LITE_MODEL` | no | Defaults to `gemini-2.5-flash-lite` (rerank, follow-ups, query rewriting). |
+
+   If you embed with Cloudflare instead of Voyage, set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` here instead.
 
 3. Deploy. If `data/index/` is not committed yet, the build makes a keyword-only index from `data/posts.jsonl`, so the
    site works immediately; semantic search switches on as soon as an embedded index is committed (section 3).
+   `GET /api/health` shows what is active: `embeddings.semanticSearch` is true once both the vectors and the matching
+   key are in place.
 
 Routes: `GET /api/health`, `GET /api/home`, `GET /api/search`, `GET /api/post?id=`, `GET /api/courses`,
 `POST /api/ask` (server-sent events: `status`, `sources`, `delta`, `followups`, `done`, `error`). Asking is
@@ -74,21 +79,35 @@ Keyword search finds posts that contain your words. Embeddings let the search un
 "who is chill for calc" still finds "Dania is very relaxed about deadlines". Embedding the archive is a one-off job
 per post, so it runs separately from deploys and only new posts are embedded each time.
 
-**Automatic (recommended):** add a repository secret `GEMINI_API_KEY` on GitHub (Settings → Secrets and variables →
-Actions). From then on, every push that changes `data/posts.jsonl` runs `.github/workflows/index.yml`, which embeds
-the new posts and commits `data/index/`. Vercel redeploys with it.
+Pick one embedding provider. The index records which one made it, and the API needs that provider's key to embed
+questions; everything else stays on Gemini.
+
+| Provider | Key(s) | Free allowance | Notes |
+| --- | --- | --- | --- |
+| Voyage AI (default) | `VOYAGE_API_KEY` | 200M tokens per account, no card needed | The whole archive costs a few million tokens once; re-runs only embed new posts. Model `voyage-3.5`, 1024 dims. |
+| Cloudflare Workers AI | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | 10,000 neurons a day, resets daily (about 9M tokens with `bge-m3`) | Token needs the Workers AI permission. |
+| Gemini | `GEMINI_API_KEY` | 30k tokens a minute, 1,000 requests a day | Too small for a full archive; kept for compatibility. |
+
+When several keys are set, Voyage wins, then Cloudflare, then Gemini; `ROR_EMBED_PROVIDER` forces one. Switching
+providers re-embeds everything on the next run (the cache is per model).
+
+**Automatic (recommended):** add the provider's key(s) as repository secrets on GitHub (Settings → Secrets and
+variables → Actions). From then on, every push to `main` that changes `data/posts.jsonl` runs
+`.github/workflows/index.yml`, which embeds the new posts and commits `data/index/`. Vercel redeploys with it. The
+same key must also be set on Vercel so questions can be embedded.
 
 **Manual:**
 
 ```bash
-cp .env.example .env            # put GEMINI_API_KEY in it
+cp .env.example .env            # put VOYAGE_API_KEY (or the Cloudflare pair) in it
 npm run index                   # embeds only chunks that changed since the last run
 git add data/index && git commit -m "Update archive index" && git push
 ```
 
-`data/index/` holds `posts.json.gz`, `chunks.json.gz`, `meta.json` and `vectors.bin` (int8-quantised, about 0.8 KB per
-chunk). Options: `--fresh` re-embeds everything, `--limit 300` indexes only the newest 300 posts, `--batch 50 --concurrency 2`
-tune throughput against your Gemini quota (429s are retried automatically with the delay Google asks for).
+`data/index/` holds `posts.json.gz`, `chunks.json.gz`, `meta.json` and `vectors.bin` (int8-quantised, about 1 KB per
+chunk at 1024 dims). Options: `--provider voyage|cloudflare|gemini`, `--fresh` re-embeds everything, `--limit 300`
+indexes only the newest 300 posts, `--batch 64 --concurrency 2` tune throughput (429s are retried automatically with
+the delay the provider asks for).
 
 ## 4. Run everything locally
 
@@ -107,9 +126,11 @@ Chromium and skips itself when that is not installed.
 ## How answers are produced
 
 1. Follow-up questions are rewritten into standalone queries using the conversation.
-2. Retrieval fuses BM25 over chunks with cosine similarity over Gemini embeddings (reciprocal-rank fusion, small recency prior).
+2. Retrieval fuses BM25 over chunks with cosine similarity over the embeddings (reciprocal-rank fusion, small recency prior).
 3. The lite model scores the 40 best threads for usefulness; the strongest 6–16 become numbered sources.
-4. `gemini-flash-latest` streams a Markdown answer that must cite `[n]` after each claim, tally opinions and flag stale advice.
+4. `gemini-2.5-flash` streams a Markdown answer that must cite `[n]` after each claim, tally opinions and flag stale
+   advice. When its daily free quota is used up the answer comes from `gemini-2.5-flash-lite` instead, so the site keeps
+   working for everyone; quotas reset at midnight Pacific time.
 5. In parallel, three follow-up questions are suggested.
 
 Posts are tagged with topics (courses, professors, housing, study away, visas, jobs, …) and course codes such as

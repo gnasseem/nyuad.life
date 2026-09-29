@@ -5,8 +5,8 @@
  */
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { embedderFromEnv } from '../lib/embeddings.ts';
 import { loadDotEnv } from '../lib/env.ts';
-import { geminiConfig } from '../lib/gemini.ts';
 import { buildIndex } from '../lib/indexer.ts';
 import { indexDir, postsFile } from '../lib/store.ts';
 
@@ -20,7 +20,7 @@ if (existsSync(path.join(dir, 'meta.json'))) {
 } else if (!existsSync(postsFile())) {
   console.warn('[ensure-index] No data/posts.jsonl found; the API will start empty. Run the scraper first.');
 } else {
-  const embed = process.env.ROR_EMBED_ON_BUILD === '1' ? geminiConfig() : null;
-  if (process.env.ROR_EMBED_ON_BUILD === '1' && !embed) console.warn('[ensure-index] ROR_EMBED_ON_BUILD=1 but GEMINI_API_KEY is missing; building a keyword-only index.');
-  await buildIndex({ postsFile: postsFile(), outDir: dir, gemini: embed, log: (message) => console.log(`[ensure-index] ${message}`) });
+  const embed = process.env.ROR_EMBED_ON_BUILD === '1' ? embedderFromEnv() : null;
+  if (process.env.ROR_EMBED_ON_BUILD === '1' && !embed) console.warn('[ensure-index] ROR_EMBED_ON_BUILD=1 but no embedding key is set; building a keyword-only index.');
+  await buildIndex({ postsFile: postsFile(), outDir: dir, embedder: embed, log: (message) => console.log(`[ensure-index] ${message}`) });
 }
