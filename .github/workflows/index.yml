@@ -5,6 +5,8 @@ name: Build search index
 
 on:
   push:
+    branches:
+      - main
     paths:
       - 'data/posts.jsonl'
       - 'lib/**'
