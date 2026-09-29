@@ -11,7 +11,8 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
   },
   "include": ["api/**/*.ts", "lib/**/*.ts", "scripts/**/*.ts", "vite.config.ts", "vitest.config.ts"]
 }

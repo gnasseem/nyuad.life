@@ -5,7 +5,7 @@
   "description": "ROR Answers: ask the NYUAD Room of Requirement archive. Vercel backend (Gemini) + web app + scraper/indexer.",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": "22.x"
   },
   "scripts": {
     "dev": "tsx scripts/dev-server.ts",
