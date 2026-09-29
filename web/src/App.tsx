@@ -1,50 +1,43 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, getAccessCode, type HomePayload } from './api';
-import { AccessGate } from './components/AccessGate';
+import { api, type HomePayload } from './api';
 import { AppContext } from './context';
-import { IconAsk, IconAuto, IconBook, IconClock, IconMoon, IconSearch, IconSun } from './icons';
+import { formatDate, formatRange, plural } from './format';
+import { IconAuto, IconMoon, IconSun } from './icons';
 import { AskPage } from './pages/Ask';
 import { BrowsePage } from './pages/Browse';
 import { CoursesPage } from './pages/Courses';
 import { HistoryPage } from './pages/History';
 import { PostPage } from './pages/Post';
-import { navigate, useRoute, type Route } from './router';
+import { onLinkClick, routePath, useRoute, type Route } from './router';
 import { applyTheme, loadTheme, type Theme } from './store';
 
-const NAV: Array<{ route: Route; label: string; icon: typeof IconAsk }> = [
-  { route: { name: 'ask' }, label: 'Ask', icon: IconAsk },
-  { route: { name: 'browse' }, label: 'Browse', icon: IconSearch },
-  { route: { name: 'courses' }, label: 'Courses', icon: IconBook },
-  { route: { name: 'history' }, label: 'History', icon: IconClock },
+const NAV: Array<{ route: Route; label: string }> = [
+  { route: { name: 'ask' }, label: 'Ask' },
+  { route: { name: 'browse' }, label: 'Browse' },
+  { route: { name: 'courses' }, label: 'Courses' },
+  { route: { name: 'history' }, label: 'History' },
 ];
+
+const THEME_LABEL: Record<Theme, string> = { system: 'Theme: follows your system', light: 'Theme: light', dark: 'Theme: dark' };
 
 export function App() {
   const { route, search } = useRoute();
   const [home, setHome] = useState<HomePayload | null>(null);
-  const [gate, setGate] = useState<'unknown' | 'open' | 'locked'>('unknown');
-  const [health, setHealth] = useState<{ gemini: boolean; vectors: boolean } | null>(null);
+  const [geminiReady, setGeminiReady] = useState<boolean | null>(null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [toastMessage, setToastMessage] = useState('');
   const [askPrefill, setAskPrefillState] = useState<{ question: string; autoSend: boolean; token: number } | null>(null);
 
-  const loadHome = useCallback(async () => {
-    try {
-      const payload = await api.home();
-      setHome(payload);
-      setGate('open');
-    } catch (error) {
-      if ((error as { status?: number }).status === 401) setGate('locked');
-      else setGate('open');
-    }
-  }, []);
-
   useEffect(() => {
     api
+      .home()
+      .then(setHome)
+      .catch(() => setHome(null));
+    api
       .health()
-      .then((result) => setHealth({ gemini: result.gemini.configured, vectors: Boolean(result.archive?.vectors) }))
-      .catch(() => setHealth({ gemini: false, vectors: false }));
-    void loadHome();
-  }, [loadHome]);
+      .then((result) => setGeminiReady(result.gemini.configured))
+      .catch(() => setGeminiReady(false));
+  }, []);
 
   useEffect(() => {
     applyTheme(theme);
@@ -55,7 +48,6 @@ export function App() {
     window.setTimeout(() => setToastMessage(''), 1800);
   }, []);
 
-  const onNeedAccess = useCallback(() => setGate('locked'), []);
   const setAskPrefill = useCallback((prefill: { question: string; autoSend: boolean } | null) => {
     setAskPrefillState(prefill ? { ...prefill, token: Date.now() } : null);
   }, []);
@@ -64,74 +56,77 @@ export function App() {
 
   const cycleTheme = () => setTheme(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');
   const ThemeIcon = theme === 'light' ? IconSun : theme === 'dark' ? IconMoon : IconAuto;
+  const activeNav = route.name === 'post' ? 'browse' : route.name;
 
   const page = (() => {
     switch (route.name) {
       case 'browse':
-        return <BrowsePage key={route.name} search={search} onNeedAccess={onNeedAccess} />;
+        return <BrowsePage key={route.name} search={search} />;
       case 'post':
-        return <PostPage id={route.id} onNeedAccess={onNeedAccess} />;
+        return <PostPage id={route.id} />;
       case 'courses':
-        return <CoursesPage code={route.code} onNeedAccess={onNeedAccess} />;
+        return <CoursesPage code={route.code} />;
       case 'history':
         return <HistoryPage />;
       default:
-        return <AskPage resumeId={search.get('c') ?? undefined} onNeedAccess={onNeedAccess} />;
+        return <AskPage resumeId={search.get('c') ?? undefined} />;
     }
   })();
 
+  const stats = home?.stats;
+
   return (
     <AppContext.Provider value={context}>
-      <div className="shell">
-        <nav className="nav" aria-label="Main">
-          <a href="/" className="brand" onClick={(event) => { event.preventDefault(); navigate({ name: 'ask' }); }}>
-            <span className="brand-mark">R</span>
-            <span>
-              <span className="brand-name">ROR Answers</span>
-              <span className="brand-sub">NYUAD student archive</span>
-            </span>
-          </a>
-          {NAV.map((item) => (
-            <button key={item.label} type="button" className={`nav-link${route.name === item.route.name ? ' active' : ''}`} onClick={() => navigate(item.route)}>
-              <item.icon /> {item.label}
-            </button>
-          ))}
-          <div className="nav-spacer" />
-          <div className="nav-foot">
-            <button type="button" className="btn ghost sm" onClick={cycleTheme} style={{ justifyContent: 'flex-start' }}>
-              <ThemeIcon /> {theme === 'system' ? 'Auto theme' : theme === 'light' ? 'Light theme' : 'Dark theme'}
-            </button>
-            {home && (
-              <div className="nav-stats">
-                {home.stats.posts.toLocaleString()} posts · {home.stats.comments.toLocaleString()} comments
-                <br />
-                {home.stats.oldestPost.slice(0, 4) === home.stats.newestPost.slice(0, 4) ? home.stats.newestPost.slice(0, 4) : `${home.stats.oldestPost.slice(0, 4)}–${home.stats.newestPost.slice(0, 4)}`} · updated {home.stats.builtAt.slice(0, 10)}
-              </div>
-            )}
+      <div className="app">
+        <header className="topbar">
+          <div className="topbar-inner">
+            <a href="/" className="brand" onClick={onLinkClick}>
+              <span className="brand-mark" aria-hidden="true">
+                R
+              </span>
+              <span>ROR Answers</span>
+              <span className="brand-sub">NYU Abu Dhabi</span>
+            </a>
+            <nav className="topnav" aria-label="Main">
+              {NAV.map((item) => (
+                <a key={item.label} href={routePath(item.route)} className={activeNav === item.route.name ? 'active' : undefined} aria-current={activeNav === item.route.name ? 'page' : undefined} onClick={onLinkClick}>
+                  {item.label}
+                </a>
+              ))}
+            </nav>
+            <div className="topbar-actions">
+              <button type="button" className="icon-btn" onClick={cycleTheme} title={`${THEME_LABEL[theme]}. Click to change.`} aria-label={THEME_LABEL[theme]}>
+                <ThemeIcon />
+              </button>
+            </div>
           </div>
-        </nav>
+        </header>
 
         <main className="main">
-          {health && !health.gemini && (
-            <div className="alert note" style={{ margin: '16px 24px 0', borderRadius: 12 }}>
-              The server has no Gemini API key yet, so answers are disabled. Browsing and search still work.
+          {geminiReady === false && (
+            <div className="notice">
+              <div className="alert note">The server has no Gemini API key yet, so answers are disabled. Browsing and search still work.</div>
             </div>
           )}
           {page}
         </main>
 
-        <nav className="tabbar" aria-label="Main">
-          {NAV.map((item) => (
-            <button key={item.label} type="button" className={`tab${route.name === item.route.name ? ' active' : ''}`} onClick={() => navigate(item.route)}>
-              <item.icon /> {item.label}
-            </button>
-          ))}
-        </nav>
+        <footer className="footer">
+          <div className="footer-inner">
+            <span>
+              {stats
+                ? `${plural(stats.posts, 'post')} and ${plural(stats.comments, 'comment')} from the Room of Requirement, ${formatRange(stats.oldestPost, stats.newestPost)}. Archive updated ${formatDate(stats.builtAt.slice(0, 10))}.`
+                : 'An archive of the NYU Abu Dhabi Room of Requirement group.'}
+            </span>
+            <span>Unofficial and student-run. Answers are generated from posts and can be wrong; check the cited threads.</span>
+          </div>
+        </footer>
       </div>
-
-      {gate === 'locked' && !getAccessCode() && <AccessGate onUnlocked={() => void loadHome()} />}
-      {gate === 'locked' && getAccessCode() && <AccessGate onUnlocked={() => void loadHome()} />}
-      {toastMessage && <div className="toast">{toastMessage}</div>}
+      {toastMessage && (
+        <div className="toast" role="status">
+          {toastMessage}
+        </div>
+      )}
     </AppContext.Provider>
   );
 }

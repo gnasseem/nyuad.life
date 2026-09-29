@@ -5,5 +5,5 @@ import { createApiServer } from '../lib/devserver.ts';
 loadDotEnv();
 const port = Number(process.env.PORT) || 8787;
 createApiServer().listen(port, () => {
-  console.log(`ROR Answers API on http://localhost:${port} (GEMINI_API_KEY ${process.env.GEMINI_API_KEY ? 'set' : 'missing'}, access code ${process.env.ROR_ACCESS_CODE ? 'on' : 'off'})`);
+  console.log(`ROR Answers API on http://localhost:${port} (GEMINI_API_KEY ${process.env.GEMINI_API_KEY ? 'set' : 'missing'})`);
 });

@@ -1,5 +1,5 @@
 import { geminiConfig } from '../lib/gemini.ts';
-import { ApiError, rateLimit, readJson, requireAccess, route, sendJson, startSse } from '../lib/http.ts';
+import { ApiError, rateLimit, readJson, route, sendJson, startSse } from '../lib/http.ts';
 import { ask, validateAsk } from '../lib/rag.ts';
 import { loadArchive } from '../lib/store.ts';
 import type { AskRequest } from '../lib/types.ts';
@@ -7,7 +7,6 @@ import type { AskRequest } from '../lib/types.ts';
 export const config = { maxDuration: 60 };
 
 export default route(['POST'], async (req, res) => {
-  requireAccess(req);
   rateLimit(req, 12, 10);
   const cfg = geminiConfig();
   if (!cfg) throw new ApiError(503, 'GEMINI_API_KEY is not configured on the server.', 'no_model');

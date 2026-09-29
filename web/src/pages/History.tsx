@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { relativeDate } from '../format';
+import { plural, relativeDate } from '../format';
 import { IconTrash } from '../icons';
 import { navigate } from '../router';
 import { clearConversations, deleteConversation, loadConversations } from '../store';
@@ -19,13 +19,13 @@ export function HistoryPage() {
 
   return (
     <div className="page">
-      <div className="page-head row" style={{ justifyContent: 'space-between', alignItems: 'flex-end' }}>
+      <div className="page-head split">
         <div>
-          <h1 className="display">Your questions</h1>
-          <p>Saved on this device only. Open one to keep the conversation going.</p>
+          <h1>Your questions</h1>
+          <p>Saved in this browser only. Open one to continue the conversation.</p>
         </div>
         {items.length > 0 && (
-          <button type="button" className="btn ghost sm" onClick={clear}>
+          <button type="button" className="btn sm" onClick={clear}>
             Clear all
           </button>
         )}
@@ -33,7 +33,7 @@ export function HistoryPage() {
       {items.length === 0 ? (
         <div className="empty">
           <h3>Nothing yet</h3>
-          Questions you ask will show up here.
+          Questions you ask will be listed here.
         </div>
       ) : (
         <div className="post-list">
@@ -43,7 +43,7 @@ export function HistoryPage() {
                 {conversation.title}
               </button>
               <span className="faint small">
-                {Math.floor(conversation.messages.length / 2)} Q · {relativeDate(conversation.updatedAt)}
+                {plural(Math.floor(conversation.messages.length / 2), 'question')} · {relativeDate(conversation.updatedAt)}
               </span>
               <button type="button" className="btn ghost icon sm" onClick={() => remove(conversation.id)} aria-label="Delete">
                 <IconTrash />

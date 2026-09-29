@@ -29,6 +29,5 @@ export default route(['GET'], async (_req, res) => {
         }
       : { error: archiveError },
     gemini: cfg ? { configured: true, chatModel: cfg.chatModel, liteModel: cfg.liteModel, embedModel: cfg.embedModel } : { configured: false },
-    accessCode: Boolean((process.env.ROR_ACCESS_CODE ?? '').trim()),
   });
 });

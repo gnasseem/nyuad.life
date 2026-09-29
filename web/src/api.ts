@@ -1,4 +1,4 @@
-/** Typed client for the ROR Answers API, including the streaming /api/ask protocol and the access-code gate. */
+/** Typed client for the ROR Answers API, including the streaming /api/ask protocol. */
 
 export interface PostSummary {
   id: string;
@@ -86,26 +86,9 @@ export class ApiError extends Error {
   }
 }
 
-const CODE_KEY = 'ror.code';
 const BASE_KEY = 'ror.apiBase';
 
-export function getAccessCode(): string {
-  try {
-    return localStorage.getItem(CODE_KEY) ?? '';
-  } catch {
-    return '';
-  }
-}
-
-export function setAccessCode(code: string): void {
-  try {
-    if (code) localStorage.setItem(CODE_KEY, code);
-    else localStorage.removeItem(CODE_KEY);
-  } catch {
-    // private mode
-  }
-}
-
+/** Lets a developer point the web app at another API origin from the browser console (localStorage "ror.apiBase"). */
 export function apiBase(): string {
   try {
     return localStorage.getItem(BASE_KEY) ?? '';
@@ -114,33 +97,27 @@ export function apiBase(): string {
   }
 }
 
-function headers(json = false): Record<string, string> {
-  const out: Record<string, string> = {};
-  const code = getAccessCode();
-  if (code) out['x-ror-code'] = code;
-  if (json) out['content-type'] = 'application/json';
-  return out;
+async function failure(response: Response, fallback: string): Promise<ApiError> {
+  let code = 'error';
+  let message = fallback;
+  try {
+    const body = (await response.json()) as { error?: string; message?: string };
+    code = body.error ?? code;
+    message = body.message ?? message;
+  } catch {
+    // not JSON
+  }
+  return new ApiError(response.status, code, message);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${apiBase()}${path}`, { ...init, headers: { ...headers(init.method === 'POST'), ...(init.headers as Record<string, string>) } });
-  if (!response.ok) {
-    let code = 'error';
-    let message = `Request failed (${response.status}).`;
-    try {
-      const body = (await response.json()) as { error?: string; message?: string };
-      code = body.error ?? code;
-      message = body.message ?? message;
-    } catch {
-      // not JSON
-    }
-    throw new ApiError(response.status, code, message);
-  }
+  const response = await fetch(`${apiBase()}${path}`, init);
+  if (!response.ok) throw await failure(response, `Request failed (${response.status}).`);
   return (await response.json()) as T;
 }
 
 export const api = {
-  health: () => request<{ ok: boolean; accessCode: boolean; archive: Record<string, unknown>; gemini: { configured: boolean } }>('/api/health'),
+  health: () => request<{ ok: boolean; archive: Record<string, unknown>; gemini: { configured: boolean } }>('/api/health'),
   home: () => request<HomePayload>('/api/home'),
   search: (params: SearchParams) => {
     const query = new URLSearchParams();
@@ -164,27 +141,16 @@ export interface AskHandlers {
 export async function askStream(question: string, history: ChatTurn[], handlers: AskHandlers, signal?: AbortSignal): Promise<string> {
   const response = await fetch(`${apiBase()}/api/ask`, {
     method: 'POST',
-    headers: headers(true),
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ question, history, stream: true }),
     signal,
   });
-  if (!response.ok || !response.body) {
-    let code = 'error';
-    let message = `The server answered ${response.status}.`;
-    try {
-      const body = (await response.json()) as { error?: string; message?: string };
-      code = body.error ?? code;
-      message = body.message ?? message;
-    } catch {
-      // not JSON
-    }
-    throw new ApiError(response.status, code, message);
-  }
+  if (!response.ok || !response.body) throw await failure(response, `The server answered ${response.status}.`);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let answer = '';
-  let failure: Error | undefined;
+  let streamError: Error | undefined;
   const handle = (event: string, data: string) => {
     let payload: Record<string, unknown> = {};
     try {
@@ -210,7 +176,7 @@ export async function askStream(question: string, history: ChatTurn[], handlers:
         handlers.onDone?.(payload as { model: string; retrieval: { candidates: number; reranked: boolean; ms: number } });
         break;
       case 'error':
-        failure = new ApiError(500, 'stream_error', String(payload.message ?? 'The answer failed.'));
+        streamError = new ApiError(500, 'stream_error', String(payload.message ?? 'The answer failed.'));
         break;
     }
   };
@@ -232,6 +198,6 @@ export async function askStream(question: string, history: ChatTurn[], handlers:
       if (dataLines.length) handle(event, dataLines.join('\n'));
     }
   }
-  if (failure) throw failure;
+  if (streamError) throw streamError;
   return answer;
 }

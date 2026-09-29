@@ -1,5 +1,5 @@
 import { geminiConfig } from '../lib/gemini.ts';
-import { ApiError, queryInt, queryString, requireAccess, route, sendJson } from '../lib/http.ts';
+import { ApiError, queryInt, queryString, route, sendJson } from '../lib/http.ts';
 import { retrieve } from '../lib/rag.ts';
 import { loadArchive, summarizePost } from '../lib/store.ts';
 import { bestWindow, dayNumber, tokenize } from '../lib/text.ts';
@@ -8,7 +8,6 @@ import type { IndexedPost } from '../lib/types.ts';
 type Sort = 'relevance' | 'newest' | 'oldest' | 'discussed';
 
 export default route(['GET'], async (req, res) => {
-  requireAccess(req);
   const archive = await loadArchive();
   const q = queryString(req, 'q').trim().slice(0, 300);
   const topic = queryString(req, 'topic').trim();

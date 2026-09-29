@@ -22,7 +22,7 @@ export class ApiError extends Error {
 export function cors(res: ApiResponse): void {
   res.setHeader('access-control-allow-origin', '*');
   res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
-  res.setHeader('access-control-allow-headers', 'content-type, x-ror-code');
+  res.setHeader('access-control-allow-headers', 'content-type');
   res.setHeader('access-control-max-age', '86400');
 }
 
@@ -69,18 +69,6 @@ export function clientIp(req: IncomingMessage): string {
   const forwarded = req.headers['x-forwarded-for'];
   const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
   return (first ?? '').split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
-}
-
-/**
- * Optional shared access code (ROR_ACCESS_CODE). The archive is a private student group, so the API
- * refuses requests without the code when one is configured. Clients send it as the x-ror-code header.
- */
-export function requireAccess(req: ApiRequest): void {
-  const expected = (process.env.ROR_ACCESS_CODE ?? '').trim();
-  if (!expected) return;
-  const header = req.headers['x-ror-code'];
-  const given = (Array.isArray(header) ? header[0] : header) ?? queryString(req, 'code');
-  if ((given ?? '').trim() !== expected) throw new ApiError(401, 'This archive needs an access code.', 'access_code_required');
 }
 
 /** In-memory token bucket per client IP; resets whenever the function instance recycles, which is fine for abuse control. */

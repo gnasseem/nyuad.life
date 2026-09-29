@@ -1,9 +1,8 @@
-import { ApiError, queryString, requireAccess, route, sendJson } from '../lib/http.ts';
+import { ApiError, queryString, route, sendJson } from '../lib/http.ts';
 import { loadArchive, postById, summarizePost } from '../lib/store.ts';
 import { dotRows } from '../lib/vectors.ts';
 
 export default route(['GET'], async (req, res) => {
-  requireAccess(req);
   const id = queryString(req, 'id').trim();
   if (!id) throw new ApiError(400, 'Pass ?id=<post id>.', 'missing_id');
   const archive = await loadArchive();

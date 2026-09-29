@@ -1,11 +1,10 @@
-import { requireAccess, route, sendJson } from '../lib/http.ts';
+import { route, sendJson } from '../lib/http.ts';
 import { loadArchive, summarizePost } from '../lib/store.ts';
 import { sampleSuggestions } from '../lib/suggestions.ts';
 import { dayNumber } from '../lib/text.ts';
 import { TOPIC_LABELS } from '../lib/topics.ts';
 
-export default route(['GET'], async (req, res) => {
-  requireAccess(req);
+export default route(['GET'], async (_req, res) => {
   const archive = await loadArchive();
   const today = Date.now() / 86_400_000;
   const recent = archive.posts.filter((post) => {

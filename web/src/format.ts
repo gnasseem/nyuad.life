@@ -5,6 +5,17 @@ export function formatDate(date: string): string {
   return value.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 }
 
+/** "Mar–Sep 2026" or "2019–2026": the span the archive covers, for the footer. */
+export function formatRange(oldest: string, newest: string): string {
+  const from = /^(\d{4})-(\d{2})/.exec(oldest);
+  const to = /^(\d{4})-(\d{2})/.exec(newest);
+  if (!from || !to) return '';
+  const month = (m: string, y: string) => new Date(Date.UTC(Number(y), Number(m) - 1, 1)).toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' });
+  if (from[1] !== to[1]) return `${from[1]}–${to[1]}`;
+  if (from[2] === to[2]) return `${month(from[2]!, from[1]!)} ${from[1]}`;
+  return `${month(from[2]!, from[1]!)}–${month(to[2]!, to[1]!)} ${from[1]}`;
+}
+
 export function relativeDate(iso: string): string {
   const then = Date.parse(iso);
   if (Number.isNaN(then)) return '';
@@ -20,27 +31,30 @@ export function compact(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
 }
 
-export const TOPIC_META: Record<string, { label: string; emoji: string }> = {
-  courses: { label: 'Courses', emoji: '📚' },
-  professors: { label: 'Professors', emoji: '🎓' },
-  'study-away': { label: 'Study away', emoji: '✈️' },
-  housing: { label: 'Housing', emoji: '🏠' },
-  'visa-travel': { label: 'Visa & travel', emoji: '🛂' },
-  jobs: { label: 'Jobs', emoji: '💼' },
-  money: { label: 'Money', emoji: '💸' },
-  marketplace: { label: 'Buy & sell', emoji: '🛒' },
-  food: { label: 'Food', emoji: '🍽️' },
-  health: { label: 'Health', emoji: '🩺' },
-  transport: { label: 'Transport', emoji: '🚌' },
-  tech: { label: 'Tech', emoji: '💻' },
-  events: { label: 'Events', emoji: '🎉' },
-  research: { label: 'Research', emoji: '🔬' },
-  'lost-found': { label: 'Lost & found', emoji: '🔎' },
-  'grad-school': { label: 'Grad school', emoji: '🎯' },
-  general: { label: 'General', emoji: '💬' },
+export function plural(n: number, singular: string, pluralForm = `${singular}s`): string {
+  return `${n.toLocaleString()} ${n === 1 ? singular : pluralForm}`;
+}
+
+const TOPIC_LABELS: Record<string, string> = {
+  courses: 'Courses',
+  professors: 'Professors',
+  'study-away': 'Study away',
+  housing: 'Housing',
+  'visa-travel': 'Visa & travel',
+  jobs: 'Jobs',
+  money: 'Money',
+  marketplace: 'Buy & sell',
+  food: 'Food',
+  health: 'Health',
+  transport: 'Transport',
+  tech: 'Tech',
+  events: 'Events',
+  research: 'Research',
+  'lost-found': 'Lost & found',
+  'grad-school': 'Grad school',
+  general: 'General',
 };
 
 export function topicLabel(id: string): string {
-  const meta = TOPIC_META[id];
-  return meta ? `${meta.emoji} ${meta.label}` : id;
+  return TOPIC_LABELS[id] ?? id.replace(/-/g, ' ');
 }

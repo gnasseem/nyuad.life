@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { ApiError, askStream, type SourceCard as Source } from '../api';
+import { askStream, type SourceCard as Source } from '../api';
 import { SourceCard } from '../components/SourceCard';
 import { useApp } from '../context';
+import { plural, topicLabel } from '../format';
 import { IconCopy, IconPlus, IconSend, IconStop } from '../icons';
 import { Markdown } from '../markdown';
 import { navigate } from '../router';
@@ -9,10 +10,9 @@ import { loadConversations, saveConversation, toHistory, uid, type Conversation,
 
 interface Props {
   resumeId?: string;
-  onNeedAccess(): void;
 }
 
-export function AskPage({ resumeId, onNeedAccess }: Props) {
+export function AskPage({ resumeId }: Props) {
   const { home, toast, askPrefill, setAskPrefill } = useApp();
   const [conversation, setConversation] = useState<Conversation>(() => fresh());
   const [input, setInput] = useState('');
@@ -86,9 +86,6 @@ export function AskPage({ resumeId, onNeedAccess }: Props) {
         if (controller.signal.aborted) {
           patchMessage(modelMessage.id, (message) => ({ pending: false, status: undefined, content: message.content || '', error: message.content ? undefined : 'Stopped.' }));
           if (conversationRef.current.messages.some((m) => m.role === 'model' && m.content && !m.error)) saveConversation(conversationRef.current);
-        } else if (error instanceof ApiError && error.status === 401) {
-          patchMessage(modelMessage.id, { pending: false, status: undefined, error: 'You need the access code to ask questions.' });
-          onNeedAccess();
         } else {
           patchMessage(modelMessage.id, { pending: false, status: undefined, error: error instanceof Error ? error.message : 'Something went wrong.' });
         }
@@ -97,7 +94,7 @@ export function AskPage({ resumeId, onNeedAccess }: Props) {
         abortRef.current = null;
       }
     },
-    [running, update, patchMessage, onNeedAccess],
+    [running, update, patchMessage],
   );
 
   useEffect(() => {
@@ -164,136 +161,135 @@ export function AskPage({ resumeId, onNeedAccess }: Props) {
   const empty = conversation.messages.length === 0;
   const stats = home?.stats;
 
+  const composer = (
+    <div className={`composer-wrap${empty ? ' inline' : ''}`}>
+      <div className="composer">
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          onKeyDown={onKey}
+          placeholder={empty ? 'Ask about a course, a professor, housing, visas, study away…' : 'Ask a follow-up'}
+          maxLength={600}
+          aria-label="Your question"
+        />
+        {running ? (
+          <button type="button" className="send stop" onClick={stop} aria-label="Stop">
+            <IconStop />
+          </button>
+        ) : (
+          <button type="button" className="send" onClick={() => void send(input)} disabled={!input.trim()} aria-label="Send">
+            <IconSend />
+          </button>
+        )}
+      </div>
+      <div className="composer-hint">
+        <span>Enter to send, Shift+Enter for a new line</span>
+        <span>Answers can be wrong. Check the cited posts.</span>
+      </div>
+    </div>
+  );
+
   return (
-    <div className={`ask-layout${sources.length ? '' : ' single'}`}>
+    <div className={`ask${sources.length ? '' : ' single'}`}>
       <div>
         {empty ? (
-          <div className="hero">
-            <h1 className="display">
-              Ask the <em>Room of Requirement</em>
-            </h1>
-            <p>
-              Every answer is built only from what NYUAD students have already posted
-              {stats ? ` — ${stats.posts.toLocaleString()} threads and ${stats.comments.toLocaleString()} comments` : ''}, with the original posts cited so you can check for yourself.
-            </p>
-            {home && (
-              <div className="suggest">
-                <h3>Try asking</h3>
-                <div className="suggest-grid">
+          <>
+            <section className="hero">
+              <h1>Ask the Room of Requirement archive</h1>
+              <p>
+                {stats ? `Search ${plural(stats.posts, 'thread')} and ${plural(stats.comments, 'comment')} from the NYU Abu Dhabi student group.` : 'Search the NYU Abu Dhabi student group.'} Every
+                answer cites the original posts so you can check it yourself.
+              </p>
+            </section>
+            {composer}
+            {home && home.suggestions.length > 0 && (
+              <section className="examples" aria-labelledby="examples-title">
+                <h2 id="examples-title">Example questions</h2>
+                <div className="examples-grid">
                   {home.suggestions.map((suggestion) => (
-                    <button key={suggestion.question} type="button" className="suggest-card" onClick={() => void send(suggestion.question)}>
-                      <span className="topic">{suggestion.topic.replace('-', ' ')}</span>
-                      {suggestion.question}
+                    <button key={suggestion.question} type="button" className="example" onClick={() => void send(suggestion.question)}>
+                      <span className="k">{topicLabel(suggestion.topic)}</span>
+                      <span>{suggestion.question}</span>
                     </button>
                   ))}
                 </div>
-              </div>
+              </section>
             )}
-          </div>
+          </>
         ) : (
-          <div className="row" style={{ justifyContent: 'space-between', marginBottom: 18 }}>
-            <h2 className="display" style={{ fontSize: 20, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {conversation.title}
-            </h2>
+          <div className="conversation-head">
+            <h2>{plural(conversation.messages.filter((message) => message.role === 'user').length, 'question')} in this conversation</h2>
             <button type="button" className="btn sm" onClick={reset}>
               <IconPlus /> New question
             </button>
           </div>
         )}
 
-        <div className="thread">
-          {conversation.messages.map((message) =>
-            message.role === 'user' ? (
-              <div key={message.id} className="turn-user">
-                <div className="bubble">{message.content}</div>
-              </div>
-            ) : (
-              <div key={message.id} className="turn-model" onMouseEnter={() => message.sources?.length && setFocusMessage(message.id)}>
-                {message.status && (
-                  <div className="status-line">
-                    <span className="spinner" /> {message.status}…
-                  </div>
-                )}
-                {message.content && (
-                  <div className="answer">
-                    <Markdown text={message.content} onCitation={jumpToSource} onCitationHover={setHot} hot={hot} />
-                    {message.pending && <span className="cursor" />}
-                  </div>
-                )}
-                {message.error && <div className="alert">{message.error}</div>}
-                {!message.pending && message.content && (
-                  <div className="answer-tools">
-                    <button type="button" className="btn ghost sm" onClick={() => void copy(message.content)}>
-                      <IconCopy /> Copy
-                    </button>
-                    {message.sources && message.sources.length > 0 && (
-                      <span className="faint small">
-                        {message.sources.length} source{message.sources.length === 1 ? '' : 's'} · click a number to see the post
-                      </span>
-                    )}
-                  </div>
-                )}
-                {!message.pending && message.followups && message.followups.length > 0 && (
-                  <div className="followups">
-                    {message.followups.map((question) => (
-                      <button key={question} type="button" className="followup" onClick={() => void send(question)} disabled={running}>
-                        {question}
+        {!empty && (
+          <div className="thread">
+            {conversation.messages.map((message) =>
+              message.role === 'user' ? (
+                <h3 key={message.id} className="question">
+                  {message.content}
+                </h3>
+              ) : (
+                <div key={message.id} className="turn" onMouseEnter={() => message.sources?.length && setFocusMessage(message.id)}>
+                  {message.status && (
+                    <div className="status-line">
+                      <span className="spinner" /> {message.status}…
+                    </div>
+                  )}
+                  {message.content && (
+                    <div className="answer">
+                      <Markdown text={message.content} onCitation={jumpToSource} onCitationHover={setHot} hot={hot} />
+                      {message.pending && <span className="cursor" />}
+                    </div>
+                  )}
+                  {message.error && <div className="alert">{message.error}</div>}
+                  {!message.pending && message.content && (
+                    <div className="answer-tools">
+                      <button type="button" className="btn ghost sm" onClick={() => void copy(message.content)}>
+                        <IconCopy /> Copy
                       </button>
-                    ))}
-                  </div>
-                )}
-                {message.sources && message.sources.length > 0 && (
-                  <details className="mobile-sources">
-                    <summary className="faint small" style={{ cursor: 'pointer' }}>
-                      Show {message.sources.length} sources
-                    </summary>
-                    <div className="source-list" style={{ marginTop: 10 }}>
-                      {message.sources.map((source) => (
-                        <SourceCard key={source.n} source={source} hot={hot === source.n} onHover={setHot} />
+                      {message.sources && message.sources.length > 0 && <span className="faint small">Based on {plural(message.sources.length, 'thread')}. Click a number to see the post.</span>}
+                    </div>
+                  )}
+                  {!message.pending && message.followups && message.followups.length > 0 && (
+                    <div className="followups">
+                      {message.followups.map((question) => (
+                        <button key={question} type="button" className="followup" onClick={() => void send(question)} disabled={running}>
+                          {question}
+                        </button>
                       ))}
                     </div>
-                  </details>
-                )}
-              </div>
-            ),
-          )}
-          <div ref={endRef} />
-        </div>
-
-        <div className="composer-wrap">
-          <div className="composer">
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={onKey}
-              placeholder={empty ? 'Ask about a course, a professor, housing, visas, study away…' : 'Ask a follow-up…'}
-              maxLength={600}
-              aria-label="Your question"
-            />
-            {running ? (
-              <button type="button" className="send stop" onClick={stop} aria-label="Stop">
-                <IconStop />
-              </button>
-            ) : (
-              <button type="button" className="send" onClick={() => void send(input)} disabled={!input.trim()} aria-label="Send">
-                <IconSend />
-              </button>
+                  )}
+                  {message.sources && message.sources.length > 0 && (
+                    <details className="sources-inline">
+                      <summary>Sources ({message.sources.length})</summary>
+                      <div className="source-list">
+                        {message.sources.map((source) => (
+                          <SourceCard key={source.n} source={source} hot={hot === source.n} onHover={setHot} />
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </div>
+              ),
             )}
+            <div ref={endRef} />
           </div>
-          <div className="composer-hint">
-            <span>Enter to send · Shift+Enter for a new line</span>
-            <span>Answers can be wrong: check the cited posts.</span>
-          </div>
-        </div>
+        )}
+
+        {!empty && composer}
       </div>
 
       {sources.length > 0 && (
-        <aside className="sources-col desktop-sources">
+        <aside className="sources" aria-label="Sources">
           <div className="sources-head">
-            <h3>Sources</h3>
-            <span className="faint small">{sources.length} threads</span>
+            <h2>Sources</h2>
+            <span className="faint small">{plural(sources.length, 'thread')}</span>
           </div>
           <div className="source-list">
             {sources.map((source: Source) => (

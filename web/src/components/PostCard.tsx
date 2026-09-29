@@ -17,16 +17,29 @@ export function PostCard({ post, terms = [], showSnippet = true }: Props) {
       <div className="meta">
         <b>{post.author || 'Unknown'}</b>
         <span>{formatDate(post.date)}</span>
-        {post.topics.filter((topic) => topic !== 'general').slice(0, 2).map((topic) => (
-          <span key={topic} className="tag">{topicLabel(topic)}</span>
-        ))}
+        {post.topics
+          .filter((topic) => topic !== 'general')
+          .slice(0, 2)
+          .map((topic) => (
+            <span key={topic} className="tag">
+              {topicLabel(topic)}
+            </span>
+          ))}
       </div>
       <div className="body">{terms.length ? highlight(body, terms) : body}</div>
       <div className="foot meta">
-        <span className="row" style={{ gap: 4 }}><IconComment width={14} height={14} /> {compact(post.commentCount)}</span>
-        {post.reactions > 0 && <span className="row" style={{ gap: 4 }}><IconHeart width={14} height={14} /> {compact(post.reactions)}</span>}
+        <span className="with-icon" title="Comments">
+          <IconComment /> {compact(post.commentCount)}
+        </span>
+        {post.reactions > 0 && (
+          <span className="with-icon" title="Reactions">
+            <IconHeart /> {compact(post.reactions)}
+          </span>
+        )}
         {post.courses.slice(0, 3).map((code) => (
-          <span key={code} className="tag course">{code}</span>
+          <span key={code} className="tag course">
+            {code}
+          </span>
         ))}
       </div>
     </button>

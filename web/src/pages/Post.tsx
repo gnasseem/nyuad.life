@@ -2,16 +2,15 @@ import { useEffect, useState } from 'react';
 import { api, type PostDetail, type PostSummary } from '../api';
 import { PostCard } from '../components/PostCard';
 import { useApp } from '../context';
-import { compact, formatDate, topicLabel } from '../format';
+import { formatDate, plural, topicLabel } from '../format';
 import { IconAsk, IconBack, IconExternal } from '../icons';
 import { navigate } from '../router';
 
 interface Props {
   id: string;
-  onNeedAccess(): void;
 }
 
-export function PostPage({ id, onNeedAccess }: Props) {
+export function PostPage({ id }: Props) {
   const { setAskPrefill } = useApp();
   const [post, setPost] = useState<PostDetail | null>(null);
   const [related, setRelated] = useState<PostSummary[]>([]);
@@ -30,13 +29,12 @@ export function PostPage({ id, onNeedAccess }: Props) {
       })
       .catch((err) => {
         if (cancelled) return;
-        if (err?.status === 401) onNeedAccess();
         setError(err instanceof Error ? err.message : 'Could not load this post.');
       });
     return () => {
       cancelled = true;
     };
-  }, [id, onNeedAccess]);
+  }, [id]);
 
   const askAbout = () => {
     if (!post) return;
@@ -45,14 +43,16 @@ export function PostPage({ id, onNeedAccess }: Props) {
     navigate({ name: 'ask' });
   };
 
+  const missing = post ? post.commentCount - post.comments.length : 0;
+
   return (
     <div className="page">
-      <button type="button" className="btn ghost sm" onClick={() => window.history.length > 1 ? window.history.back() : navigate({ name: 'browse' })} style={{ marginBottom: 14 }}>
+      <button type="button" className="btn ghost sm back" onClick={() => (window.history.length > 1 ? window.history.back() : navigate({ name: 'browse' }))}>
         <IconBack /> Back
       </button>
       {error && <div className="alert">{error}</div>}
       {!post && !error && (
-        <div className="card pad" style={{ display: 'grid', gap: 10 }}>
+        <div className="card pad" style={{ display: 'grid', gap: 10 }} aria-busy="true">
           <div className="skeleton" style={{ width: '40%' }} />
           <div className="skeleton" style={{ height: 60 }} />
           <div className="skeleton" style={{ height: 40 }} />
@@ -61,26 +61,30 @@ export function PostPage({ id, onNeedAccess }: Props) {
       {post && (
         <>
           <article className="card pad">
-            <div className="meta" style={{ marginBottom: 10 }}>
+            <div className="meta" style={{ marginBottom: 12 }}>
               <b>{post.author || 'Unknown'}</b>
               <span>{formatDate(post.date)}</span>
-              <span>{compact(post.commentCount)} {post.commentCount === 1 ? 'comment' : 'comments'}</span>
-              {post.reactions > 0 && <span>{compact(post.reactions)} {post.reactions === 1 ? 'reaction' : 'reactions'}</span>}
+              <span>{plural(post.commentCount, 'comment')}</span>
+              {post.reactions > 0 && <span>{plural(post.reactions, 'reaction')}</span>}
             </div>
             <div className="post-full">{post.text}</div>
-            <div className="chips" style={{ marginTop: 14 }}>
-              {post.courses.map((code) => (
-                <button key={code} type="button" className="chip tiny" onClick={() => navigate({ name: 'courses', code })}>
-                  {code}
-                </button>
-              ))}
-              {post.topics.filter((topic) => topic !== 'general').map((topic) => (
-                <button key={topic} type="button" className="chip tiny" onClick={() => navigate({ name: 'browse' }, { search: `topic=${topic}` })}>
-                  {topicLabel(topic)}
-                </button>
-              ))}
-            </div>
-            <div className="row" style={{ marginTop: 16, flexWrap: 'wrap' }}>
+            {(post.courses.length > 0 || post.topics.some((topic) => topic !== 'general')) && (
+              <div className="chips" style={{ marginTop: 16 }}>
+                {post.courses.map((code) => (
+                  <button key={code} type="button" className="chip sm mono" onClick={() => navigate({ name: 'courses', code })}>
+                    {code}
+                  </button>
+                ))}
+                {post.topics
+                  .filter((topic) => topic !== 'general')
+                  .map((topic) => (
+                    <button key={topic} type="button" className="chip sm" onClick={() => navigate({ name: 'browse' }, { search: `topic=${topic}` })}>
+                      {topicLabel(topic)}
+                    </button>
+                  ))}
+              </div>
+            )}
+            <div className="row wrap" style={{ marginTop: 18 }}>
               <button type="button" className="btn primary sm" onClick={askAbout}>
                 <IconAsk /> Ask about this
               </button>
@@ -92,10 +96,10 @@ export function PostPage({ id, onNeedAccess }: Props) {
             </div>
           </article>
 
-          <h3 className="section-title">
-            {post.comments.length} {post.comments.length === 1 ? 'comment' : 'comments'}
-            {post.commentCount > post.comments.length ? ` (${post.commentCount - post.comments.length} not captured yet)` : ''}
-          </h3>
+          <h2 className="section-title">
+            {plural(post.comments.length, 'comment')}
+            {missing > 0 ? ` (${missing} not captured yet)` : ''}
+          </h2>
           {post.comments.length === 0 ? (
             <p className="muted">No comments were saved for this post.</p>
           ) : (
@@ -114,7 +118,7 @@ export function PostPage({ id, onNeedAccess }: Props) {
 
           {related.length > 0 && (
             <>
-              <h3 className="section-title">Related threads</h3>
+              <h2 className="section-title">Related threads</h2>
               <div className="post-list">
                 {related.map((entry) => (
                   <PostCard key={entry.id} post={entry} showSnippet={false} />

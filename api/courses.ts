@@ -1,9 +1,8 @@
-import { queryInt, queryString, requireAccess, route, sendJson } from '../lib/http.ts';
+import { queryInt, queryString, route, sendJson } from '../lib/http.ts';
 import { loadArchive, summarizePost } from '../lib/store.ts';
 import { extractCourseCodes } from '../lib/text.ts';
 
 export default route(['GET'], async (req, res) => {
-  requireAccess(req);
   const archive = await loadArchive();
   const code = queryString(req, 'code').trim();
   if (code) {

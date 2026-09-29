@@ -2,7 +2,7 @@
 
 Ask the NYU Abu Dhabi **Room of Requirement** archive. Students type a question, the backend finds the threads that
 answer it (hybrid keyword + Gemini vector search), and Gemini writes a short answer that cites the actual posts.
-Every citation opens the original thread with all its comments.
+Every citation opens the original thread with all its comments. The site is open: no login and no access code.
 
 Everything is TypeScript, in one repository:
 
@@ -22,7 +22,6 @@ Everything is TypeScript, in one repository:
    | Variable | Required | Meaning |
    | --- | --- | --- |
    | `GEMINI_API_KEY` | yes | Google AI Studio key. Used for embeddings, reranking and answers. |
-   | `ROR_ACCESS_CODE` | recommended | A password you make up. Students type it once; without it anyone with the URL can read the private group's content and spend your Gemini quota. |
    | `GEMINI_CHAT_MODEL` | no | Defaults to `gemini-flash-latest`. |
    | `GEMINI_LITE_MODEL` | no | Defaults to `gemini-flash-lite-latest` (rerank, follow-ups, query rewriting). |
    | `GEMINI_EMBED_MODEL` / `GEMINI_EMBED_DIMENSIONS` | no | Defaults to `gemini-embedding-001` at 768 dimensions. |
@@ -31,8 +30,8 @@ Everything is TypeScript, in one repository:
    site works immediately; semantic search switches on as soon as an embedded index is committed (section 3).
 
 Routes: `GET /api/health`, `GET /api/home`, `GET /api/search`, `GET /api/post?id=`, `GET /api/courses`,
-`POST /api/ask` (server-sent events: `status`, `sources`, `delta`, `followups`, `done`, `error`). Protected routes
-need the `x-ror-code` header when `ROR_ACCESS_CODE` is set; the web app adds it after the student enters the code.
+`POST /api/ask` (server-sent events: `status`, `sources`, `delta`, `followups`, `done`, `error`). Asking is
+rate-limited per IP so one visitor cannot burn through the Gemini quota.
 
 ## 2. Scrape the whole group (runs on your laptop)
 
@@ -42,16 +41,30 @@ web client loads, so it does not depend on fragile page selectors, and it is inc
 ```bash
 npm install
 npx playwright install chromium
+npm run scrape -- --login       # optional: just open the window, log in once, and exit
 npm run scrape -- --full        # first time: walk the group back to its first post (hours; leave it running)
 npm run scrape                  # later: only new posts and threads whose comment counts changed
 ```
 
-- A window opens on facebook.com. Log in once; the profile is kept in `.scraper-profile/` (git-ignored).
-- Progress is saved to `data/posts.jsonl` every 10 threads and on Ctrl+C. Re-running resumes.
-- `--only-comments` revisits threads that are missing comments. `--max-posts 200` limits a run.
-  `--debug` dumps raw responses to `.scraper-debug/` if Facebook changes something and captures look wrong.
-- Keep the pace polite (`--delay 2` doubles all waits). This is your personal export of a group you belong to;
-  don't share the raw file outside the community.
+What to expect:
+
+- A window opens on facebook.com. Log in there (codes, "save this browser?" and so on are fine); the scraper waits
+  up to 30 minutes and carries on by itself once it can see the group. The login is kept in `.scraper-profile/`
+  (git-ignored), so you only do this once.
+- After the first scroll the scraper knows the request Facebook's client uses to load more posts and asks for the
+  next pages itself, cursor by cursor. That is much faster than scrolling and does not slow down as the page grows.
+  If Facebook refuses, it falls back to scrolling.
+- Progress is saved every few minutes, every 10 threads and on Ctrl+C. An interrupted `--full` run continues from
+  where it stopped the next time you run `--full` (new posts at the top are picked up first). `--restart-feed`
+  starts again from the newest post.
+- Comments are collected by opening each thread and expanding it. Threads that still look incomplete after two
+  visits (Facebook counts deleted comments) are skipped until you run `--only-comments`.
+
+Options: `--max-posts 200` limits a run, `--no-comments` skips threads, `--delay 2` doubles every wait (gentler
+on Facebook), `--chrome` drives your installed Google Chrome instead of Playwright's Chromium, `--debug` dumps raw
+responses to `.scraper-debug/` if Facebook changes something and captures look wrong. `ROR_BROWSER_EXECUTABLE`
+points at a specific Chrome/Chromium binary. This is your personal export of a group you belong to; don't share the
+raw file outside the community.
 
 When a run finishes, commit and push `data/posts.jsonl`.
 
@@ -81,13 +94,15 @@ tune throughput against your Gemini quota (429s are retried automatically with t
 
 ```bash
 npm install
-cp .env.example .env            # GEMINI_API_KEY (and optionally ROR_ACCESS_CODE)
+cp .env.example .env            # GEMINI_API_KEY
 npm run dev                     # API on http://localhost:8787 (serves dist/ too, if built)
 npx vite                        # web app with hot reload on http://localhost:5173, proxying /api
 npm run check                   # typecheck + tests + production build
 ```
 
-Without a Gemini key the API still serves browsing and keyword search; asking needs the key.
+Without a Gemini key the API still serves browsing and keyword search; asking needs the key. The test suite includes
+an end-to-end run of the scraper against a fake Facebook (`scripts/fake-facebook.ts`); it needs the Playwright
+Chromium and skips itself when that is not installed.
 
 ## How answers are produced
 

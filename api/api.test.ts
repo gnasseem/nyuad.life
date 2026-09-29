@@ -94,7 +94,6 @@ beforeAll(async () => {
   process.env.GEMINI_API_KEY = 'test-key';
   process.env.GEMINI_BASE_URL = `http://127.0.0.1:${geminiPort}/v1beta`;
   process.env.GEMINI_EMBED_DIMENSIONS = String(DIMS);
-  process.env.ROR_ACCESS_CODE = 'falcon';
 
   dataRoot = mkdtempSync(path.join(tmpdir(), 'ror-test-'));
   process.env.ROR_DATA_ROOT = dataRoot;
@@ -122,20 +121,23 @@ afterAll(async () => {
   rmSync(dataRoot, { recursive: true, force: true });
 });
 
-const headers = { 'x-ror-code': 'falcon', 'content-type': 'application/json' };
+const headers = { 'content-type': 'application/json' };
 
 describe('api', () => {
-  it('reports health without an access code', async () => {
+  it('reports health', async () => {
     const health = await getJson(`${apiUrl}/api/health`);
     expect(health.ok).toBe(true);
     expect(health.archive).toMatchObject({ source: 'index', posts: 5, vectors: true, dimensions: DIMS });
-    expect(health.accessCode).toBe(true);
+    expect(health).not.toHaveProperty('accessCode');
   });
 
-  it('refuses protected routes without the code', async () => {
-    const response = await fetch(`${apiUrl}/api/home`);
-    expect(response.status).toBe(401);
-    expect(((await response.json()) as { error: string }).error).toBe('access_code_required');
+  it('serves every route without any credentials', async () => {
+    for (const path of ['/api/home', '/api/search?q=calculus', '/api/post?id=p1', '/api/courses']) {
+      const response = await fetch(`${apiUrl}${path}`);
+      expect(response.status, path).toBe(200);
+    }
+    const ask = await fetch(`${apiUrl}/api/ask`, { method: 'POST', headers, body: JSON.stringify({ question: 'calculus professor', stream: false }) });
+    expect(ask.status).toBe(200);
   });
 
   it('serves the home payload', async () => {

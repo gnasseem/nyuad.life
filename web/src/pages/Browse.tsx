@@ -2,13 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, type PostSummary, type SearchParams } from '../api';
 import { PostCard } from '../components/PostCard';
 import { useApp } from '../context';
-import { topicLabel } from '../format';
+import { plural, topicLabel } from '../format';
 import { IconSearch } from '../icons';
 import { navigate } from '../router';
 
 interface Props {
   search: URLSearchParams;
-  onNeedAccess(): void;
 }
 
 const SORTS = [
@@ -18,7 +17,7 @@ const SORTS = [
   { id: 'oldest', label: 'Oldest' },
 ] as const;
 
-export function BrowsePage({ search, onNeedAccess }: Props) {
+export function BrowsePage({ search }: Props) {
   const { home } = useApp();
   const [q, setQ] = useState(search.get('q') ?? '');
   const [debounced, setDebounced] = useState(q);
@@ -60,13 +59,23 @@ export function BrowsePage({ search, onNeedAccess }: Props) {
     return Array.from({ length: newest - oldest + 1 }, (_, i) => String(newest - i));
   }, [home]);
 
+  const params = (pageNumber: number): SearchParams => ({
+    q: debounced || undefined,
+    topic: topic || undefined,
+    from: year ? `${year}-01` : undefined,
+    to: year ? `${year}-12` : undefined,
+    sort,
+    page: pageNumber,
+    pageSize: 20,
+  });
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError('');
     setPage(1);
     api
-      .search({ q: debounced || undefined, topic: topic || undefined, from: year ? `${year}-01` : undefined, to: year ? `${year}-12` : undefined, sort, page: 1, pageSize: 20 })
+      .search(params(1))
       .then((result) => {
         if (cancelled) return;
         setResults(result.results);
@@ -75,20 +84,20 @@ export function BrowsePage({ search, onNeedAccess }: Props) {
       })
       .catch((err) => {
         if (cancelled) return;
-        if (err?.status === 401) onNeedAccess();
         setError(err instanceof Error ? err.message : 'Search failed.');
       })
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [debounced, topic, year, sort, onNeedAccess]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debounced, topic, year, sort]);
 
   const loadMore = async () => {
     const next = page + 1;
     setLoading(true);
     try {
-      const result = await api.search({ q: debounced || undefined, topic: topic || undefined, from: year ? `${year}-01` : undefined, to: year ? `${year}-12` : undefined, sort, page: next, pageSize: 20 });
+      const result = await api.search(params(next));
       setResults((current) => [...current, ...result.results]);
       setPage(next);
     } catch (err) {
@@ -101,12 +110,12 @@ export function BrowsePage({ search, onNeedAccess }: Props) {
   return (
     <div className="page">
       <div className="page-head">
-        <h1 className="display">Browse the archive</h1>
+        <h1>Browse the archive</h1>
         <p>Search every post and comment, or filter by topic and year.</p>
       </div>
       <label className="searchbar">
         <IconSearch />
-        <input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search posts and comments… e.g. Dania calculus, A5 laundry, Shanghai housing" autoFocus />
+        <input value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search posts and comments" autoFocus={window.matchMedia('(min-width: 720px)').matches} aria-label="Search posts and comments" />
         {q && (
           <button type="button" className="btn ghost sm" onClick={() => setQ('')}>
             Clear
@@ -131,15 +140,16 @@ export function BrowsePage({ search, onNeedAccess }: Props) {
             ))}
           </select>
         )}
+        {home && home.topics.length > 0 && <span className="sep" aria-hidden="true" />}
         {home?.topics.slice(0, 12).map((entry) => (
-          <button key={entry.id} type="button" className={`chip${topic === entry.id ? ' on' : ''}`} onClick={() => setParam('topic', topic === entry.id ? '' : entry.id)}>
+          <button key={entry.id} type="button" className={`chip${topic === entry.id ? ' on' : ''}`} aria-pressed={topic === entry.id} onClick={() => setParam('topic', topic === entry.id ? '' : entry.id)}>
             {topicLabel(entry.id)}
           </button>
         ))}
       </div>
       {error && <div className="alert">{error}</div>}
-      <div className="result-count">
-        {loading && results.length === 0 ? 'Searching…' : `${total.toLocaleString()} ${total === 1 ? 'post' : 'posts'}${debounced ? ` for “${debounced}”` : ''}`}
+      <div className="result-count" aria-live="polite">
+        {loading && results.length === 0 ? 'Searching…' : `${plural(total, 'post')}${debounced ? ` for “${debounced}”` : ''}${topic ? ` in ${topicLabel(topic)}` : ''}${year ? ` from ${year}` : ''}`}
       </div>
       <div className="post-list">
         {results.map((post) => (
@@ -149,13 +159,13 @@ export function BrowsePage({ search, onNeedAccess }: Props) {
       {!loading && results.length === 0 && !error && (
         <div className="empty">
           <h3>Nothing matched</h3>
-          Try fewer words, a surname, or a course code like CS-UH 1001.
+          Try fewer words, a surname, or a course code such as CS-UH 1001.
         </div>
       )}
       {results.length < total && (
         <div className="pager">
           <button type="button" className="btn" onClick={() => void loadMore()} disabled={loading}>
-            {loading ? 'Loading…' : 'Load more'}
+            {loading ? 'Loading…' : `Show more (${(total - results.length).toLocaleString()} left)`}
           </button>
         </div>
       )}
