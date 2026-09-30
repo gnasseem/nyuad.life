@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { api, ApiError, type Answer, type LeaderboardEntry, type PostSummary, type Question, type QuestionWithAnswers, type Redirect } from '../api';
-import { Mark } from '../components/Logo';
 import { PostRow } from '../components/PostRow';
 import { Segmented } from '../components/Segmented';
 import { useApp } from '../context';
-import { initials, plural, relativeDate, standingLabel, topicLabel } from '../format';
-import { IconBack, IconCheck, IconFlame, IconInfo, IconSkip } from '../icons';
+import { plural, relativeDate, standingLabel, topicLabel } from '../format';
+import { IconBack } from '../icons';
 import { navigate } from '../router';
 import { askerKey } from '../store';
 
@@ -13,13 +12,6 @@ type Tab = 'ask' | 'help';
 
 interface Props {
   search: URLSearchParams;
-}
-
-interface BoardStats {
-  open: number;
-  answered: number;
-  answers: number;
-  helpers: number;
 }
 
 const QUESTION_MAX = 600;
@@ -36,14 +28,14 @@ export function QuestionsPage({ search }: Props) {
   const { boardProblem } = useApp();
   const tab: Tab = search.get('tab') === 'help' ? 'help' : 'ask';
   const setTab = (next: Tab) => navigate({ name: 'questions' }, { replace: true, search: next === 'help' ? 'tab=help' : '', keepScroll: true });
-  const [stats, setStats] = useState<BoardStats | null>(null);
+  const [open, setOpen] = useState<number | undefined>();
 
   const refreshStats = useCallback(() => {
     if (boardProblem) return;
     api.board
       .stats()
-      .then(setStats)
-      .catch(() => setStats(null));
+      .then((stats) => setOpen(stats.open))
+      .catch(() => setOpen(undefined));
   }, [boardProblem]);
 
   useEffect(refreshStats, [refreshStats]);
@@ -53,30 +45,12 @@ export function QuestionsPage({ search }: Props) {
       <div className="page-head">
         <div>
           <h1>Questions</h1>
-          <p>When the archive falls short, ask people. Questions reach the majors and years best placed to answer, one card at a time.</p>
+          <p>Ask students directly. Questions go to the majors and years most likely to know.</p>
         </div>
-        <Segmented value={tab} onChange={setTab} label="Questions" options={[{ id: 'ask', label: 'Ask students' }, { id: 'help', label: 'Answer', count: stats?.open }]} />
+        <Segmented value={tab} onChange={setTab} label="Questions" options={[{ id: 'ask', label: 'Ask' }, { id: 'help', label: 'Answer', count: open }]} />
       </div>
-      {stats && (
-        <div className="stats board-stats">
-          <div className="stat accent">
-            <b>{stats.open}</b>
-            <span>{stats.open === 1 ? 'open question' : 'open questions'}</span>
-          </div>
-          <div className="stat">
-            <b>{stats.answers}</b>
-            <span>{stats.answers === 1 ? 'answer written' : 'answers written'}</span>
-          </div>
-          <div className="stat">
-            <b>{stats.helpers}</b>
-            <span>{stats.helpers === 1 ? 'student helping' : 'students helping'}</span>
-          </div>
-        </div>
-      )}
       {boardProblem ? (
-        <div className="alert warn">
-          <IconInfo /> <span>{boardProblem}</span>
-        </div>
+        <div className="alert">{boardProblem}</div>
       ) : tab === 'ask' ? (
         <AskStudents onPosted={refreshStats} />
       ) : (
@@ -89,64 +63,45 @@ export function QuestionsPage({ search }: Props) {
   );
 }
 
-/* ---------- Who answers the most ---------- */
-
 function Leaderboard() {
   const { profile } = useApp();
-  const [helpers, setHelpers] = useState<LeaderboardEntry[] | null>(null);
+  const [helpers, setHelpers] = useState<LeaderboardEntry[]>([]);
   useEffect(() => {
     api.board
       .leaderboard()
       .then((result) => setHelpers(result.helpers))
       .catch(() => setHelpers([]));
   }, [profile?.answers]);
-  if (!helpers || helpers.length === 0) return null;
+  if (helpers.length === 0) return null;
   return (
     <>
       <h2 className="section-title">Most answers</h2>
       <div className="list">
         {helpers.map((entry, index) => (
-          <div key={entry.netId} className={`lb-row${profile?.netId === entry.netId ? ' me' : ''}`}>
+          <div key={entry.netId} className="lb-row">
             <span className="rank">{index + 1}</span>
-            <span className="avatar sm">{initials(entry.name)}</span>
             <span className="who">
               <b>{entry.name}</b>
               <span>
                 {entry.major}, {standingLabel(entry.year)}
               </span>
             </span>
-            <span className="n" title="Consecutive weeks with an answer">
-              {entry.streak > 1 ? (
-                <>
-                  <IconFlame style={{ width: 12, height: 12, verticalAlign: -2 }} /> {entry.streak} wk
-                </>
-              ) : (
-                ''
-              )}
-            </span>
-            <span className="n">
-              <b>{entry.answers}</b> {entry.answers === 1 ? 'answer' : 'answers'}
-            </span>
+            <span className="n">{plural(entry.answers, 'answer')}</span>
           </div>
         ))}
       </div>
-      <p className="faint xs" style={{ marginTop: 8 }}>
-        Helpers get a Monday email with the open questions their major and year fit best. Turn it off in Settings.
-      </p>
     </>
   );
 }
 
-/* ---------- Ask students ---------- */
-
 function AskStudents({ onPosted }: { onPosted(): void }) {
-  const { profile, boardPrefill, setBoardPrefill } = useApp();
+  const { profile, boardPrefill, setBoardPrefill, toast } = useApp();
   const [text, setText] = useState(boardPrefill);
   const [name, setName] = useState(profile?.name ?? '');
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState('');
-  const [posted, setPosted] = useState<{ question?: Question; similar: QuestionWithAnswers[]; related: PostSummary[]; redirect?: Redirect } | null>(null);
-  const [mine, setMine] = useState<QuestionWithAnswers[] | null>(null);
+  const [posted, setPosted] = useState<{ similar: QuestionWithAnswers[]; related: PostSummary[]; redirect?: Redirect } | null>(null);
+  const [mine, setMine] = useState<QuestionWithAnswers[]>([]);
 
   useEffect(() => {
     if (boardPrefill) setBoardPrefill('');
@@ -175,109 +130,81 @@ function AskStudents({ onPosted }: { onPosted(): void }) {
     setPosting(true);
     try {
       const result = await api.board.ask({ text: text.trim(), key: askerKey(), name: name.trim() || undefined });
-      setPosted({ question: result.question, similar: result.similar ?? [], related: result.related ?? [], redirect: result.redirect });
+      setPosted({ similar: result.similar ?? [], related: result.related ?? [], redirect: result.redirect });
       if (result.question) {
         setText('');
+        toast('Posted');
         loadMine();
         onPosted();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not post that.');
+      setError(err instanceof Error ? err.message : 'Could not post the question.');
     } finally {
       setPosting(false);
     }
   };
 
   return (
-    <div className="stack" style={{ gap: 26 }}>
-      <div>
+    <div className="stack" style={{ gap: 24 }}>
+      <div className="stack">
         <div className="ask-card">
           <textarea
             value={text}
             onChange={(event) => setText(event.target.value)}
             onKeyDown={(event) => submitOnShortcut(event, () => void submit())}
-            placeholder="What do you want to know? Name the course, the building, the office or the year, and people can actually answer."
+            placeholder="Your question. Name the course, building or office."
             maxLength={QUESTION_MAX}
-            rows={4}
+            rows={3}
             aria-label="Your question"
           />
           <div className="bar">
-            <input className="input" value={name} onChange={(event) => setName(event.target.value)} placeholder="First name (optional)" maxLength={40} aria-label="Your name" />
+            <input className="input" value={name} onChange={(event) => setName(event.target.value)} placeholder="Name (optional)" maxLength={40} aria-label="Your name" />
             <span className="count">
               {text.length}/{QUESTION_MAX}
             </span>
             <button type="button" className="btn primary" onClick={() => void submit()} disabled={!ready}>
-              {posting ? 'Posting' : 'Post question'}
+              {posting ? 'Posting' : 'Post'}
             </button>
           </div>
         </div>
-        <div className="ask-tips">
-          <span>Anonymous unless you add a name</span>
-          <span>Answered questions feed Ask</span>
-          <span>
-            <span className="kbd">⌘↵</span> posts
-          </span>
-        </div>
-        {error && (
-          <div className="alert" style={{ marginTop: 12 }}>
-            {error}
-          </div>
-        )}
+        <p className="label">Anonymous unless you add a name. Answered questions are cited by Ask.</p>
+        {error && <div className="alert error">{error}</div>}
       </div>
 
       {posted?.redirect && (
-        <div className="redirect">
-          <h3>{posted.redirect.title}</h3>
-          <p>{posted.redirect.message}</p>
-          <div className="row">
-            <a className="btn primary" href={posted.redirect.link.url} target="_blank" rel="noreferrer">
-              {posted.redirect.link.label}
-            </a>
-          </div>
+        <div className="alert">
+          <b>{posted.redirect.title}</b>
+          {posted.redirect.message}
+          <br />
+          <a className="link" href={posted.redirect.link.url} target={posted.redirect.link.url.startsWith('/') ? undefined : '_blank'} rel="noreferrer">
+            {posted.redirect.link.label}
+          </a>
         </div>
       )}
-      {posted?.question && (
-        <div className="stack" style={{ gap: 14 }}>
-          <div className="posted">
-            <IconCheck />
-            <div>
-              <b>Posted</b>
-              It will be shown to students who can answer it. Come back here for replies; answered questions also feed straight into Ask.
-            </div>
-          </div>
-          {posted.similar.length > 0 && (
-            <>
-              <h2 className="section-title" style={{ marginTop: 6 }}>
-                Already answered on the board
-              </h2>
-              <div className="qa-list">
-                {posted.similar.map((entry) => (
-                  <QuestionThread key={entry.id} question={entry} answers={entry.answers} />
-                ))}
-              </div>
-            </>
-          )}
-          {posted.related.length > 0 && (
-            <>
-              <h2 className="section-title" style={{ marginTop: 6 }}>
-                Threads in the archive that may help
-              </h2>
-              <div className="post-list">
-                {posted.related.map((post) => (
-                  <PostRow key={post.id} post={post} />
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {mine && mine.length > 0 && (
+      {posted && posted.similar.length > 0 && (
         <div>
-          <h2 className="section-title" style={{ marginTop: 0 }}>
-            Your questions
-          </h2>
-          <div className="qa-list">
+          <h2 className="section-title">Already answered</h2>
+          <div className="list">
+            {posted.similar.map((entry) => (
+              <QuestionThread key={entry.id} question={entry} answers={entry.answers} />
+            ))}
+          </div>
+        </div>
+      )}
+      {posted && posted.related.length > 0 && (
+        <div>
+          <h2 className="section-title">Related threads</h2>
+          <div className="list">
+            {posted.related.map((post) => (
+              <PostRow key={post.id} post={post} />
+            ))}
+          </div>
+        </div>
+      )}
+      {mine.length > 0 && (
+        <div>
+          <h2 className="section-title">Your questions</h2>
+          <div className="list">
             {mine.map((entry) => (
               <QuestionThread key={entry.id} question={entry} answers={entry.answers} />
             ))}
@@ -288,41 +215,37 @@ function AskStudents({ onPosted }: { onPosted(): void }) {
   );
 }
 
-export function QuestionThread({ question, answers }: { question: Question; answers: Answer[] }) {
+function QuestionThread({ question, answers }: { question: Question; answers: Answer[] }) {
   return (
     <div className="qa">
       <div className="q">{question.text}</div>
-      <div className="status">
-        {answers.length === 0 ? (
-          <span className="pill k-warn">
-            <span className="dot" /> Waiting · seen by {plural(question.views, 'student')}
-          </span>
-        ) : (
-          <span className="pill k-ok">
-            <span className="dot" /> {plural(answers.length, 'answer')}
-          </span>
-        )}
-        <span>{question.askerName ? `${question.askerName} · ` : ''}{relativeDate(question.createdAt)}</span>
+      <div className="meta">
+        <span className={`status ${answers.length ? 'k-ok' : 'k-warn'}`}>
+          <span className="dot" /> {answers.length ? plural(answers.length, 'answer') : `Open, ${plural(question.views, 'view')}`}
+        </span>
+        <span>
+          {question.askerName ? `${question.askerName}, ` : ''}
+          {relativeDate(question.createdAt)}
+        </span>
         {question.topics.slice(0, 2).map((topic) => (
           <span key={topic} className="tag">
             {topicLabel(topic)}
           </span>
         ))}
         {question.courses.slice(0, 2).map((code) => (
-          <span key={code} className="tag course">
+          <span key={code} className="tag mono">
             {code}
           </span>
         ))}
       </div>
       {answers.map((answer) => (
         <div key={answer.id} className="qa-answer">
-          <div className="by">
-            <span className="avatar sm">{initials(answer.helperName)}</span>
+          <span className="meta">
             <b>{answer.helperName}</b>
             <span>
-              {answer.helperMajor}, {standingLabel(answer.helperYear)} · {relativeDate(answer.createdAt)}
+              {answer.helperMajor}, {standingLabel(answer.helperYear)}, {relativeDate(answer.createdAt)}
             </span>
-          </div>
+          </span>
           <div className="text">{answer.text}</div>
         </div>
       ))}
@@ -330,15 +253,12 @@ export function QuestionThread({ question, answers }: { question: Question; answ
   );
 }
 
-/* ---------- Answer questions ---------- */
-
 function HelpOut({ onChange }: { onChange(): void }) {
   const { profile, setProfile, requestProfile } = useApp();
   const [card, setCard] = useState<{ question: Question | null; remaining: number; answered: number } | null>(null);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [session, setSession] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const load = useCallback(async () => {
@@ -360,12 +280,11 @@ function HelpOut({ onChange }: { onChange(): void }) {
 
   if (!profile) {
     return (
-      <div className="invite">
-        <Mark className="mark" />
-        <h2>Help a student out</h2>
-        <p>Questions get routed to the right people by major and year, and your name appears next to what you write. Tell us who you are once and the cards start coming.</p>
-        <button type="button" className="btn primary lg" onClick={() => void requestProfile({ title: 'Before you answer', reason: 'Questions are routed by major and year, and your name appears next to what you write. One time only.' })}>
-          Introduce yourself
+      <div className="empty">
+        Add your details to answer questions.
+        <br />
+        <button type="button" className="btn primary" onClick={() => void requestProfile({ title: 'Your details', reason: 'Questions are matched by major and year. Your name appears next to your answers.' })}>
+          Add details
         </button>
       </div>
     );
@@ -380,114 +299,81 @@ function HelpOut({ onChange }: { onChange(): void }) {
       if (kind === 'answer') {
         const result = await api.board.answer({ netId: profile.netId, questionId: card.question.id, text: text.trim() });
         setProfile({ ...profile, answers: result.answered });
-        setSession((count) => count + 1);
         onChange();
       } else await api.board.skip({ netId: profile.netId, questionId: card.question.id });
       await load();
       textareaRef.current?.focus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'That did not go through.');
+      setError(err instanceof Error ? err.message : 'Could not send the answer.');
     } finally {
       setBusy(false);
     }
   };
 
   if (!card) {
-    return (
+    return error ? (
+      <div className="alert error">{error}</div>
+    ) : (
       <div className="status-line">
-        {error ? (
-          <span className="alert">{error}</span>
-        ) : (
-          <>
-            <span className="spinner" /> Finding a question for you
-          </>
-        )}
+        <span className="spinner" /> Loading
       </div>
     );
   }
 
   const question = card.question;
-  const total = session + card.remaining;
   return (
-    <div>
-      <div className="deck-head">
-        <span>
-          {question ? (
-            <>
-              <b>{plural(card.remaining, 'question')}</b> waiting for you
-            </>
-          ) : (
-            'Nothing waiting for you'
-          )}
-        </span>
-        <span>
-          You have answered <b>{card.answered}</b>
-        </span>
+    <div className="stack" style={{ gap: 12 }}>
+      <div className="meta">
+        <span>{question ? `${plural(card.remaining, 'question')} waiting` : 'No open questions for you right now'}</span>
+        <span>{plural(card.answered, 'answer')} from you</span>
       </div>
-      {total > 0 && (
-        <div className="progress-bar" style={{ marginBottom: 14 }} aria-hidden="true">
-          <i style={{ width: `${Math.round((session / total) * 100)}%` }} />
-        </div>
-      )}
-      {question ? (
-        <div className={`deck${card.remaining <= 1 ? ' single' : ''}`}>
-          <div className="flashcard" key={question.id}>
-            <div className="stack" style={{ gap: 8 }}>
-              {question.text.length <= 140 ? <h2>{question.text}</h2> : <h2>{question.summary || 'A question for you'}</h2>}
-              {question.text.length > 140 && <div className="question-text">{question.text}</div>}
-              <div className="who-for">
-                <span>
-                  {question.askerName ? `${question.askerName} asked` : 'Asked'} {relativeDate(question.createdAt)}
-                </span>
-                {question.topics.map((topic) => (
-                  <span key={topic} className="tag">
-                    {topicLabel(topic)}
-                  </span>
-                ))}
-                {question.courses.map((code) => (
-                  <span key={code} className="tag course">
-                    {code}
-                  </span>
-                ))}
-                {(question.majors.length > 0 || question.years.length > 0) && <span className="tag k-accent kind">for {[...question.majors, ...question.years.map(standingLabel)].join(', ')}</span>}
-              </div>
-            </div>
-            <textarea
-              ref={textareaRef}
-              className="input"
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              onKeyDown={(event) => submitOnShortcut(event, () => void act('answer'))}
-              placeholder="A few honest sentences are plenty. Say what you did, what you would do differently, and when this was."
-              rows={4}
-              maxLength={1200}
-              aria-label="Your answer"
-            />
-            {error && <div className="alert">{error}</div>}
-            <div className="flashcard-actions">
-              <button type="button" className="btn ghost" onClick={() => void act('skip')} disabled={busy}>
-                <IconSkip /> Not for me
-              </button>
-              <span className="hint">
-                <span className="kbd">⌘↵</span> to send
+      {question && (
+        <div className="flashcard">
+          <div className="stack">
+            {question.text.length <= 140 ? <h2>{question.text}</h2> : <div className="question-text">{question.text}</div>}
+            <div className="meta">
+              <span>
+                {question.askerName ? `${question.askerName}, ` : ''}
+                {relativeDate(question.createdAt)}
               </span>
-              <button type="button" className="btn primary" onClick={() => void act('answer')} disabled={busy || text.trim().length < 2}>
-                Send answer
-              </button>
+              {question.topics.map((topic) => (
+                <span key={topic} className="tag">
+                  {topicLabel(topic)}
+                </span>
+              ))}
+              {question.courses.map((code) => (
+                <span key={code} className="tag mono">
+                  {code}
+                </span>
+              ))}
+              {(question.majors.length > 0 || question.years.length > 0) && <span className="tag">For {[...question.majors, ...question.years.map(standingLabel)].join(', ')}</span>}
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="caught-up">
-          <h3>All caught up</h3>
-          <p>{session > 0 ? `${plural(session, 'answer')} today. ` : ''}New questions will show up here as students ask them. Thanks for helping.</p>
+          <textarea
+            ref={textareaRef}
+            className="input"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => submitOnShortcut(event, () => void act('answer'))}
+            placeholder="Your answer"
+            rows={4}
+            maxLength={1200}
+            aria-label="Your answer"
+          />
+          {error && <div className="alert error">{error}</div>}
+          <div className="flashcard-actions">
+            <button type="button" className="btn ghost" onClick={() => void act('skip')} disabled={busy}>
+              Skip
+            </button>
+            <button type="button" className="btn primary" onClick={() => void act('answer')} disabled={busy || text.trim().length < 2}>
+              Answer
+            </button>
+          </div>
         </div>
       )}
     </div>
   );
 }
-
-/* ---------- One question, with its answers ---------- */
 
 export function QuestionPage({ id }: { id: string }) {
   const [data, setData] = useState<{ question: Question; answers: Answer[] } | null>(null);
@@ -504,8 +390,12 @@ export function QuestionPage({ id }: { id: string }) {
       <button type="button" className="btn ghost sm back" onClick={() => navigate({ name: 'questions' })}>
         <IconBack /> Questions
       </button>
-      {error && <div className="alert">{error}</div>}
-      {data && <QuestionThread question={data.question} answers={data.answers} />}
+      {error && <div className="alert error">{error}</div>}
+      {data && (
+        <div className="list">
+          <QuestionThread question={data.question} answers={data.answers} />
+        </div>
+      )}
     </div>
   );
 }

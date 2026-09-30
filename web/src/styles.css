@@ -177,6 +177,7 @@ b, strong { font-weight: 600; }
   .page { padding: 16px 16px calc(var(--tabbar) + 24px + env(safe-area-inset-bottom)); }
   .topbar .wordmark { height: 40px; }
   .nav a, .recent-item a, .recent-item button, .recent-head, .recent-head button { height: 40px; line-height: 40px; }
+  .recent-head button { padding: 0 8px; }
   .btn, .chip, .input, .segmented button, .icon-btn, .send, .composer textarea, .switch { min-height: 40px; }
   .composer textarea { padding: 10px 0; }
   .send { width: 40px; }
