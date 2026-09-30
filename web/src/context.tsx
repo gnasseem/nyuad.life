@@ -29,8 +29,6 @@ export interface AppState {
   /** A question carried from Ask to the board's "ask students" form. */
   boardPrefill: string;
   setBoardPrefill(text: string): void;
-  /** Shows confetti and a short card; the profile milestone and class-year moments use it. */
-  celebrate(moment: { title: string; message: string; action?: string }): void;
 }
 
 export const AppContext = createContext<AppState>({
@@ -47,7 +45,6 @@ export const AppContext = createContext<AppState>({
   setAskPrefill: () => {},
   boardPrefill: '',
   setBoardPrefill: () => {},
-  celebrate: () => {},
 });
 
 export function useApp(): AppState {

@@ -332,16 +332,8 @@ export function QuestionThread({ question, answers }: { question: Question; answ
 
 /* ---------- Answer questions ---------- */
 
-const MILESTONES: Record<number, { title: string; message: string }> = {
-  1: { title: 'Your first answer', message: 'Someone is about to get an answer from a person instead of a search box. Thank you.' },
-  10: { title: 'Ten answers', message: 'You have helped ten people. The answer engine now cites you next to the archive.' },
-  25: { title: 'Twenty-five answers', message: 'A quarter of a hundred. At this point you are part of how this place works.' },
-  50: { title: 'Fifty answers', message: 'Fifty people helped. That is a lot of afternoons saved.' },
-  100: { title: 'One hundred answers', message: 'A hundred. There should be a plaque. Until then, confetti.' },
-};
-
 function HelpOut({ onChange }: { onChange(): void }) {
-  const { profile, setProfile, celebrate, requestProfile } = useApp();
+  const { profile, setProfile, requestProfile } = useApp();
   const [card, setCard] = useState<{ question: Question | null; remaining: number; answered: number } | null>(null);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -390,8 +382,6 @@ function HelpOut({ onChange }: { onChange(): void }) {
         setProfile({ ...profile, answers: result.answered });
         setSession((count) => count + 1);
         onChange();
-        const milestone = MILESTONES[result.answered];
-        if (milestone) celebrate({ ...milestone, action: 'Keep going' });
       } else await api.board.skip({ netId: profile.netId, questionId: card.question.id });
       await load();
       textareaRef.current?.focus();

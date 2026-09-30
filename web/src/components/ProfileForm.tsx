@@ -12,15 +12,11 @@ export const MAJORS = [
 ];
 
 interface FormProps {
-  submitLabel?: string;
   onDone?(profile: Profile): void;
-  /** When given, a secondary button lets the person leave without saving. */
-  onSkip?(): void;
-  skipLabel?: string;
 }
 
 /** Name, NetID, major and class year: the four fields everything else on the board hangs off. */
-export function ProfileForm({ submitLabel = 'Continue', onDone, onSkip, skipLabel = 'Skip for now' }: FormProps) {
+export function ProfileForm({ onDone }: FormProps) {
   const { profile, setProfile } = useApp();
   const years = classYears();
   const [name, setName] = useState(profile?.name ?? '');
@@ -88,14 +84,9 @@ export function ProfileForm({ submitLabel = 'Continue', onDone, onSkip, skipLabe
       </div>
       {error && <div className="alert">{error}</div>}
       <div className="modal-actions" style={{ marginTop: 2 }}>
-        {onSkip && (
-          <button type="button" className="btn ghost" onClick={onSkip} disabled={saving}>
-            {skipLabel}
-          </button>
-        )}
         <span className="spacer" />
         <button type="submit" className="btn primary" disabled={saving}>
-          {saving ? 'Saving' : submitLabel}
+          {saving ? 'Saving' : 'Save'}
         </button>
       </div>
     </form>

@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, boardProblem as describeBoardProblem, type Health, type HomePayload, type Profile } from './api';
-import { Celebration } from './components/Celebration';
 import { Wordmark } from './components/Logo';
 import { ProfileModal } from './components/ProfileForm';
-import { Welcome } from './components/Welcome';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
 import { initials, standingLabel } from './format';
 import { IconAsk, IconAuto, IconBook, IconClose, IconCoins, IconMegaphone, IconMenu, IconMoon, IconQuestions, IconSettings, IconSun, IconTrash, IconUser } from './icons';
@@ -15,8 +13,8 @@ import { PostPage } from './pages/Post';
 import { QuestionPage, QuestionsPage } from './pages/Questions';
 import { SettingsPage } from './pages/Settings';
 import { navigate, onLinkClick, routePath, useRoute, type Route } from './router';
-import { applyTheme, clearConversations, deleteConversation, hasBeenWelcomed, loadConversations, loadProfile, loadTheme, markWelcomed, onConversationsChange, saveProfile, type Conversation, type Theme } from './store';
-import { promotionMessage, standingFor } from './year';
+import { applyTheme, clearConversations, deleteConversation, loadConversations, loadProfile, loadTheme, onConversationsChange, saveProfile, type Conversation, type Theme } from './store';
+import { standingFor } from './year';
 
 const NAV: Array<{ route: Route; label: string; short: string; icon: typeof IconAsk; matches: Route['name'][] }> = [
   { route: { name: 'ask' }, label: 'Ask', short: 'Ask', icon: IconAsk, matches: ['ask'] },
@@ -45,22 +43,18 @@ export function App() {
   const [askPrefill, setAskPrefillState] = useState<(Prefill & { token: number }) | null>(null);
   const [boardPrefill, setBoardPrefill] = useState('');
   const [drawer, setDrawer] = useState(false);
-  const [moment, setMoment] = useState<{ title: string; message: string; action?: string } | null>(null);
   const [profileAsk, setProfileAsk] = useState<{ title: string; reason: string } | null>(null);
-  const [welcome, setWelcome] = useState(false);
   const profileRequest = useRef<((saved: boolean) => void) | null>(null);
   const conversations = useConversations();
 
-  // Every 1 May the class years roll over: say so once, and keep the stored standing current for the board.
+  // Class years roll over on 1 May; the stored standing is brought up to date so the board routes correctly.
   useEffect(() => {
     if (!profile) return;
     const current = standingFor(profile.classOf);
     if (current === profile.year) return;
-    const promotion = promotionMessage(profile.year, current);
     const next = { ...profile, year: current };
     saveProfile(next);
     setProfileState(next);
-    if (promotion) setMoment(promotion);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -74,12 +68,6 @@ export function App() {
       .then(setHealth)
       .catch(() => setHealth({ ok: false, gemini: { configured: false }, board: { configured: false } }));
   }, []);
-
-  useEffect(() => {
-    if (profile || hasBeenWelcomed()) return;
-    const timer = window.setTimeout(() => setWelcome(true), 700);
-    return () => window.clearTimeout(timer);
-  }, [profile]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -121,18 +109,11 @@ export function App() {
     profileRequest.current = null;
   };
 
-  const finishWelcome = (saved: boolean) => {
-    markWelcomed();
-    setWelcome(false);
-    if (saved) toast('Welcome aboard');
-  };
-
-  const celebrate = useCallback((next: { title: string; message: string; action?: string }) => setMoment(next), []);
   const boardProblem = useMemo(() => describeBoardProblem(health), [health]);
 
   const context = useMemo(
-    () => ({ home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, setBoardPrefill, celebrate }),
-    [home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, celebrate],
+    () => ({ home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, setBoardPrefill }),
+    [home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill],
   );
 
   const cycleTheme = () => setThemeState(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');
@@ -280,8 +261,6 @@ export function App() {
         </div>
       )}
       <ProfileModal open={profileAsk !== null} title={profileAsk?.title ?? ''} reason={profileAsk?.reason ?? ''} onClose={() => finishProfile(false)} onDone={() => finishProfile(true)} />
-      <Welcome open={welcome && profileAsk === null && !moment} onDone={finishWelcome} />
-      {moment && <Celebration title={moment.title} message={moment.message} action={moment.action} onClose={() => setMoment(null)} />}
     </AppContext.Provider>
   );
 }
