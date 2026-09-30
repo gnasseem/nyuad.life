@@ -16,7 +16,7 @@ const MIME: Record<string, string> = {
   '.webmanifest': 'application/manifest+json',
 };
 
-export interface DevServerOptions {
+interface DevServerOptions {
   root?: string;
   apiDir?: string;
   distDir?: string;

@@ -204,7 +204,7 @@ export function idFromCommentId(value: string | undefined): string {
   return match?.[1] ?? '';
 }
 
-export function idFromUrl(value: string | undefined): string {
+function idFromUrl(value: string | undefined): string {
   if (!value) return '';
   const match = /\/(?:posts|permalink)\/(\d+)/.exec(value) ?? /[?&](?:story_fbid|fbid)=(\d+)/.exec(value);
   return match?.[1] ?? '';
@@ -283,7 +283,7 @@ export function extractFeedPageInfo(root: unknown): PageInfo | null {
   return best;
 }
 
-export interface GraphqlRequest {
+interface GraphqlRequest {
   friendlyName: string;
   docId: string;
   variables: Record<string, unknown>;
@@ -402,5 +402,3 @@ function deepFirst(root: unknown, predicate: (key: string, value: unknown, paren
   }
   return undefined;
 }
-
-export type { Json };

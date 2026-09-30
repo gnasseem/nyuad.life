@@ -12,7 +12,7 @@ import { enrichPost, readPostsJsonl, sortNewestFirst } from './posts.ts';
 import type { Chunk, IndexMeta, IndexedPost } from './types.ts';
 import { concatTables, decodeTable, emptyTable, encodeTable, quantize, selectRows, type VectorTable } from './vectors.ts';
 
-export interface BuildOptions {
+interface BuildOptions {
   postsFile: string;
   outDir: string;
   /** null builds a keyword-only index (no vectors) so the app can run before a key exists. */
@@ -25,7 +25,7 @@ export interface BuildOptions {
   log?: (message: string) => void;
 }
 
-export interface BuildResult {
+interface BuildResult {
   meta: IndexMeta;
   embedded: number;
   reused: number;

@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { Announcement, Answer, BoardEvent, EventKind, Offer, Profile, Question } from './board.ts';
 import { ApiError } from './http.ts';
 
-export interface BoardStats {
+interface BoardStats {
   open: number;
   answered: number;
   answers: number;
@@ -30,7 +30,7 @@ export interface BoardStore {
   upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'> & { digest?: boolean }): Promise<Profile>;
   touchProfile(netId: string, answered: boolean): Promise<void>;
   setDigest(netId: string, on: boolean): Promise<void>;
-  /** Helpers who want the weekly roundup. */
+  /** Helpers who want the weekly email. */
   listDigestProfiles(limit: number): Promise<Profile[]>;
   createQuestion(question: Omit<Question, 'id' | 'createdAt' | 'updatedAt'>): Promise<Question>;
   getQuestion(id: string): Promise<Question | null>;
@@ -40,7 +40,6 @@ export interface BoardStore {
   /** Questions with at least one answer, newest first, for the answer engine. */
   listAnswered(limit: number): Promise<Question[]>;
   listAnswers(questionIds: string[]): Promise<Answer[]>;
-  listAnswersByHelper(netId: string): Promise<Answer[]>;
   /** The newest answers across the board, for the leaderboard. */
   listRecentAnswers(limit: number): Promise<Answer[]>;
   createAnswer(answer: Omit<Answer, 'id' | 'createdAt'>): Promise<Answer>;
@@ -129,9 +128,6 @@ export class MemoryBoardStore implements BoardStore {
     const wanted = new Set(questionIds);
     return this.answers.filter((answer) => wanted.has(answer.questionId));
   }
-  async listAnswersByHelper(netId: string): Promise<Answer[]> {
-    return this.answers.filter((answer) => answer.helperNetId === netId);
-  }
   async listRecentAnswers(limit: number): Promise<Answer[]> {
     return [...this.answers].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
   }
@@ -207,7 +203,7 @@ export class MemoryBoardStore implements BoardStore {
   }
 }
 
-export function sortAnnouncements(entries: Announcement[]): Announcement[] {
+function sortAnnouncements(entries: Announcement[]): Announcement[] {
   return [...entries].sort((a, b) => {
     if (a.startsAt && b.startsAt) return a.startsAt.localeCompare(b.startsAt);
     if (a.startsAt || b.startsAt) return a.startsAt ? -1 : 1;
@@ -217,7 +213,7 @@ export function sortAnnouncements(entries: Announcement[]): Announcement[] {
 
 /* ---------- Supabase (PostgREST) ---------- */
 
-export interface SupabaseConfig {
+interface SupabaseConfig {
   url: string;
   serviceKey: string;
 }
@@ -377,9 +373,6 @@ export class SupabaseBoardStore implements BoardStore {
   async listAnswers(questionIds: string[]): Promise<Answer[]> {
     if (questionIds.length === 0) return [];
     return (await this.select('board_answers', `question_id=in.(${questionIds.map(enc).join(',')})&order=created_at.asc`)).map(answerFrom);
-  }
-  async listAnswersByHelper(netId: string): Promise<Answer[]> {
-    return (await this.select('board_answers', `helper_net_id=eq.${enc(netId)}&order=created_at.desc&limit=200`)).map(answerFrom);
   }
   async listRecentAnswers(limit: number): Promise<Answer[]> {
     return (await this.select('board_answers', `order=created_at.desc&limit=${limit}`)).map(answerFrom);
@@ -618,9 +611,4 @@ export function boardStore(env: NodeJS.ProcessEnv = process.env): BoardStore | n
   else if (env.ROR_BOARD_STORE === 'memory' || (env.NODE_ENV !== 'production' && env.VERCEL !== '1')) shared = new MemoryBoardStore();
   else shared = null;
   return shared;
-}
-
-/** Test hook. */
-export function resetBoardStore(): void {
-  shared = undefined;
 }

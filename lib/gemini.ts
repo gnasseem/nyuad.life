@@ -18,9 +18,9 @@ export interface GeminiConfig {
 
 export const DEFAULT_EMBED_MODEL = 'gemini-embedding-001';
 // Pinned rather than "-latest": the free tier is granted per model, and an alias can move to a model without one.
-export const DEFAULT_CHAT_MODEL = 'gemini-2.5-flash';
-export const DEFAULT_LITE_MODEL = 'gemini-2.5-flash-lite';
-export const DEFAULT_CHAT_FALLBACKS = ['gemini-2.5-flash-lite'];
+const DEFAULT_CHAT_MODEL = 'gemini-2.5-flash';
+const DEFAULT_LITE_MODEL = 'gemini-2.5-flash-lite';
+const DEFAULT_CHAT_FALLBACKS = ['gemini-2.5-flash-lite'];
 export const DEFAULT_DIMENSIONS = 768;
 
 /** Reads GEMINI_API_KEY and the optional model overrides; returns null when no key is configured. */
@@ -54,9 +54,9 @@ export class GeminiError extends Error {
   }
 }
 
-export type TaskType = 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY' | 'SEMANTIC_SIMILARITY';
+type TaskType = 'RETRIEVAL_DOCUMENT' | 'RETRIEVAL_QUERY' | 'SEMANTIC_SIMILARITY';
 
-export interface RequestOptions {
+interface RequestOptions {
   signal?: AbortSignal;
   retries?: number;
   timeoutMs?: number;
@@ -94,17 +94,12 @@ export async function embedTexts(
   });
 }
 
-export async function embedQuery(cfg: GeminiConfig, text: string, options?: RequestOptions): Promise<Float32Array> {
-  const [vector] = await embedTexts(cfg, [text], 'RETRIEVAL_QUERY', options);
-  return vector!;
-}
-
 export interface Message {
   role: 'user' | 'model';
   text: string;
 }
 
-export interface GenerateParams {
+interface GenerateParams {
   model?: string;
   system?: string;
   messages: Message[];
@@ -114,13 +109,13 @@ export interface GenerateParams {
   responseSchema?: Record<string, unknown>;
 }
 
-export interface Usage {
+interface Usage {
   promptTokens: number;
   outputTokens: number;
   totalTokens: number;
 }
 
-export interface GenerateResult {
+interface GenerateResult {
   text: string;
   usage: Usage;
   finishReason: string;
@@ -149,7 +144,7 @@ export async function generateJson<T>(cfg: GeminiConfig, params: GenerateParams,
   }
 }
 
-export interface StreamEvent {
+interface StreamEvent {
   text?: string;
   usage?: Usage;
   finishReason?: string;

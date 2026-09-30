@@ -5,7 +5,7 @@ export type ApiRequest = IncomingMessage & {
   query?: Record<string, string | string[] | undefined>;
   body?: unknown;
 };
-export type ApiResponse = ServerResponse;
+type ApiResponse = ServerResponse;
 export type Handler = (req: ApiRequest, res: ApiResponse) => Promise<void> | void;
 
 export class ApiError extends Error {
@@ -19,7 +19,7 @@ export class ApiError extends Error {
   }
 }
 
-export function cors(res: ApiResponse): void {
+function cors(res: ApiResponse): void {
   res.setHeader('access-control-allow-origin', '*');
   res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
   res.setHeader('access-control-allow-headers', 'content-type');
@@ -65,7 +65,7 @@ async function readText(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-export function clientIp(req: IncomingMessage): string {
+function clientIp(req: IncomingMessage): string {
   const forwarded = req.headers['x-forwarded-for'];
   const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
   return (first ?? '').split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
@@ -122,7 +122,7 @@ export function route(methods: Array<'GET' | 'POST'>, handler: Handler): Handler
   };
 }
 
-export interface SseStream {
+interface SseStream {
   send(event: string, data: unknown): void;
   close(): void;
   readonly closed: boolean;

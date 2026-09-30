@@ -5,7 +5,7 @@
  */
 import type { SourceComment, SourcePost } from './types.ts';
 
-export type DropReason = 'empty' | 'ad' | 'falcons' | 'listing';
+type DropReason = 'empty' | 'ad' | 'falcons' | 'listing';
 
 const FALCON = /\bfalcons?\b/i;
 /** The bird, the airline lounge, the travel agency: not the campus currency. */
@@ -124,7 +124,7 @@ export function cleanPost<T extends SourcePost>(post: T, names: Set<string> = ne
   return { ...post, comments, commentCount: comments.length };
 }
 
-export interface CleanResult<T extends SourcePost> {
+interface CleanResult<T extends SourcePost> {
   posts: T[];
   /** Positions in the input that were kept, in order. */
   kept: number[];

@@ -6,7 +6,7 @@ import { collapseWhitespace } from './text.ts';
 export const CHUNK_LIMIT = 1800;
 const CONTEXT_BODY = 240;
 
-export interface ChunkOptions {
+interface ChunkOptions {
   model: string;
   dimensions: number;
 }
@@ -59,7 +59,7 @@ export function chunkDocument(id: string, header: string, body: string, options:
   return pack(splitAtSentences(clean, payloadLimit), payloadLimit).map((payload, index) => make(`${header}\n${payload}`, index + 1));
 }
 
-export function chunkHash(text: string, options: ChunkOptions): string {
+function chunkHash(text: string, options: ChunkOptions): string {
   return createHash('sha256').update(`${options.model}|${options.dimensions}|${text}`).digest('hex').slice(0, 24);
 }
 

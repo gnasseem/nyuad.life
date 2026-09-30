@@ -1,6 +1,6 @@
 /**
- * The weekly roundup: every Monday, each helper who opted in gets the open questions their major and year are best
- * placed to answer, by email to their NetID address. Vercel's cron calls this with the CRON_SECRET; `?dry=1` composes
+ * The weekly email: every Monday, each helper who opted in gets the open questions their major and year are best
+ * placed to answer, at their NetID address. Vercel's cron calls this with the CRON_SECRET; `?dry=1` composes
  * the mails without sending them, which is also what happens when no RESEND_API_KEY is set.
  */
 import { eligibleQuestions, pickNext, standingFor, STANDING_LABELS, type Profile, type Question } from '../lib/board.ts';

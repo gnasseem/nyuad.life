@@ -3,7 +3,7 @@
  * Falcons page; listings, rides and lost-and-found are live requests for the group, not questions with a durable answer.
  */
 
-export type OffTopicDomain = 'falcons' | 'listing' | 'ride' | 'lost-found' | 'live';
+type OffTopicDomain = 'falcons' | 'listing' | 'ride' | 'lost-found' | 'live';
 
 export interface Redirect {
   domain: OffTopicDomain;
@@ -16,7 +16,7 @@ export interface Redirect {
 export const FALCONS_PATH = '/falcons';
 export const DEFAULT_GROUP_URL = 'https://www.facebook.com/groups/nyuad.room.of.requirement';
 
-export function groupUrl(env: NodeJS.ProcessEnv = process.env): string {
+function groupUrl(env: NodeJS.ProcessEnv = process.env): string {
   return (env.ROR_GROUP_URL ?? '').trim() || DEFAULT_GROUP_URL;
 }
 

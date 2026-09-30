@@ -96,7 +96,7 @@ export interface Profile {
   classOf: number;
   year: Standing;
   answers: number;
-  /** Weekly roundup of open questions by email; undefined on profiles saved before it existed (treated as on). */
+  /** Weekly email of open questions; undefined on profiles saved before it existed (treated as on). */
   digest?: boolean;
 }
 

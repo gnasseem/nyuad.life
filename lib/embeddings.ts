@@ -11,10 +11,10 @@
 import { DEFAULT_DIMENSIONS, DEFAULT_EMBED_MODEL, embedTexts, geminiConfig, GeminiError, normalize, type GeminiConfig } from './gemini.ts';
 import type { IndexMeta } from './types.ts';
 
-export type EmbeddingProviderId = 'voyage' | 'cloudflare' | 'gemini';
-export type EmbeddingKind = 'document' | 'query';
+type EmbeddingProviderId = 'voyage' | 'cloudflare' | 'gemini';
+type EmbeddingKind = 'document' | 'query';
 
-export interface EmbedOptions {
+interface EmbedOptions {
   retries?: number;
   timeoutMs?: number;
   signal?: AbortSignal;

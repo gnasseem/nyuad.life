@@ -16,7 +16,7 @@ export const MAJORS = [
   'Political Science', 'Psychology', 'Social Research and Public Policy', 'Theater', 'Undecided', 'Other',
 ] as const;
 
-export const STANDINGS = ['first-year', 'sophomore', 'junior', 'senior', 'alumni'] as const;
+const STANDINGS = ['first-year', 'sophomore', 'junior', 'senior', 'alumni'] as const;
 export type Standing = (typeof STANDINGS)[number];
 export const STANDING_LABELS: Record<Standing, string> = { 'first-year': 'First year', sophomore: 'Sophomore', junior: 'Junior', senior: 'Senior', alumni: 'Alumni' };
 
@@ -26,13 +26,13 @@ export interface Profile {
   major: string;
   classOf: number;
   answers: number;
-  /** Wants the weekly roundup of open questions they could answer. */
+  /** Wants the weekly email of open questions they could answer. */
   digest: boolean;
   createdAt: string;
   lastSeenAt: string;
 }
 
-export type QuestionStatus = 'open' | 'answered' | 'closed';
+type QuestionStatus = 'open' | 'answered' | 'closed';
 
 export interface Question {
   id: string;
@@ -75,12 +75,12 @@ export interface BoardEvent {
   createdAt: string;
 }
 
-export const QUESTION_MIN = 12;
+const QUESTION_MIN = 12;
 export const QUESTION_MAX = 600;
-export const ANSWER_MIN = 2;
-export const ANSWER_MAX = 1200;
+const ANSWER_MIN = 2;
+const ANSWER_MAX = 1200;
 /** Questions stop being handed out once this many people have answered. */
-export const ENOUGH_ANSWERS = 3;
+const ENOUGH_ANSWERS = 3;
 
 /** The academic year turns over on 1 May: the class of 2026 graduates on 1 May 2026, and the class of 2030 is a first-year from then. */
 export function academicYearOf(now = new Date()): number {
@@ -144,7 +144,7 @@ export function validateKey(value: unknown): string {
   return key;
 }
 
-export interface QuestionTags {
+interface QuestionTags {
   summary: string;
   topics: string[];
   courses: string[];
@@ -208,7 +208,7 @@ export async function tagQuestion(cfg: GeminiConfig | null, text: string): Promi
   }
 }
 
-export interface HelperContext {
+interface HelperContext {
   profile: Profile;
   /** Everything this helper has already done, so nothing is shown twice. */
   events: BoardEvent[];
@@ -246,7 +246,7 @@ export function pickNext(questions: Question[], context: HelperContext): Questio
   return best?.question ?? null;
 }
 
-export interface BoardHit {
+interface BoardHit {
   question: Question;
   answers: Answer[];
   score: number;
@@ -282,9 +282,8 @@ export function searchBoard(entries: Array<{ question: Question; answers: Answer
 
 /* ---------- Announcements ---------- */
 
-export const ANNOUNCEMENT_KINDS = ['event', 'deadline', 'opportunity', 'club', 'notice'] as const;
+const ANNOUNCEMENT_KINDS = ['event', 'deadline', 'opportunity', 'club', 'notice'] as const;
 export type AnnouncementKind = (typeof ANNOUNCEMENT_KINDS)[number];
-export const ANNOUNCEMENT_LABELS: Record<AnnouncementKind, string> = { event: 'Event', deadline: 'Deadline', opportunity: 'Opportunity', club: 'Club', notice: 'Notice' };
 
 export interface Announcement {
   id: string;
@@ -303,7 +302,7 @@ export interface Announcement {
   createdAt: string;
 }
 
-export const ANNOUNCEMENT_DAYS = 14;
+const ANNOUNCEMENT_DAYS = 14;
 
 export function validateAnnouncement(body: Record<string, unknown>, now = new Date()): Omit<Announcement, 'id' | 'createdAt' | 'posterKey' | 'posterNetId' | 'posterName'> {
   const title = collapseWhitespace(String(body.title ?? '')).slice(0, 120);
@@ -385,7 +384,7 @@ export function leaderboard(answers: Answer[], now = new Date(), limit = 10): Le
 /* ---------- Falcons: the campus-dirham exchange ---------- */
 
 export type OfferSide = 'sell' | 'buy';
-export const CONTACT_KINDS = ['whatsapp', 'instagram', 'email', 'phone'] as const;
+const CONTACT_KINDS = ['whatsapp', 'instagram', 'email', 'phone'] as const;
 export type ContactKind = (typeof CONTACT_KINDS)[number];
 
 export interface Offer {
@@ -407,9 +406,9 @@ export interface Offer {
   createdAt: string;
 }
 
-export const OFFER_DAYS = 5;
-export const OFFER_MIN = 5;
-export const OFFER_MAX = 20_000;
+const OFFER_DAYS = 5;
+const OFFER_MIN = 5;
+const OFFER_MAX = 20_000;
 
 export function validateOffer(body: Record<string, unknown>, now = new Date()): Omit<Offer, 'id' | 'createdAt' | 'posterKey' | 'posterNetId' | 'posterName' | 'status'> {
   const side = String(body.side ?? '') as OfferSide;

@@ -28,7 +28,7 @@ import { boardStore, type BoardStore } from '../lib/board-store.ts';
 import { detectRedirect } from '../lib/domains.ts';
 import { embedderForIndex } from '../lib/embeddings.ts';
 import { geminiConfig } from '../lib/gemini.ts';
-import { ApiError, queryString, rateLimit, readJson, route, sendJson, type ApiRequest } from '../lib/http.ts';
+import { ApiError, queryString, rateLimit, readJson, route, sendJson } from '../lib/http.ts';
 import { retrieve } from '../lib/rag.ts';
 import { loadArchive, summarizePost } from '../lib/store.ts';
 import { collapseWhitespace } from '../lib/text.ts';
@@ -230,5 +230,3 @@ function publicAnnouncement(announcement: Announcement) {
   const { posterKey: _key, posterNetId: _netId, ...rest } = announcement;
   return rest;
 }
-
-export type { ApiRequest };

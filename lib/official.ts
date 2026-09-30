@@ -112,7 +112,7 @@ export function writeOfficialJsonl(file: string, docs: OfficialDoc[]): void {
   writeFileSync(file, docs.map((doc) => JSON.stringify(doc)).join('\n') + (docs.length ? '\n' : ''));
 }
 
-export function chunkOfficial(docs: OfficialDoc[], options: { model: string; dimensions: number }): Chunk[] {
+function chunkOfficial(docs: OfficialDoc[], options: { model: string; dimensions: number }): Chunk[] {
   return docs.flatMap((doc) => chunkDocument(doc.id, `${doc.title} (${SECTION_LABELS[doc.section]}, official NYUAD page)`, doc.text, options));
 }
 
@@ -194,7 +194,7 @@ function assemble(meta: IndexMeta, docs: OfficialDoc[], chunks: Chunk[], vectors
 
 /* ---------- Retrieval ---------- */
 
-export interface OfficialHit {
+interface OfficialHit {
   doc: number;
   chunk: number;
   score: number;
@@ -267,7 +267,7 @@ export function officialSourceBlock(corpus: OfficialCorpus, card: SourceCard, ch
 
 /* ---------- Building the index ---------- */
 
-export interface OfficialBuildOptions {
+interface OfficialBuildOptions {
   file: string;
   outDir: string;
   embedder: Embedder | null;

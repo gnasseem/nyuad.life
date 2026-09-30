@@ -14,13 +14,13 @@ import type { Archive } from './store.ts';
 import { bestWindow, collapseWhitespace, dayNumber, formatDate, tokenize, truncate } from './text.ts';
 import type { AskRequest, AskResponse, ChatTurn, Confidence, IndexedPost, SourceCard } from './types.ts';
 
-export const MAX_QUESTION_CHARS = 600;
+const MAX_QUESTION_CHARS = 600;
 const CANDIDATES = 40;
 const RERANK_CANDIDATES = 30;
 const MAX_SOURCES = 14;
 const MIN_SOURCES = 5;
 
-export interface RetrieveOptions {
+interface RetrieveOptions {
   k?: number;
   useDense?: boolean;
   filter?: (post: IndexedPost) => boolean;
@@ -119,12 +119,7 @@ async function liveSnapshot(store: BoardStore): Promise<LiveSnapshot> {
   return pending;
 }
 
-/** Test hook. */
-export function resetLiveCache(): void {
-  liveCache = null;
-}
-
-export interface LiveSource {
+interface LiveSource {
   card: SourceCard;
   question?: Question;
   answers?: Answer[];
@@ -136,7 +131,7 @@ export interface LiveSource {
 const MAX_OFFICIAL = 4;
 
 /** Official NYUAD pages that speak to the question, numbered before everything else: they are the authority on facts. */
-export async function officialSources(corpus: OfficialCorpus | null | undefined, query: string, vector: Float32Array | undefined, startAt: number): Promise<LiveSource[]> {
+async function officialSources(corpus: OfficialCorpus | null | undefined, query: string, vector: Float32Array | undefined, startAt: number): Promise<LiveSource[]> {
   if (!corpus || corpus.chunks.length === 0) return [];
   try {
     const { hits, terms } = await retrieveOfficial(corpus, query, { k: MAX_OFFICIAL, vector });
@@ -151,7 +146,7 @@ export async function officialSources(corpus: OfficialCorpus | null | undefined,
 }
 
 /** Board answers and announcements that speak to the question, as cards numbered after the archive threads. */
-export async function liveSources(store: BoardStore | null, query: string, terms: string[], vector: Float32Array | undefined, startAt: number): Promise<LiveSource[]> {
+async function liveSources(store: BoardStore | null, query: string, terms: string[], vector: Float32Array | undefined, startAt: number): Promise<LiveSource[]> {
   if (!store) return [];
   try {
     const snapshot = await liveSnapshot(store);
@@ -309,7 +304,7 @@ const RERANK_SCHEMA = {
 };
 
 /** Asks the lite model to score candidates 0–10 for usefulness; returns null when the call fails so callers fall back. */
-export async function rerank(cfg: GeminiConfig, archive: Archive, question: string, hits: Hit[], terms: string[]): Promise<Hit[] | null> {
+async function rerank(cfg: GeminiConfig, archive: Archive, question: string, hits: Hit[], terms: string[]): Promise<Hit[] | null> {
   if (hits.length <= MIN_SOURCES) return hits;
   const pool = hits.slice(0, RERANK_CANDIDATES);
   const candidates = pool.map((hit, i) => {
@@ -355,7 +350,7 @@ export async function rerank(cfg: GeminiConfig, archive: Archive, question: stri
 }
 
 /** Turns a follow-up like "and what about his grading?" into a standalone search query. */
-export async function standaloneQuestion(cfg: GeminiConfig, history: ChatTurn[], question: string): Promise<string> {
+async function standaloneQuestion(cfg: GeminiConfig, history: ChatTurn[], question: string): Promise<string> {
   if (history.length === 0) return question;
   const transcript = history
     .slice(-6)
@@ -415,7 +410,7 @@ export async function followups(cfg: GeminiConfig, question: string, cards: Sour
   }
 }
 
-export interface AskEvents {
+interface AskEvents {
   status?(message: string): void;
   redirect?(redirect: NonNullable<AskResponse['redirect']>): void;
   sources?(cards: SourceCard[]): void;
@@ -436,7 +431,7 @@ export function validateAsk(body: Partial<AskRequest>): AskRequest {
   return { question, history, stream: body.stream !== false };
 }
 
-export interface AskContext {
+interface AskContext {
   board?: BoardStore | null;
   official?: OfficialCorpus | null;
 }

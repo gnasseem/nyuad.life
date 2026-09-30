@@ -66,7 +66,7 @@ export interface Hit {
   denseRank?: number;
 }
 
-export interface FuseOptions {
+interface FuseOptions {
   /** Post dates (ISO) by post position, for the recency prior. */
   dates: string[];
   chunkPost: Int32Array;

@@ -6,7 +6,7 @@
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', hellip: '…', rsquo: '’', lsquo: '‘', rdquo: '”', ldquo: '“', copy: '©', reg: '®', trade: '™', middot: '·', bull: '•' };
 
-export function decodeEntities(text: string): string {
+function decodeEntities(text: string): string {
   return text
     .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => safeChar(Number.parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_, dec: string) => safeChar(Number(dec)))
@@ -91,7 +91,7 @@ export function linksOf(html: string, base: string): string[] {
   return [...out];
 }
 
-export interface CourseEntry {
+interface CourseEntry {
   code: string;
   title: string;
   credits?: number;

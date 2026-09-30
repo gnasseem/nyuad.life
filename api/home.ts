@@ -18,7 +18,7 @@ export default route(['GET'], async (_req, res) => {
     .map((post) => summarizePost(post));
   const topics = [...archive.byTopic.entries()]
     .filter(([id]) => id !== 'general')
-    .map(([id, positions]) => ({ id, label: TOPIC_LABELS[id]?.label ?? id, emoji: TOPIC_LABELS[id]?.emoji ?? '', count: positions.length }))
+    .map(([id, positions]) => ({ id, label: TOPIC_LABELS[id] ?? id, count: positions.length }))
     .sort((a, b) => b.count - a.count);
   const courses = [...archive.byCourse.entries()]
     .map(([code, positions]) => ({ code, count: positions.length }))
