@@ -1,10 +1,11 @@
 /**
  * The student board and the announcements feed, on one route so the function count stays small:
- *   GET  /api/board?op=stats | question&id= | mine&key= | announcements
- *   POST /api/board { op: profile | ask | next | answer | skip | announce | unannounce, ... }
+ *   GET  /api/board?op=stats | question&id= | mine&key= | announcements | offers[&key=] | leaderboard
+ *   POST /api/board { op: profile | digest | ask | next | answer | skip | announce | unannounce | offer | offer_done | unoffer, ... }
  */
 import {
   eligibleQuestions,
+  leaderboard,
   pickNext,
   searchBoard,
   standingFor,
@@ -12,11 +13,14 @@ import {
   validateAnnouncement,
   validateAnswerText,
   validateKey,
+  summarizeMarket,
   validateNetId,
+  validateOffer,
   validateProfile,
   validateQuestionText,
   type Announcement,
   type Answer,
+  type Offer,
   type Profile,
   type Question,
 } from '../lib/board.ts';
@@ -46,6 +50,19 @@ export default route(['GET', 'POST'], async (req, res) => {
       rateLimit(req, 60, 60, 'board-read');
       sendJson(res, 200, { announcements: (await store.listAnnouncements(new Date())).map(publicAnnouncement) });
       return;
+    case 'offers': {
+      rateLimit(req, 60, 60, 'board-read');
+      const key = queryString(req, 'key').trim();
+      const open = await store.listOffers(new Date());
+      const mine = key && /^[a-z0-9-]{8,64}$/i.test(key) ? await store.listOffersByPoster(key) : [];
+      sendJson(res, 200, { offers: open.map(publicOffer), mine: mine.map(publicOffer), market: summarizeMarket(open) });
+      return;
+    }
+    case 'leaderboard': {
+      rateLimit(req, 60, 60, 'board-read');
+      sendJson(res, 200, { helpers: leaderboard(await store.listRecentAnswers(3000), new Date(), 10) });
+      return;
+    }
     case 'question': {
       rateLimit(req, 60, 60, 'board-read');
       const question = await store.getQuestion(queryString(req, 'id').trim());
@@ -67,6 +84,31 @@ export default route(['GET', 'POST'], async (req, res) => {
       rateLimit(req, 10, 10, 'board-profile');
       const profile = await store.upsertProfile(validateProfile(body));
       sendJson(res, 200, { profile: publicProfile(profile) });
+      return;
+    }
+    case 'digest': {
+      rateLimit(req, 20, 20, 'board-profile');
+      const profile = await requireProfile(store, body.netId);
+      await store.setDigest(profile.netId, body.on !== false);
+      sendJson(res, 200, { ok: true, digest: body.on !== false });
+      return;
+    }
+    case 'offer': {
+      rateLimit(req, 10, 4, 'board-offer');
+      const profile = await requireProfile(store, body.netId);
+      const posterKey = validateKey(body.key);
+      const open = (await store.listOffersByPoster(posterKey)).filter((offer) => offer.status === 'open' && Date.parse(offer.expiresAt) > Date.now());
+      if (open.length >= 3) throw new ApiError(400, 'You already have three open offers. Mark one done first.', 'too_many_offers');
+      const offer = await store.createOffer({ ...validateOffer(body), posterKey, posterNetId: profile.netId, posterName: profile.name, status: 'open' });
+      sendJson(res, 200, { offer: publicOffer(offer) });
+      return;
+    }
+    case 'offer_done':
+    case 'unoffer': {
+      rateLimit(req, 30, 30, 'board-offer');
+      const changed = await store.closeOffer(String(body.id ?? ''), validateKey(body.key), op === 'unoffer');
+      if (!changed) throw new ApiError(404, 'Only the person who posted an offer can change it.', 'not_found');
+      sendJson(res, 200, { ok: true });
       return;
     }
     case 'ask':
@@ -166,7 +208,12 @@ async function askQuestion(store: BoardStore, body: Body) {
 }
 
 function publicProfile(profile: Profile) {
-  return { netId: profile.netId, name: profile.name, major: profile.major, classOf: profile.classOf, year: standingFor(profile.classOf), answers: profile.answers };
+  return { netId: profile.netId, name: profile.name, major: profile.major, classOf: profile.classOf, year: standingFor(profile.classOf), answers: profile.answers, digest: profile.digest };
+}
+
+function publicOffer(offer: Offer) {
+  const { posterKey: _key, posterNetId: _netId, ...rest } = offer;
+  return rest;
 }
 
 function publicQuestion(question: Question) {

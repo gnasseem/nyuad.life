@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { eligibleQuestions, pickNext, searchAnnouncements, searchBoard, standingFor, tagByRules, validateAnnouncement, validateNetId, validateProfile, validateQuestionText, type Announcement, type Answer, type Profile, type Question } from './board.ts';
+import { eligibleQuestions, pickNext, searchAnnouncements, searchBoard, standingFor, tagByRules, validateAnnouncement, validateNetId, validateProfile, validateQuestionText, type Announcement, type Answer, type Offer, type Profile, type Question } from './board.ts';
 import { MemoryBoardStore } from './board-store.ts';
 
 const now = new Date('2026-09-29T12:00:00Z');
@@ -25,7 +25,7 @@ function question(overrides: Partial<Question>): Question {
   };
 }
 
-const profile: Profile = { netId: 'abc1234', name: 'Sara', major: 'Computer Science', classOf: 2028, answers: 0, createdAt: now.toISOString(), lastSeenAt: now.toISOString() };
+const profile: Profile = { netId: 'abc1234', name: 'Sara', major: 'Computer Science', classOf: 2028, answers: 0, digest: true, createdAt: now.toISOString(), lastSeenAt: now.toISOString() };
 
 describe('standingFor', () => {
   it('turns a class year into a standing that rolls over on 1 May', () => {
@@ -227,5 +227,53 @@ describe('SupabaseBoardStore', () => {
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
+  });
+});
+
+describe('Falcons offers and the leaderboard', () => {
+  it('validates offers and summarises the market', async () => {
+    const { validateOffer, summarizeMarket } = await import('./board.ts');
+    const sell = validateOffer({ side: 'sell', amount: '500', rate: '0.85', contactKind: 'whatsapp', contact: '+971 50 123 4567', note: 'today only' }, now);
+    expect(sell).toMatchObject({ side: 'sell', amount: 500, rate: 0.85, contactKind: 'whatsapp' });
+    expect(sell.expiresAt).toBe('2026-10-04T12:00:00.000Z');
+    expect(() => validateOffer({ side: 'lend', amount: 100, rate: 0.8, contact: '+97150' }, now)).toThrow();
+    expect(() => validateOffer({ side: 'buy', amount: 2, rate: 0.8, contact: '+971501234567' }, now)).toThrow();
+    expect(() => validateOffer({ side: 'buy', amount: 100, rate: 5, contact: '+971501234567' }, now)).toThrow();
+    expect(() => validateOffer({ side: 'buy', amount: 100, rate: 0.8, contactKind: 'email', contact: 'nope' }, now)).toThrow();
+    expect(validateOffer({ side: 'buy', amount: 100, rate: 0.8, contactKind: 'instagram', contact: '@sara' }, now).contact).toBe('@sara');
+    const base: Omit<Offer, 'id' | 'side' | 'rate' | 'amount'> = { contactKind: 'instagram', contact: '@x', note: '', posterKey: 'k', posterNetId: 'p', posterName: 'P', status: 'open', expiresAt: '2030-01-01T00:00:00Z', createdAt: now.toISOString() };
+    const market = summarizeMarket([
+      { ...base, id: '1', side: 'sell', rate: 0.9, amount: 100 },
+      { ...base, id: '2', side: 'sell', rate: 0.8, amount: 300 },
+      { ...base, id: '3', side: 'buy', rate: 0.7, amount: 200 },
+      { ...base, id: '4', side: 'buy', rate: 0.75, amount: 50, status: 'done' },
+    ]);
+    expect(market).toEqual({ open: 3, selling: 2, buying: 1, bestAsk: 0.8, bestBid: 0.7, medianRate: 0.8, volume: 600 });
+  });
+
+  it('keeps offers in the memory store', async () => {
+    const store = new MemoryBoardStore();
+    const offer = await store.createOffer({ side: 'sell', amount: 100, rate: 0.8, contactKind: 'phone', contact: '+971', note: '', posterKey: 'key-1234567', posterNetId: 'abc1234', posterName: 'Sara', status: 'open', expiresAt: '2030-01-01T00:00:00Z' });
+    expect((await store.listOffers(now)).map((entry) => entry.id)).toEqual([offer.id]);
+    expect(await store.closeOffer(offer.id, 'wrong-key-00', false)).toBe(false);
+    expect(await store.closeOffer(offer.id, 'key-1234567', false)).toBe(true);
+    expect(await store.listOffers(now)).toEqual([]);
+    expect((await store.listOffersByPoster('key-1234567'))[0]?.status).toBe('done');
+    expect(await store.closeOffer(offer.id, 'key-1234567', true)).toBe(true);
+    expect(await store.listOffersByPoster('key-1234567')).toEqual([]);
+  });
+
+  it('ranks helpers with weekly streaks', async () => {
+    const { leaderboard, weekOf } = await import('./board.ts');
+    expect(weekOf('2026-09-29T12:00:00Z')).toBe(weekOf('2026-10-04T23:00:00Z')); // Tuesday and Sunday, same Monday-based week
+    expect(weekOf('2026-10-05T00:00:00Z')).toBe(weekOf('2026-09-29T12:00:00Z') + 7);
+    const answer = (helper: string, daysAgo: number): Answer => ({ id: `${helper}-${daysAgo}`, questionId: 'q', text: 'x', helperNetId: helper, helperName: helper.toUpperCase(), helperMajor: 'Physics', helperYear: 'junior', createdAt: new Date(now.getTime() - daysAgo * 86_400_000).toISOString() });
+    const board = leaderboard([answer('a', 1), answer('a', 8), answer('a', 15), answer('b', 1), answer('b', 2), answer('b', 3), answer('b', 30), answer('c', 40)], now);
+    // b answered on Monday (this week) and Saturday/Sunday (last week): two consecutive weeks.
+    expect(board.map((entry) => [entry.netId, entry.answers, entry.streak])).toEqual([
+      ['b', 4, 2],
+      ['a', 3, 3],
+      ['c', 1, 0],
+    ]);
   });
 });

@@ -13,9 +13,9 @@ interface Props {
 /** The first thing a new visitor sees: what the site is in three lines, then who they are in four fields. */
 export function Welcome({ open, onDone }: Props) {
   return (
-    <Modal open={open} onClose={() => onDone(false)} width={560} eyebrow={<Mark solid className="welcome-mark" />} title={`Welcome to ${APP_NAME}`} subtitle={APP_TAGLINE}>
+    <Modal open={open} onClose={() => onDone(false)} width={560} eyebrow={<Mark className="welcome-mark" />} title={`Welcome to ${APP_NAME}`} subtitle={APP_TAGLINE}>
       <div className="features">
-        <div className="feature k-violet">
+        <div className="feature">
           <span className="ic">
             <IconAsk />
           </span>
@@ -24,7 +24,7 @@ export function Welcome({ open, onDone }: Props) {
             <span>Answers come from thousands of Room of Requirement threads, with the sources cited so you can check.</span>
           </div>
         </div>
-        <div className="feature k-sea">
+        <div className="feature">
           <span className="ic">
             <IconQuestions />
           </span>
@@ -33,13 +33,13 @@ export function Welcome({ open, onDone }: Props) {
             <span>Questions go to the majors and years best placed to answer, one card at a time.</span>
           </div>
         </div>
-        <div className="feature k-sun">
+        <div className="feature">
           <span className="ic">
             <IconMegaphone />
           </span>
           <div>
-            <b>See what is on this week</b>
-            <span>Events, deadlines, opportunities and club notices, posted by students, gone once they have passed.</span>
+            <b>What’s on, Falcons and the guide</b>
+            <span>Events and deadlines this week, Falcons traded between students, and the official pages summarised next to what students said.</span>
           </div>
         </div>
       </div>

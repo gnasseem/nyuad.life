@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { api, ApiError, type Answer, type PostSummary, type Question, type QuestionWithAnswers, type Redirect } from '../api';
+import { api, ApiError, type Answer, type LeaderboardEntry, type PostSummary, type Question, type QuestionWithAnswers, type Redirect } from '../api';
 import { Mark } from '../components/Logo';
 import { PostCard } from '../components/PostCard';
 import { Segmented } from '../components/Segmented';
 import { useApp } from '../context';
 import { initials, plural, relativeDate, standingLabel, topicLabel } from '../format';
-import { IconBack, IconCheck, IconInfo, IconSkip } from '../icons';
+import { IconBack, IconCheck, IconFlame, IconInfo, IconSkip } from '../icons';
 import { navigate } from '../router';
 import { askerKey } from '../store';
 
@@ -59,7 +59,7 @@ export function QuestionsPage({ search }: Props) {
       </div>
       {stats && (
         <div className="stats board-stats">
-          <div className="stat hot">
+          <div className="stat accent">
             <b>{stats.open}</b>
             <span>{stats.open === 1 ? 'open question' : 'open questions'}</span>
           </div>
@@ -80,9 +80,60 @@ export function QuestionsPage({ search }: Props) {
       ) : tab === 'ask' ? (
         <AskStudents onPosted={refreshStats} />
       ) : (
-        <HelpOut onChange={refreshStats} />
+        <>
+          <HelpOut onChange={refreshStats} />
+          <Leaderboard />
+        </>
       )}
     </div>
+  );
+}
+
+/* ---------- Who answers the most ---------- */
+
+function Leaderboard() {
+  const { profile } = useApp();
+  const [helpers, setHelpers] = useState<LeaderboardEntry[] | null>(null);
+  useEffect(() => {
+    api.board
+      .leaderboard()
+      .then((result) => setHelpers(result.helpers))
+      .catch(() => setHelpers([]));
+  }, [profile?.answers]);
+  if (!helpers || helpers.length === 0) return null;
+  return (
+    <>
+      <h2 className="section-title">Most answers</h2>
+      <div className="list">
+        {helpers.map((entry, index) => (
+          <div key={entry.netId} className={`lb-row${profile?.netId === entry.netId ? ' me' : ''}`}>
+            <span className="rank">{index + 1}</span>
+            <span className="avatar sm">{initials(entry.name)}</span>
+            <span className="who">
+              <b>{entry.name}</b>
+              <span>
+                {entry.major}, {standingLabel(entry.year)}
+              </span>
+            </span>
+            <span className="n" title="Consecutive weeks with an answer">
+              {entry.streak > 1 ? (
+                <>
+                  <IconFlame style={{ width: 12, height: 12, verticalAlign: -2 }} /> {entry.streak} wk
+                </>
+              ) : (
+                ''
+              )}
+            </span>
+            <span className="n">
+              <b>{entry.answers}</b> {entry.answers === 1 ? 'answer' : 'answers'}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="faint xs" style={{ marginTop: 8 }}>
+        Helpers get a Monday email with the open questions their major and year fit best. Turn it off in Settings.
+      </p>
+    </>
   );
 }
 
@@ -161,9 +212,9 @@ function AskStudents({ onPosted }: { onPosted(): void }) {
           </div>
         </div>
         <div className="ask-tips">
-          <span className="tag">Anonymous unless you add a name</span>
-          <span className="tag">Answered questions feed Ask</span>
-          <span className="tag">
+          <span>Anonymous unless you add a name</span>
+          <span>Answered questions feed Ask</span>
+          <span>
             <span className="kbd">⌘↵</span> posts
           </span>
         </div>
@@ -188,9 +239,7 @@ function AskStudents({ onPosted }: { onPosted(): void }) {
       {posted?.question && (
         <div className="stack" style={{ gap: 14 }}>
           <div className="posted">
-            <span className="ic">
-              <IconCheck />
-            </span>
+            <IconCheck />
             <div>
               <b>Posted</b>
               It will be shown to students who can answer it. Come back here for replies; answered questions also feed straight into Ask.
@@ -245,12 +294,12 @@ export function QuestionThread({ question, answers }: { question: Question; answ
       <div className="q">{question.text}</div>
       <div className="status">
         {answers.length === 0 ? (
-          <span className="pill k-sun">
-            <i /> Waiting · seen by {plural(question.views, 'student')}
+          <span className="pill k-warn">
+            <span className="dot" /> Waiting · seen by {plural(question.views, 'student')}
           </span>
         ) : (
           <span className="pill k-ok">
-            <i /> {plural(answers.length, 'answer')}
+            <span className="dot" /> {plural(answers.length, 'answer')}
           </span>
         )}
         <span>{question.askerName ? `${question.askerName} · ` : ''}{relativeDate(question.createdAt)}</span>
@@ -320,7 +369,7 @@ function HelpOut({ onChange }: { onChange(): void }) {
   if (!profile) {
     return (
       <div className="invite">
-        <Mark solid className="mark" />
+        <Mark className="mark" />
         <h2>Help a student out</h2>
         <p>Questions get routed to the right people by major and year, and your name appears next to what you write. Tell us who you are once and the cards start coming.</p>
         <button type="button" className="btn primary lg" onClick={() => void requestProfile({ title: 'Before you answer', reason: 'Questions are routed by major and year, and your name appears next to what you write. One time only.' })}>
@@ -410,7 +459,7 @@ function HelpOut({ onChange }: { onChange(): void }) {
                     {code}
                   </span>
                 ))}
-                {(question.majors.length > 0 || question.years.length > 0) && <span className="tag k-violet kind">for {[...question.majors, ...question.years.map(standingLabel)].join(', ')}</span>}
+                {(question.majors.length > 0 || question.years.length > 0) && <span className="tag k-accent kind">for {[...question.majors, ...question.years.map(standingLabel)].join(', ')}</span>}
               </div>
             </div>
             <textarea
@@ -440,9 +489,6 @@ function HelpOut({ onChange }: { onChange(): void }) {
         </div>
       ) : (
         <div className="caught-up">
-          <span className="big" aria-hidden="true">
-            🎉
-          </span>
           <h3>All caught up</h3>
           <p>{session > 0 ? `${plural(session, 'answer')} today. ` : ''}New questions will show up here as students ask them. Thanks for helping.</p>
         </div>

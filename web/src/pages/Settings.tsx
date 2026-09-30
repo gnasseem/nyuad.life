@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { APP_NAME, APP_TAGLINE, APP_VERSION, GROUP_URL, MARKET_URL } from '../brand';
+import { APP_NAME, APP_TAGLINE, APP_VERSION, GROUP_URL } from '../brand';
 import { Mark } from '../components/Logo';
 import { useApp } from '../context';
 import { initials, plural, standingLabel } from '../format';
 import { IconCheck, IconExternal, IconLogout, IconTrash, IconUser } from '../icons';
+import { onLinkClick } from '../router';
 import { clearConversations, forgetDevice, loadConversations, onConversationsChange, type Theme } from '../store';
 
 const THEMES: Array<{ id: Theme; label: string; hint: string }> = [
   { id: 'system', label: 'System', hint: 'Follows your device' },
-  { id: 'light', label: 'Light', hint: 'Sand and ink' },
-  { id: 'dark', label: 'Dark', hint: 'Ink and violet' },
+  { id: 'light', label: 'Light', hint: 'Always light' },
+  { id: 'dark', label: 'Dark', hint: 'Always dark' },
 ];
 
 export function SettingsPage() {
@@ -115,6 +116,36 @@ export function SettingsPage() {
         </div>
       </section>
 
+      {profile && (
+        <section className="settings-section">
+          <h2>Weekly roundup</h2>
+          <p>Every Monday, the open questions a {profile.major} {standingLabel(profile.year)} could answer, by email.</p>
+          <div className="settings-list">
+            <div className="settings-row">
+              <div className="text">
+                <b>Email me open questions</b>
+                <span>Sent to {profile.netId}@nyu.edu, at most once a week, only when there is something for you.</span>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                className="switch"
+                aria-checked={profile.digest !== false}
+                aria-label="Weekly roundup"
+                onClick={() => {
+                  const on = profile.digest === false;
+                  setProfile({ ...profile, digest: on });
+                  api.board
+                    .digest({ netId: profile.netId, on })
+                    .then(() => toast(on ? 'Roundup on' : 'Roundup off'))
+                    .catch((err) => toast(err instanceof Error ? err.message : 'Could not save that.'));
+                }}
+              />
+            </div>
+          </div>
+        </section>
+      )}
+
       <section className="settings-section">
         <h2>On this device</h2>
         <p>Conversations are kept in this browser only. Nothing you ask is stored on the server.</p>
@@ -145,14 +176,14 @@ export function SettingsPage() {
         <div className="settings-list">
           <div className="settings-row" style={{ alignItems: 'flex-start' }}>
             <div className="row" style={{ gap: 14, alignItems: 'flex-start' }}>
-              <Mark solid className="about-mark" />
+              <Mark className="about-mark" />
               <div className="text">
                 <b>
                   {APP_NAME} <span className="faint" style={{ fontWeight: 500 }}>v{APP_VERSION}</span>
                 </b>
                 <span>{APP_TAGLINE}</span>
                 <span style={{ marginTop: 6 }}>
-                  Answers are written from Room of Requirement threads by a model that cites what it used and says how sure it is. Old or disputed advice is flagged. Trades, listings and rides are sent to the group or the market instead.
+                  Answers are written from official NYUAD pages and Room of Requirement threads by a model that cites what it used and says how sure it is. Official pages win on rules; threads win on experience. Falcon trades go to the Falcons page; listings and rides are sent to the group.
                 </span>
               </div>
             </div>
@@ -164,6 +195,7 @@ export function SettingsPage() {
                 {health ? (
                   <>
                     {health.gemini.configured ? 'Answers on' : 'Answers off'} · {health.embeddings?.semanticSearch ? 'semantic search on' : 'keyword search only'} ·{' '}
+                    {health.official?.pages ? `${health.official.pages.toLocaleString()} official pages` : 'no official pages yet'} ·{' '}
                     {boardProblem ? 'board off' : `board on${stats ? `, ${plural(stats.answers, 'answer')} from ${plural(stats.helpers, 'student')}` : ''}`}
                   </>
                 ) : (
@@ -182,8 +214,8 @@ export function SettingsPage() {
             <a className="btn sm" href={GROUP_URL} target="_blank" rel="noreferrer">
               <IconExternal /> The group on Facebook
             </a>
-            <a className="btn sm" href={MARKET_URL} target="_blank" rel="noreferrer">
-              <IconExternal /> Falcon Market
+            <a className="btn sm" href="/falcons" onClick={onLinkClick}>
+              Falcons exchange
             </a>
           </div>
         </div>

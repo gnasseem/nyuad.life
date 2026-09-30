@@ -25,7 +25,7 @@ export interface PostDetail extends PostSummary {
   comments: Comment[];
 }
 
-export type SourceKind = 'archive' | 'board' | 'announcement';
+export type SourceKind = 'archive' | 'board' | 'announcement' | 'official';
 
 export interface SourceCard {
   n: number;
@@ -70,6 +70,7 @@ export interface Health {
   gemini: { configured: boolean; chatModel?: string };
   embeddings?: { semanticSearch: boolean; provider?: string | null };
   archive?: { posts: number; comments: number; newestPost: string };
+  official?: { pages: number; courses?: number; fetchedAt?: string; hint?: string };
   /** `ok` comes from a real probe of the database; `problem` says what is wrong when it is not. */
   board: { configured: boolean; persistent?: boolean; ok?: boolean; code?: string; problem?: string; hint?: string };
 }
@@ -121,6 +122,8 @@ export interface Profile {
   classOf: number;
   year: Standing;
   answers: number;
+  /** Weekly roundup of open questions by email; undefined on profiles saved before it existed (treated as on). */
+  digest?: boolean;
 }
 
 export interface Question {
@@ -165,6 +168,95 @@ export interface Announcement {
   posterName: string;
   expiresAt: string;
   createdAt: string;
+}
+
+export type OfferSide = 'sell' | 'buy';
+export type ContactKind = 'whatsapp' | 'instagram' | 'email' | 'phone';
+
+export interface Offer {
+  id: string;
+  side: OfferSide;
+  amount: number;
+  rate: number;
+  contactKind: ContactKind;
+  contact: string;
+  note: string;
+  posterName: string;
+  status: 'open' | 'done';
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface MarketSummary {
+  open: number;
+  selling: number;
+  buying: number;
+  bestAsk: number | null;
+  bestBid: number | null;
+  medianRate: number | null;
+  volume: number;
+}
+
+export interface LeaderboardEntry {
+  netId: string;
+  name: string;
+  major: string;
+  year: Standing;
+  answers: number;
+  streak: number;
+  lastAnswerAt: string;
+}
+
+/* ---------- Guide ---------- */
+
+export interface GuideSection {
+  id: string;
+  label: string;
+  blurb: string;
+  count: number;
+}
+
+export interface GuideItem {
+  id: string;
+  title: string;
+  url: string;
+  blurb: string;
+  breadcrumbs: string[];
+  code?: string;
+}
+
+export interface GuideCourse {
+  code: string;
+  title: string;
+  department: string;
+  credits?: number;
+  threads: number;
+  official: boolean;
+}
+
+export interface GuideSummary {
+  overview: string;
+  facts: string[];
+  students: string[];
+  keepInMind: string[];
+  confidence: 'high' | 'medium' | 'low';
+  model: string;
+  createdAt: string;
+}
+
+export interface GuideDetail {
+  kind: 'course' | 'page';
+  id: string;
+  code?: string;
+  title: string;
+  section: string;
+  breadcrumbs?: string[];
+  official: { url: string; text: string; fetchedAt: string; credits?: number } | null;
+  threads: PostSummary[];
+  threadCount: number;
+  related?: Array<{ id: string; title: string }>;
+  sources: Array<{ n: number; kind: SourceKind; title: string; url: string; postId?: string }>;
+  summary: GuideSummary | null;
 }
 
 export class ApiError extends Error {
@@ -234,6 +326,19 @@ export const api = {
     skip: (body: { netId: string; questionId: string }) => post<{ ok: true }>('/api/board', { op: 'skip', ...body }),
     announce: (body: { netId: string; key: string; title: string; body: string; kind: AnnouncementKind; startsAt?: string; location?: string; link?: string }) => post<{ announcement: Announcement }>('/api/board', { op: 'announce', ...body }),
     unannounce: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unannounce', ...body }),
+    offers: (key: string) => request<{ offers: Offer[]; mine: Offer[]; market: MarketSummary }>(`/api/board?op=offers&key=${encodeURIComponent(key)}`),
+    offer: (body: { netId: string; key: string; side: OfferSide; amount: number; rate: number; contactKind: ContactKind; contact: string; note?: string }) => post<{ offer: Offer }>('/api/board', { op: 'offer', ...body }),
+    offerDone: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'offer_done', ...body }),
+    unoffer: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unoffer', ...body }),
+    leaderboard: () => request<{ helpers: LeaderboardEntry[] }>('/api/board?op=leaderboard'),
+    digest: (body: { netId: string; on: boolean }) => post<{ ok: true; digest: boolean }>('/api/board', { op: 'digest', ...body }),
+  },
+  guide: {
+    sections: () => request<{ official: { available: boolean; pages: number; fetchedAt: string }; sections: GuideSection[] }>('/api/guide'),
+    section: (id: string) => request<{ section: string; label: string; items: GuideItem[] }>(`/api/guide?section=${encodeURIComponent(id)}`),
+    courses: (q = '') => request<{ section: 'courses'; items: GuideCourse[] }>(`/api/guide?section=courses&q=${encodeURIComponent(q)}`),
+    item: (id: string) => request<GuideDetail>(`/api/guide?item=${encodeURIComponent(id)}`),
+    course: (code: string) => request<GuideDetail>(`/api/guide?course=${encodeURIComponent(code)}`),
   },
 };
 

@@ -1,0 +1,99 @@
+/**
+ * The weekly roundup: every Monday, each helper who opted in gets the open questions their major and year are best
+ * placed to answer, by email to their NetID address. Vercel's cron calls this with the CRON_SECRET; `?dry=1` composes
+ * the mails without sending them, which is also what happens when no RESEND_API_KEY is set.
+ */
+import { eligibleQuestions, pickNext, standingFor, STANDING_LABELS, type Profile, type Question } from '../lib/board.ts';
+import { boardStore } from '../lib/board-store.ts';
+import { ApiError, queryString, route, sendJson } from '../lib/http.ts';
+import { collapseWhitespace, truncate } from '../lib/text.ts';
+
+const SITE = () => (process.env.ROR_SITE_URL ?? 'https://nyuad.life').replace(/\/$/, '');
+
+export default route(['GET', 'POST'], async (req, res) => {
+  const secret = (process.env.CRON_SECRET ?? '').trim();
+  const given = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '').trim() || queryString(req, 'key').trim();
+  if (secret && given !== secret) throw new ApiError(401, 'This route is for the scheduler.', 'unauthorized');
+  if (!secret && process.env.VERCEL === '1') throw new ApiError(503, 'Set CRON_SECRET on the server to enable the weekly roundup.', 'no_secret');
+  const store = boardStore();
+  if (!store) throw new ApiError(503, 'The board is not set up on this server yet.', 'board_unavailable');
+
+  const dry = queryString(req, 'dry') === '1' || !process.env.RESEND_API_KEY;
+  const now = new Date();
+  const [questions, helpers] = await Promise.all([store.listOpen(400), store.listDigestProfiles(3000)]);
+  const open = questions.filter((question) => question.status !== 'closed' && question.answers < 3);
+  const mails: Array<{ to: string; subject: string; text: string; html: string; count: number }> = [];
+  for (const helper of helpers) {
+    const events = await store.listEventsByHelper(helper.netId);
+    const picks = pickFor(open, helper, events, now);
+    if (picks.length === 0) continue;
+    mails.push(compose(helper, picks, open.length));
+  }
+  let sent = 0;
+  const failures: string[] = [];
+  if (!dry) {
+    for (const mail of mails) {
+      try {
+        await sendMail(mail);
+        sent++;
+      } catch (error) {
+        failures.push(`${mail.to}: ${(error as Error).message}`);
+      }
+    }
+  }
+  sendJson(res, 200, { openQuestions: open.length, helpers: helpers.length, composed: mails.length, sent, dry, failures, preview: mails.slice(0, 3).map(({ to, subject, text }) => ({ to, subject, text })) });
+});
+
+/** Up to five questions for one helper, best fit first, using the same scoring as the flashcards. */
+function pickFor(open: Question[], helper: Profile, events: Awaited<ReturnType<import('../lib/board-store.ts').BoardStore['listEventsByHelper']>>, now: Date): Question[] {
+  let pool = eligibleQuestions(open, { profile: helper, events });
+  const picks: Question[] = [];
+  const random = () => 0;
+  while (picks.length < 5 && pool.length) {
+    const next = pickNext(pool, { profile: helper, events, now, random });
+    if (!next) break;
+    picks.push(next);
+    pool = pool.filter((question) => question.id !== next.id);
+  }
+  return picks;
+}
+
+function compose(helper: Profile, picks: Question[], openTotal: number) {
+  const standing = STANDING_LABELS[standingFor(helper.classOf)].toLowerCase();
+  const first = helper.name.split(/\s+/)[0] ?? helper.name;
+  const lines = picks.map((question, i) => `${i + 1}. ${truncate(collapseWhitespace(question.text), 220)}${question.courses.length ? ` (${question.courses.join(', ')})` : ''}`);
+  const url = `${SITE()}/questions?tab=help`;
+  const text = [
+    `Hi ${first},`,
+    '',
+    `${openTotal} questions are waiting on nyuad.life this week. These ${picks.length} fit a ${helper.major} ${standing} best:`,
+    '',
+    ...lines,
+    '',
+    `Answer them one at a time here: ${url}`,
+    '',
+    `You get this once a week because you signed up to help. Turn it off under Settings on ${SITE()}.`,
+  ].join('\n');
+  const html = [
+    `<p>Hi ${escape(first)},</p>`,
+    `<p>${openTotal} questions are waiting on <a href="${SITE()}">nyuad.life</a> this week. These ${picks.length} fit a ${escape(helper.major)} ${standing} best:</p>`,
+    `<ol>${picks.map((question) => `<li>${escape(truncate(collapseWhitespace(question.text), 220))}${question.courses.length ? ` <em>(${escape(question.courses.join(', '))})</em>` : ''}</li>`).join('')}</ol>`,
+    `<p><a href="${url}" style="display:inline-block;padding:10px 16px;background:#111;color:#fff;border-radius:8px;text-decoration:none">Answer them</a></p>`,
+    `<p style="color:#777;font-size:13px">You get this once a week because you signed up to help. Turn it off under Settings on <a href="${SITE()}/settings">nyuad.life</a>.</p>`,
+  ].join('');
+  return { to: `${helper.netId}@nyu.edu`, subject: `${picks.length} question${picks.length === 1 ? '' : 's'} a ${helper.major} ${standing} could answer this week`, text, html, count: picks.length };
+}
+
+function escape(value: string): string {
+  return value.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]!);
+}
+
+async function sendMail(mail: { to: string; subject: string; text: string; html: string }): Promise<void> {
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ from: process.env.DIGEST_FROM ?? 'nyuad.life <roundup@nyuad.life>', to: [mail.to], subject: mail.subject, text: mail.text, html: mail.html }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`Resend answered ${response.status}: ${(await response.text()).slice(0, 200)}`);
+}

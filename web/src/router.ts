@@ -8,6 +8,8 @@ export type Route =
   | { name: 'browse' }
   | { name: 'post'; id: string }
   | { name: 'courses'; code?: string }
+  | { name: 'falcons' }
+  | { name: 'guide'; section?: string; id?: string }
   | { name: 'settings' };
 
 export function parseRoute(pathname: string): Route {
@@ -18,16 +20,18 @@ export function parseRoute(pathname: string): Route {
     case 'announcements':
       return { name: 'announcements' };
     case 'archive':
-      if (parts[1] === 'courses') return { name: 'courses', code: parts[2] };
-      return { name: 'browse' };
     case 'browse':
-      return { name: 'browse' };
+      return parts[1] === 'courses' ? { name: 'guide', section: 'courses', id: parts[2] } : { name: 'guide' };
     case 'courses':
-      return { name: 'courses', code: parts[1] };
+      return { name: 'guide', section: 'courses', id: parts[1] };
     case 'post':
       return parts[1] ? { name: 'post', id: parts[1] } : { name: 'browse' };
     case 'settings':
       return { name: 'settings' };
+    case 'falcons':
+      return { name: 'falcons' };
+    case 'guide':
+      return { name: 'guide', section: parts[1], id: parts[2] };
     default:
       return { name: 'ask' };
   }
@@ -51,6 +55,10 @@ export function routePath(route: Route): string {
       return route.code ? `/archive/courses/${encodeURIComponent(route.code)}` : '/archive/courses';
     case 'settings':
       return '/settings';
+    case 'falcons':
+      return '/falcons';
+    case 'guide':
+      return route.section ? (route.id ? `/guide/${encodeURIComponent(route.section)}/${encodeURIComponent(route.id)}` : `/guide/${encodeURIComponent(route.section)}`) : '/guide';
   }
 }
 

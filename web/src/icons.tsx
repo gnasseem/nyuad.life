@@ -209,3 +209,47 @@ export const IconKeyboard = (p: SVGProps<SVGSVGElement>) => (
     <path d="M7 11h1M11 11h1M15 11h1M8 14.5h8" />
   </svg>
 );
+export const IconCoins = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <ellipse cx="10" cy="7" rx="6.5" ry="3" />
+    <path d="M3.5 7v5c0 1.7 2.9 3 6.5 3s6.5-1.3 6.5-3V7" />
+    <path d="M3.5 12v5c0 1.7 2.9 3 6.5 3s6.5-1.3 6.5-3v-5" />
+    <path d="M20.5 10.5v6c0 1.2-1.2 2.2-3 2.7" />
+  </svg>
+);
+export const IconBook = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10a2.5 2.5 0 0 1 2 1 2.5 2.5 0 0 1 2-1h4.5A1.5 1.5 0 0 1 20 5.5V18a1 1 0 0 1-1 1h-5a2 2 0 0 0-2 1.5A2 2 0 0 0 10 19H5a1 1 0 0 1-1-1z" />
+    <path d="M12 5v15.5" />
+  </svg>
+);
+export const IconChevronRight = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="m9 6 6 6-6 6" />
+  </svg>
+);
+export const IconShield = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M12 3l7 3v5.5c0 4.3-3 8.1-7 9.5-4-1.4-7-5.2-7-9.5V6z" />
+    <path d="m9 12 2 2 4-4" />
+  </svg>
+);
+export const IconTrophy = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M8 4h8v5a4 4 0 0 1-8 0z" />
+    <path d="M8 6H5.5a1 1 0 0 0-1 1 3.5 3.5 0 0 0 3.5 3.5M16 6h2.5a1 1 0 0 1 1 1 3.5 3.5 0 0 1-3.5 3.5" />
+    <path d="M12 13v3M9 20h6M10 16h4v4h-4z" />
+  </svg>
+);
+export const IconFlame = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M12 3c1 3 4 4.5 4 8.5a4 4 0 0 1-8 0c0-1.5.5-2.5 1.5-3.5.2 1.2.8 2 1.5 2.5C11.5 8 11 5.5 12 3z" />
+    <path d="M8.5 13.5A6 6 0 1 0 17 10" />
+  </svg>
+);
+export const IconMail = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <path d="m3.5 7 8.5 6 8.5-6" />
+  </svg>
+);

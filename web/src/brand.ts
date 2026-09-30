@@ -7,4 +7,3 @@ export const APP_TAGLINE = 'What NYUAD students already figured out, in one plac
 /** The greeting on the empty Ask page and the hint text inside its question box. */
 export const ASK_PLACEHOLDER = 'What do you need?';
 export const GROUP_URL = 'https://www.facebook.com/groups/nyuad.room.of.requirement';
-export const MARKET_URL = 'https://falconmarket.me';

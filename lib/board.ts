@@ -26,6 +26,8 @@ export interface Profile {
   major: string;
   classOf: number;
   answers: number;
+  /** Wants the weekly roundup of open questions they could answer. */
+  digest: boolean;
   createdAt: string;
   lastSeenAt: string;
 }
@@ -104,7 +106,7 @@ export function validateNetId(value: unknown): string {
   return netId;
 }
 
-export function validateProfile(body: Record<string, unknown>): Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'> {
+export function validateProfile(body: Record<string, unknown>): Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'> & { digest?: boolean } {
   const netId = validateNetId(body.netId);
   const name = collapseWhitespace(String(body.name ?? '')).slice(0, 60);
   if (name.length < 2) throw new ApiError(400, 'Add your name.', 'bad_name');
@@ -113,7 +115,7 @@ export function validateProfile(body: Record<string, unknown>): Pick<Profile, 'n
   const classOf = Number(body.classOf);
   const thisYear = new Date().getUTCFullYear();
   if (!Number.isInteger(classOf) || classOf < thisYear - 15 || classOf > thisYear + 6) throw new ApiError(400, 'Pick your class year.', 'bad_class_of');
-  return { netId, name, major, classOf };
+  return { netId, name, major, classOf, ...(typeof body.digest === 'boolean' ? { digest: body.digest } : {}) };
 }
 
 export function validateQuestionText(value: unknown): string {
@@ -337,4 +339,121 @@ export function searchAnnouncements(announcements: Announcement[], query: string
     .filter(({ score }) => top > 0 && score / top >= 0.5)
     .slice(0, limit)
     .map(({ row, score }) => ({ announcement: announcements[row]!, score: score / top }));
+}
+
+/* ---------- Leaderboard ---------- */
+
+export interface LeaderboardEntry {
+  netId: string;
+  name: string;
+  major: string;
+  year: Standing;
+  answers: number;
+  /** Consecutive calendar weeks (Monday to Sunday) with at least one answer, ending this week or last week. */
+  streak: number;
+  lastAnswerAt: string;
+}
+
+/** Monday 00:00 UTC of the week a date falls in, as a day number. */
+export function weekOf(iso: string): number {
+  const day = Math.floor(Date.parse(iso) / 86_400_000);
+  const weekday = (day + 3) % 7; // 1970-01-01 was a Thursday
+  return day - weekday;
+}
+
+/** Ranks helpers by answers written, with a streak of consecutive weeks; the most recent answer breaks ties. */
+export function leaderboard(answers: Answer[], now = new Date(), limit = 10): LeaderboardEntry[] {
+  const byHelper = new Map<string, Answer[]>();
+  for (const answer of answers) byHelper.set(answer.helperNetId, [...(byHelper.get(answer.helperNetId) ?? []), answer]);
+  const thisWeek = weekOf(now.toISOString());
+  const entries: LeaderboardEntry[] = [];
+  for (const [netId, list] of byHelper) {
+    const sorted = [...list].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const weeks = new Set(sorted.map((answer) => weekOf(answer.createdAt)));
+    let streak = 0;
+    let week = weeks.has(thisWeek) ? thisWeek : thisWeek - 7;
+    while (weeks.has(week)) {
+      streak++;
+      week -= 7;
+    }
+    const latest = sorted[0]!;
+    entries.push({ netId, name: latest.helperName, major: latest.helperMajor, year: latest.helperYear, answers: list.length, streak, lastAnswerAt: latest.createdAt });
+  }
+  return entries.sort((a, b) => b.answers - a.answers || b.streak - a.streak || b.lastAnswerAt.localeCompare(a.lastAnswerAt)).slice(0, limit);
+}
+
+/* ---------- Falcons: the campus-dirham exchange ---------- */
+
+export type OfferSide = 'sell' | 'buy';
+export const CONTACT_KINDS = ['whatsapp', 'instagram', 'email', 'phone'] as const;
+export type ContactKind = (typeof CONTACT_KINDS)[number];
+
+export interface Offer {
+  id: string;
+  /** sell: has Falcons, wants dirhams. buy: has dirhams, wants Falcons. */
+  side: OfferSide;
+  /** Falcons on offer or wanted. */
+  amount: number;
+  /** Dirhams per Falcon, for example 0.85. */
+  rate: number;
+  contactKind: ContactKind;
+  contact: string;
+  note: string;
+  posterKey: string;
+  posterNetId: string;
+  posterName: string;
+  status: 'open' | 'done';
+  expiresAt: string;
+  createdAt: string;
+}
+
+export const OFFER_DAYS = 5;
+export const OFFER_MIN = 5;
+export const OFFER_MAX = 20_000;
+
+export function validateOffer(body: Record<string, unknown>, now = new Date()): Omit<Offer, 'id' | 'createdAt' | 'posterKey' | 'posterNetId' | 'posterName' | 'status'> {
+  const side = String(body.side ?? '') as OfferSide;
+  if (side !== 'sell' && side !== 'buy') throw new ApiError(400, 'Say whether you are selling or buying Falcons.', 'bad_side');
+  const amount = Math.round(Number(body.amount));
+  if (!Number.isFinite(amount) || amount < OFFER_MIN || amount > OFFER_MAX) throw new ApiError(400, `Amount must be between ${OFFER_MIN} and ${OFFER_MAX.toLocaleString()} Falcons.`, 'bad_amount');
+  const rate = Math.round(Number(body.rate) * 100) / 100;
+  if (!Number.isFinite(rate) || rate < 0.1 || rate > 2) throw new ApiError(400, 'Rate is dirhams per Falcon, between 0.10 and 2.00.', 'bad_rate');
+  const contactKind = String(body.contactKind ?? 'whatsapp') as ContactKind;
+  if (!CONTACT_KINDS.includes(contactKind)) throw new ApiError(400, 'Pick how people should contact you.', 'bad_contact_kind');
+  const contact = collapseWhitespace(String(body.contact ?? '')).slice(0, 80);
+  if (contact.length < 3) throw new ApiError(400, 'Add a way to reach you.', 'bad_contact');
+  if (contactKind === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact)) throw new ApiError(400, 'That email does not look right.', 'bad_contact');
+  if ((contactKind === 'whatsapp' || contactKind === 'phone') && !/^\+?[\d\s()-]{7,20}$/.test(contact)) throw new ApiError(400, 'Use a phone number with the country code, like +971 50 123 4567.', 'bad_contact');
+  const note = collapseWhitespace(String(body.note ?? '')).slice(0, 200);
+  const expiresAt = new Date(now.getTime() + OFFER_DAYS * 86_400_000).toISOString();
+  return { side, amount, rate, contactKind, contact, note, expiresAt };
+}
+
+export interface MarketSummary {
+  open: number;
+  selling: number;
+  buying: number;
+  /** Best rate for someone buying Falcons (lowest asking price) and for someone selling them (highest bid). */
+  bestAsk: number | null;
+  bestBid: number | null;
+  medianRate: number | null;
+  /** Falcons on offer in total. */
+  volume: number;
+}
+
+export function summarizeMarket(offers: Offer[]): MarketSummary {
+  const open = offers.filter((offer) => offer.status === 'open');
+  const asks = open.filter((offer) => offer.side === 'sell').map((offer) => offer.rate);
+  const bids = open.filter((offer) => offer.side === 'buy').map((offer) => offer.rate);
+  const rates = open.map((offer) => offer.rate).sort((a, b) => a - b);
+  const median = rates.length === 0 ? null : rates.length % 2 ? rates[(rates.length - 1) / 2]! : (rates[rates.length / 2 - 1]! + rates[rates.length / 2]!) / 2;
+  return {
+    open: open.length,
+    selling: asks.length,
+    buying: bids.length,
+    bestAsk: asks.length ? Math.min(...asks) : null,
+    bestBid: bids.length ? Math.max(...bids) : null,
+    medianRate: median === null ? null : Math.round(median * 100) / 100,
+    volume: open.reduce((sum, offer) => sum + offer.amount, 0),
+  };
 }

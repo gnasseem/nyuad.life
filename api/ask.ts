@@ -1,6 +1,7 @@
 import { boardStore } from '../lib/board-store.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, rateLimit, readJson, route, sendJson, startSse } from '../lib/http.ts';
+import { loadOfficial } from '../lib/official.ts';
 import { ask, validateAsk } from '../lib/rag.ts';
 import { loadArchive } from '../lib/store.ts';
 import type { AskRequest } from '../lib/types.ts';
@@ -13,10 +14,14 @@ export default route(['POST'], async (req, res) => {
   if (!cfg) throw new ApiError(503, 'GEMINI_API_KEY is not configured on the server.', 'no_model');
   const request = validateAsk(await readJson<Partial<AskRequest>>(req));
   const archive = await loadArchive();
+  const official = await loadOfficial().catch((error) => {
+    console.warn('[ask] official pages could not be loaded:', (error as Error).message);
+    return null;
+  });
   const board = boardStore();
 
   if (!request.stream) {
-    sendJson(res, 200, await ask(archive, cfg, request, {}, undefined, { board }));
+    sendJson(res, 200, await ask(archive, cfg, request, {}, undefined, { board, official }));
     return;
   }
 
@@ -36,7 +41,7 @@ export default route(['POST'], async (req, res) => {
         followups: (questions) => sse.send('followups', { questions }),
       },
       controller.signal,
-      { board },
+      { board, official },
     );
     sse.send('done', { model: result.model, confidence: result.confidence, retrieval: result.retrieval });
   } catch (error) {

@@ -156,8 +156,8 @@ export function AnnouncementsPage() {
             All {items && items.length > 0 && <span className="n">{items.length}</span>}
           </button>
           {KINDS.map((kind) => (
-            <button key={kind.id} type="button" className={`chip kind kind-${kind.id}${filter === kind.id ? ' on' : ''}`} onClick={() => setFilter(filter === kind.id ? '' : kind.id)}>
-              <i /> {kind.label}
+            <button key={kind.id} type="button" className={`chip kind-${kind.id}${filter === kind.id ? ' on' : ''}`} onClick={() => setFilter(filter === kind.id ? '' : kind.id)}>
+              <span className="dot" /> {kind.label}
               {(counts.get(kind.id) ?? 0) > 0 && <span className="n">{counts.get(kind.id)}</span>}
             </button>
           ))}
@@ -244,11 +244,11 @@ function Item({ entry, now, mine, onRemove }: { entry: Announcement; now: Date; 
         <div className="ann-title">
           <h3>{entry.title}</h3>
           <span className="tag kind">
-            <i /> {label}
+            <span className="dot" /> {label}
           </span>
           {soon && (
             <span className={`pill soon${soon.live ? ' now' : ''}`}>
-              <i /> {soon.text}
+              <span className="dot" /> {soon.text}
             </span>
           )}
         </div>

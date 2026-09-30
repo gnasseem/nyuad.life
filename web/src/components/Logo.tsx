@@ -2,27 +2,20 @@ import type { SVGProps } from 'react';
 import { APP_NAME } from '../brand';
 
 /**
- * The mark: two rounded squares, one turned 45°, make the eight-point star that is cut into the mashrabiya screens
- * all over campus; the dot in the middle is the dot in nyuad.life. Outline by default, solid on a gradient tile
- * for the favicon, the welcome card and the answer avatar.
+ * The mark: two rounded squares, one turned 45°, make the eight-point star cut into the mashrabiya screens across
+ * campus; the dot in the middle is the dot in nyuad.life. One colour, so it sits in any UI like a system icon.
+ * `tile` puts it in white on an ink square (favicon, avatars).
  */
-export function Mark({ solid = false, ...props }: SVGProps<SVGSVGElement> & { solid?: boolean }) {
-  if (solid) {
+export function Mark({ tile = false, ...props }: SVGProps<SVGSVGElement> & { tile?: boolean }) {
+  if (tile) {
     return (
       <svg viewBox="0 0 64 64" aria-hidden="true" {...props}>
-        <defs>
-          <linearGradient id="life-g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stopColor="#6c3de0" />
-            <stop offset="0.5" stopColor="#c04ac7" />
-            <stop offset="1" stopColor="#f5a524" />
-          </linearGradient>
-        </defs>
-        <rect width="64" height="64" rx="16" fill="url(#life-g)" />
-        <g fill="#fffdf9">
-          <rect x="16" y="16" width="32" height="32" rx="8" />
-          <rect x="16" y="16" width="32" height="32" rx="8" transform="rotate(45 32 32)" />
+        <rect width="64" height="64" rx="14" fill="currentColor" />
+        <g fill="none" stroke="var(--tile-fg, #fff)" strokeWidth="4" strokeLinejoin="round">
+          <rect x="17" y="17" width="30" height="30" rx="7" />
+          <rect x="17" y="17" width="30" height="30" rx="7" transform="rotate(45 32 32)" />
         </g>
-        <circle cx="32" cy="32" r="5.5" fill="url(#life-g)" />
+        <circle cx="32" cy="32" r="4.5" fill="var(--tile-fg, #fff)" />
       </svg>
     );
   }
@@ -35,12 +28,12 @@ export function Mark({ solid = false, ...props }: SVGProps<SVGSVGElement> & { so
   );
 }
 
-/** The mark and the name side by side, with the dot in the name picked out in the accent colour. */
-export function Wordmark({ solid = false }: { solid?: boolean }) {
+/** The mark and the name side by side. */
+export function Wordmark() {
   const [left, right] = APP_NAME.split('.');
   return (
     <span className="wordmark-inner">
-      <Mark solid={solid} className="wordmark-mark" />
+      <Mark tile className="wordmark-mark" />
       <span className="wordmark-text">
         {left}
         <i>.</i>

@@ -16,7 +16,9 @@
     "index": "tsx scripts/index.ts",
     "scrape": "tsx scripts/scrape.ts",
     "check": "npm run typecheck && npm run test && npm run build",
-    "ensure-index": "tsx scripts/ensure-index.ts"
+    "ensure-index": "tsx scripts/ensure-index.ts",
+    "scrape:official": "tsx scripts/scrape-official.ts",
+    "index:official": "tsx scripts/index-official.ts"
   },
   "dependencies": {
     "react": "^19.2.0",

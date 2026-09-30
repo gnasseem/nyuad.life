@@ -52,9 +52,9 @@ export interface IndexMeta {
   oldestPost: string;
 }
 
-export type SourceKind = 'archive' | 'board' | 'announcement';
+export type SourceKind = 'archive' | 'board' | 'announcement' | 'official';
 
-/** What the API returns as a citation: an archive thread, an answer from the student board, or an announcement. */
+/** What the API returns as a citation: an archive thread, a board answer, an announcement, or an official NYUAD page. */
 export interface SourceCard {
   n: number;
   kind: SourceKind;

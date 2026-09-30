@@ -6,11 +6,11 @@ import { ProfileModal } from './components/ProfileForm';
 import { Welcome } from './components/Welcome';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
 import { initials, standingLabel } from './format';
-import { IconArchive, IconAsk, IconAuto, IconClose, IconMegaphone, IconMenu, IconMoon, IconQuestions, IconSettings, IconSun, IconTrash, IconUser } from './icons';
+import { IconAsk, IconAuto, IconBook, IconClose, IconCoins, IconMegaphone, IconMenu, IconMoon, IconQuestions, IconSettings, IconSun, IconTrash, IconUser } from './icons';
 import { AnnouncementsPage } from './pages/Announcements';
 import { AskPage } from './pages/Ask';
-import { BrowsePage } from './pages/Browse';
-import { CoursesPage } from './pages/Courses';
+import { FalconsPage } from './pages/Falcons';
+import { GuidePage } from './pages/Guide';
 import { PostPage } from './pages/Post';
 import { QuestionPage, QuestionsPage } from './pages/Questions';
 import { SettingsPage } from './pages/Settings';
@@ -21,8 +21,9 @@ import { promotionMessage, standingFor } from './year';
 const NAV: Array<{ route: Route; label: string; short: string; icon: typeof IconAsk; matches: Route['name'][] }> = [
   { route: { name: 'ask' }, label: 'Ask', short: 'Ask', icon: IconAsk, matches: ['ask'] },
   { route: { name: 'questions' }, label: 'Questions', short: 'Questions', icon: IconQuestions, matches: ['questions', 'question'] },
-  { route: { name: 'announcements' }, label: 'What\u2019s on', short: 'What’s on', icon: IconMegaphone, matches: ['announcements'] },
-  { route: { name: 'browse' }, label: 'Archive', short: 'Archive', icon: IconArchive, matches: ['browse', 'post', 'courses'] },
+  { route: { name: 'announcements' }, label: 'What’s on', short: 'What’s on', icon: IconMegaphone, matches: ['announcements'] },
+  { route: { name: 'falcons' }, label: 'Falcons', short: 'Falcons', icon: IconCoins, matches: ['falcons'] },
+  { route: { name: 'guide' }, label: 'Guide', short: 'Guide', icon: IconBook, matches: ['guide', 'post', 'browse', 'courses'] },
 ];
 
 const THEME_LABEL: Record<Theme, string> = { system: 'Theme follows your system', light: 'Light theme', dark: 'Dark theme' };
@@ -74,7 +75,6 @@ export function App() {
       .catch(() => setHealth({ ok: false, gemini: { configured: false }, board: { configured: false } }));
   }, []);
 
-  // The welcome sheet: once per device, a moment after the page settles, only for people we do not know yet.
   useEffect(() => {
     if (profile || hasBeenWelcomed()) return;
     const timer = window.setTimeout(() => setWelcome(true), 700);
@@ -147,14 +147,17 @@ export function App() {
         return <QuestionPage id={route.id} />;
       case 'announcements':
         return <AnnouncementsPage />;
-      case 'browse':
-        return <BrowsePage key="browse" search={search} />;
+      case 'falcons':
+        return <FalconsPage />;
+      case 'guide':
+        return <GuidePage section={route.section} id={route.id} search={search} />;
       case 'post':
         return <PostPage id={route.id} />;
-      case 'courses':
-        return <CoursesPage code={route.code} />;
       case 'settings':
         return <SettingsPage />;
+      case 'browse':
+      case 'courses':
+        return <GuidePage section={route.name === 'courses' ? 'courses' : undefined} id={route.name === 'courses' ? route.code : undefined} search={search} />;
       default:
         return <AskPage resumeId={currentConversation ?? undefined} />;
     }
@@ -172,6 +175,15 @@ export function App() {
   };
 
   const settingsActive = route.name === 'settings';
+  const navLinks = (short: boolean) =>
+    NAV.map((item) => {
+      const active = item.matches.includes(route.name);
+      return (
+        <a key={item.label} href={routePath(item.route)} className={active ? 'active' : undefined} aria-current={active ? 'page' : undefined} onClick={onLinkClick}>
+          <item.icon /> {short ? item.short : item.label}
+        </a>
+      );
+    });
 
   return (
     <AppContext.Provider value={context}>
@@ -186,16 +198,7 @@ export function App() {
               <IconClose />
             </button>
           </div>
-          <nav className="nav">
-            {NAV.map((item) => {
-              const active = item.matches.includes(route.name);
-              return (
-                <a key={item.label} href={routePath(item.route)} className={active ? 'active' : undefined} aria-current={active ? 'page' : undefined} onClick={onLinkClick}>
-                  <item.icon /> {item.label}
-                </a>
-              );
-            })}
-          </nav>
+          <nav className="nav">{navLinks(false)}</nav>
           <div className="recent">
             <div className="recent-head">
               <span>Recent</span>
@@ -206,7 +209,7 @@ export function App() {
               )}
             </div>
             {conversations.length === 0 ? (
-              <div className="recent-empty">Questions you ask will be listed here.</div>
+              <div className="recent-empty">Questions you ask are kept here.</div>
             ) : (
               <div className="recent-list">
                 {conversations.slice(0, 40).map((conversation) => (
@@ -234,9 +237,9 @@ export function App() {
                 </span>
               </a>
             ) : (
-              <button type="button" className="me" style={{ border: 0, background: 'none', textAlign: 'left' }} onClick={() => void requestProfile()}>
-                <span className="avatar" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-                  <IconUser style={{ width: 15, height: 15 }} />
+              <button type="button" className="me" onClick={() => void requestProfile()}>
+                <span className="avatar">
+                  <IconUser style={{ width: 14, height: 14 }} />
                 </span>
                 <span className="who">
                   <b>Introduce yourself</b>
@@ -261,23 +264,13 @@ export function App() {
             <a href="/" className="wordmark" onClick={onLinkClick}>
               <Wordmark />
             </a>
-            <button type="button" className="icon-btn" onClick={cycleTheme} aria-label={THEME_LABEL[theme]}>
-              <ThemeIcon />
-            </button>
+            <a href="/settings" className={`icon-btn${settingsActive ? ' active' : ''}`} onClick={onLinkClick} aria-label="Settings">
+              <IconSettings />
+            </a>
           </header>
           <main>{page}</main>
           <nav className="tabbar" aria-label="Sections">
-            {NAV.map((item) => {
-              const active = item.matches.includes(route.name);
-              return (
-                <a key={item.label} href={routePath(item.route)} className={active ? 'active' : undefined} aria-current={active ? 'page' : undefined} onClick={onLinkClick}>
-                  <item.icon /> {item.short}
-                </a>
-              );
-            })}
-            <a href="/settings" className={settingsActive ? 'active' : undefined} aria-current={settingsActive ? 'page' : undefined} onClick={onLinkClick}>
-              <IconSettings /> Settings
-            </a>
+            {navLinks(true)}
           </nav>
         </div>
       </div>

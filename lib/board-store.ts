@@ -3,7 +3,7 @@
  * production; an in-memory store for local development and tests. `boardStore()` picks one from the environment.
  */
 import { randomUUID } from 'node:crypto';
-import type { Announcement, Answer, BoardEvent, EventKind, Profile, Question } from './board.ts';
+import type { Announcement, Answer, BoardEvent, EventKind, Offer, Profile, Question } from './board.ts';
 import { ApiError } from './http.ts';
 
 export interface BoardStats {
@@ -27,8 +27,11 @@ export interface BoardStore {
   /** Talks to the database once and says whether it is usable, and if not, why. */
   check(): Promise<BoardCheck>;
   getProfile(netId: string): Promise<Profile | null>;
-  upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>): Promise<Profile>;
+  upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'> & { digest?: boolean }): Promise<Profile>;
   touchProfile(netId: string, answered: boolean): Promise<void>;
+  setDigest(netId: string, on: boolean): Promise<void>;
+  /** Helpers who want the weekly roundup. */
+  listDigestProfiles(limit: number): Promise<Profile[]>;
   createQuestion(question: Omit<Question, 'id' | 'createdAt' | 'updatedAt'>): Promise<Question>;
   getQuestion(id: string): Promise<Question | null>;
   /** Questions still worth handing out, newest first. */
@@ -38,6 +41,8 @@ export interface BoardStore {
   listAnswered(limit: number): Promise<Question[]>;
   listAnswers(questionIds: string[]): Promise<Answer[]>;
   listAnswersByHelper(netId: string): Promise<Answer[]>;
+  /** The newest answers across the board, for the leaderboard. */
+  listRecentAnswers(limit: number): Promise<Answer[]>;
   createAnswer(answer: Omit<Answer, 'id' | 'createdAt'>): Promise<Answer>;
   recordEvent(event: Omit<BoardEvent, 'createdAt'>): Promise<void>;
   listEventsByHelper(netId: string): Promise<BoardEvent[]>;
@@ -48,6 +53,15 @@ export interface BoardStore {
   listAnnouncements(now: Date): Promise<Announcement[]>;
   /** Deletes when the key matches the poster's; returns whether anything was removed. */
   deleteAnnouncement(id: string, posterKey: string): Promise<boolean>;
+  createOffer(offer: Omit<Offer, 'id' | 'createdAt'>): Promise<Offer>;
+  /** Open, unexpired offers, newest first. */
+  listOffers(now: Date): Promise<Offer[]>;
+  listOffersByPoster(posterKey: string): Promise<Offer[]>;
+  /** Marks an offer done or removes it; only the poster's key works. Returns whether anything changed. */
+  closeOffer(id: string, posterKey: string, remove: boolean): Promise<boolean>;
+  /** A cached AI summary for the guide, or null. */
+  getSummary(key: string): Promise<{ payload: unknown; createdAt: string } | null>;
+  putSummary(key: string, payload: unknown): Promise<void>;
 }
 
 /* ---------- In memory ---------- */
@@ -62,16 +76,26 @@ export class MemoryBoardStore implements BoardStore {
   private answers: Answer[] = [];
   private events: BoardEvent[] = [];
   private announcements = new Map<string, Announcement>();
+  private offers = new Map<string, Offer>();
+  private summaries = new Map<string, { payload: unknown; createdAt: string }>();
 
   async getProfile(netId: string): Promise<Profile | null> {
     return this.profiles.get(netId) ?? null;
   }
-  async upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>): Promise<Profile> {
+  async upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'> & { digest?: boolean }): Promise<Profile> {
     const now = new Date().toISOString();
     const current = this.profiles.get(profile.netId);
-    const next: Profile = { ...profile, answers: current?.answers ?? 0, createdAt: current?.createdAt ?? now, lastSeenAt: now };
+    const { digest, ...rest } = profile;
+    const next: Profile = { ...rest, digest: digest ?? current?.digest ?? true, answers: current?.answers ?? 0, createdAt: current?.createdAt ?? now, lastSeenAt: now };
     this.profiles.set(profile.netId, next);
     return next;
+  }
+  async setDigest(netId: string, on: boolean): Promise<void> {
+    const profile = this.profiles.get(netId);
+    if (profile) profile.digest = on;
+  }
+  async listDigestProfiles(limit: number): Promise<Profile[]> {
+    return [...this.profiles.values()].filter((profile) => profile.digest).slice(0, limit);
   }
   async touchProfile(netId: string, answered: boolean): Promise<void> {
     const profile = this.profiles.get(netId);
@@ -107,6 +131,9 @@ export class MemoryBoardStore implements BoardStore {
   }
   async listAnswersByHelper(netId: string): Promise<Answer[]> {
     return this.answers.filter((answer) => answer.helperNetId === netId);
+  }
+  async listRecentAnswers(limit: number): Promise<Answer[]> {
+    return [...this.answers].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
   }
   async createAnswer(answer: Omit<Answer, 'id' | 'createdAt'>): Promise<Answer> {
     const created: Answer = { ...answer, id: randomUUID(), createdAt: new Date().toISOString() };
@@ -150,6 +177,30 @@ export class MemoryBoardStore implements BoardStore {
     if (!entry || entry.posterKey !== posterKey) return false;
     this.announcements.delete(id);
     return true;
+  }
+  async createOffer(offer: Omit<Offer, 'id' | 'createdAt'>): Promise<Offer> {
+    const created: Offer = { ...offer, id: randomUUID(), createdAt: new Date().toISOString() };
+    this.offers.set(created.id, created);
+    return created;
+  }
+  async listOffers(now: Date): Promise<Offer[]> {
+    return [...this.offers.values()].filter((offer) => offer.status === 'open' && Date.parse(offer.expiresAt) > now.getTime()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  async listOffersByPoster(posterKey: string): Promise<Offer[]> {
+    return [...this.offers.values()].filter((offer) => offer.posterKey === posterKey).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  async closeOffer(id: string, posterKey: string, remove: boolean): Promise<boolean> {
+    const offer = this.offers.get(id);
+    if (!offer || offer.posterKey !== posterKey) return false;
+    if (remove) this.offers.delete(id);
+    else offer.status = 'done';
+    return true;
+  }
+  async getSummary(key: string): Promise<{ payload: unknown; createdAt: string } | null> {
+    return this.summaries.get(key) ?? null;
+  }
+  async putSummary(key: string, payload: unknown): Promise<void> {
+    this.summaries.set(key, { payload, createdAt: new Date().toISOString() });
   }
   private sorted(): Question[] {
     return [...this.questions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -280,12 +331,20 @@ export class SupabaseBoardStore implements BoardStore {
     const rows = await this.select('board_profiles', `net_id=eq.${enc(netId)}&limit=1`);
     return rows[0] ? profileFrom(rows[0]) : null;
   }
-  async upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>): Promise<Profile> {
-    const rows = await this.write('POST', 'board_profiles?on_conflict=net_id', { net_id: profile.netId, name: profile.name, major: profile.major, class_of: profile.classOf, last_seen_at: new Date().toISOString() }, 'resolution=merge-duplicates,return=representation');
+  async upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'> & { digest?: boolean }): Promise<Profile> {
+    const row: Row = { net_id: profile.netId, name: profile.name, major: profile.major, class_of: profile.classOf, last_seen_at: new Date().toISOString() };
+    if (profile.digest !== undefined) row.digest = profile.digest;
+    const rows = await this.write('POST', 'board_profiles?on_conflict=net_id', row, 'resolution=merge-duplicates,return=representation');
     return profileFrom(rows[0]!);
   }
   async touchProfile(netId: string, answered: boolean): Promise<void> {
     await this.rpc('board_touch_profile', { p_net_id: netId, p_answered: answered });
+  }
+  async setDigest(netId: string, on: boolean): Promise<void> {
+    await this.write('PATCH', `board_profiles?net_id=eq.${enc(netId)}`, { digest: on }, 'return=minimal');
+  }
+  async listDigestProfiles(limit: number): Promise<Profile[]> {
+    return (await this.select('board_profiles', `digest=eq.true&order=last_seen_at.desc&limit=${limit}`)).map(profileFrom);
   }
   async createQuestion(question: Omit<Question, 'id' | 'createdAt' | 'updatedAt'>): Promise<Question> {
     const rows = await this.write('POST', 'board_questions', {
@@ -321,6 +380,9 @@ export class SupabaseBoardStore implements BoardStore {
   }
   async listAnswersByHelper(netId: string): Promise<Answer[]> {
     return (await this.select('board_answers', `helper_net_id=eq.${enc(netId)}&order=created_at.desc&limit=200`)).map(answerFrom);
+  }
+  async listRecentAnswers(limit: number): Promise<Answer[]> {
+    return (await this.select('board_answers', `order=created_at.desc&limit=${limit}`)).map(answerFrom);
   }
   async createAnswer(answer: Omit<Answer, 'id' | 'createdAt'>): Promise<Answer> {
     const rows = await this.write('POST', 'board_answers', {
@@ -374,6 +436,42 @@ export class SupabaseBoardStore implements BoardStore {
   async deleteAnnouncement(id: string, posterKey: string): Promise<boolean> {
     const rows = (await this.call(`board_announcements?id=eq.${enc(id)}&poster_key=eq.${enc(posterKey)}`, { method: 'DELETE', headers: this.headers('return=representation') })) as Row[] | null;
     return Array.isArray(rows) && rows.length > 0;
+  }
+  async createOffer(offer: Omit<Offer, 'id' | 'createdAt'>): Promise<Offer> {
+    const rows = await this.write('POST', 'board_offers', {
+      side: offer.side,
+      amount: offer.amount,
+      rate: offer.rate,
+      contact_kind: offer.contactKind,
+      contact: offer.contact,
+      note: offer.note,
+      poster_key: offer.posterKey,
+      poster_net_id: offer.posterNetId,
+      poster_name: offer.posterName,
+      status: offer.status,
+      expires_at: offer.expiresAt,
+    });
+    return offerFrom(rows[0]!);
+  }
+  async listOffers(now: Date): Promise<Offer[]> {
+    return (await this.select('board_offers', `status=eq.open&expires_at=gt.${enc(now.toISOString())}&order=created_at.desc&limit=300`)).map(offerFrom);
+  }
+  async listOffersByPoster(posterKey: string): Promise<Offer[]> {
+    return (await this.select('board_offers', `poster_key=eq.${enc(posterKey)}&order=created_at.desc&limit=50`)).map(offerFrom);
+  }
+  async closeOffer(id: string, posterKey: string, remove: boolean): Promise<boolean> {
+    const path = `board_offers?id=eq.${enc(id)}&poster_key=eq.${enc(posterKey)}`;
+    const rows = remove
+      ? ((await this.call(path, { method: 'DELETE', headers: this.headers('return=representation') })) as Row[] | null)
+      : await this.write('PATCH', path, { status: 'done' });
+    return Array.isArray(rows) && rows.length > 0;
+  }
+  async getSummary(key: string): Promise<{ payload: unknown; createdAt: string } | null> {
+    const rows = await this.select('guide_summaries', `key=eq.${enc(key)}&limit=1`);
+    return rows[0] ? { payload: rows[0].payload, createdAt: String(rows[0].created_at) } : null;
+  }
+  async putSummary(key: string, payload: unknown): Promise<void> {
+    await this.write('POST', 'guide_summaries?on_conflict=key', { key, payload, created_at: new Date().toISOString() }, 'resolution=merge-duplicates,return=minimal');
   }
 
   private headers(prefer?: string): Record<string, string> {
@@ -430,8 +528,27 @@ function profileFrom(row: Row): Profile {
     major: String(row.major),
     classOf: Number(row.class_of),
     answers: Number(row.answers ?? 0),
+    digest: row.digest === undefined || row.digest === null ? true : Boolean(row.digest),
     createdAt: String(row.created_at),
     lastSeenAt: String(row.last_seen_at),
+  };
+}
+
+function offerFrom(row: Row): Offer {
+  return {
+    id: String(row.id),
+    side: String(row.side) as Offer['side'],
+    amount: Number(row.amount),
+    rate: Number(row.rate),
+    contactKind: String(row.contact_kind) as Offer['contactKind'],
+    contact: String(row.contact),
+    note: String(row.note ?? ''),
+    posterKey: String(row.poster_key),
+    posterNetId: String(row.poster_net_id),
+    posterName: String(row.poster_name),
+    status: String(row.status) as Offer['status'],
+    expiresAt: String(row.expires_at),
+    createdAt: String(row.created_at),
   };
 }
 

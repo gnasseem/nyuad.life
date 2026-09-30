@@ -20,11 +20,6 @@ interface Hot {
   rect?: DOMRect;
 }
 
-const TOPIC_EMOJI: Record<string, string> = {
-  courses: '📚', professors: '🎓', 'study-away': '✈️', housing: '🏠', 'visa-travel': '🛂', jobs: '💼', money: '💸', marketplace: '🛒', food: '🍜', health: '🩺',
-  transport: '🚌', tech: '📱', events: '🎉', research: '🔬', 'lost-found': '🔎', 'grad-school': '🎓', general: '✨',
-};
-
 export function AskPage({ resumeId }: Props) {
   const { home, health, toast, askPrefill, setAskPrefill, setBoardPrefill } = useApp();
   const [conversation, setConversation] = useState<Conversation>(() => (resumeId && loadConversations().find((entry) => entry.id === resumeId)) || fresh());
@@ -222,32 +217,23 @@ export function AskPage({ resumeId }: Props) {
   );
 
   if (empty) {
-    const emojiFor = (topic: string) => home?.topics.find((entry) => entry.id === topic)?.emoji || TOPIC_EMOJI[topic] || '✨';
     return (
       <div className="page ask">
         <div className="hero">
-          <Mark solid className="hero-mark" />
-          <h1 className="greeting">
-            What do you <em className="grad-text">need</em>?
-          </h1>
+          <Mark className="hero-mark" />
+          <h1 className="greeting">What do you need?</h1>
           <p className="hero-sub">
-            {home ? `Answers from ${compact(home.stats.posts)} threads the Room of Requirement already worked out, and from students who answer here.` : 'Answers from what the Room of Requirement already worked out, and from students who answer here.'}
+            {home ? `Answers from ${compact(home.stats.posts)} Room of Requirement threads${health?.official?.pages ? `, ${compact(health.official.pages)} official NYUAD pages` : ''} and the students who answer here, with sources.` : 'Answers from what the Room of Requirement already worked out, official NYUAD pages and the students who answer here.'}
           </p>
           {composer}
           {home && home.suggestions.length > 0 && (
-            <>
-              <div className="starters-label">Try one</div>
-              <div className="starters">
-                {home.suggestions.slice(0, 5).map((suggestion) => (
-                  <button key={suggestion.question} type="button" className="starter" onClick={() => void send(suggestion.question)}>
-                    <span className="emoji" aria-hidden="true">
-                      {emojiFor(suggestion.topic)}
-                    </span>
-                    {suggestion.question}
-                  </button>
-                ))}
-              </div>
-            </>
+            <div className="starters">
+              {home.suggestions.slice(0, 4).map((suggestion) => (
+                <button key={suggestion.question} type="button" className="starter" onClick={() => void send(suggestion.question)}>
+                  {suggestion.question}
+                </button>
+              ))}
+            </div>
           )}
           {home && (
             <div className="hero-stats">
@@ -285,7 +271,7 @@ export function AskPage({ resumeId }: Props) {
             </div>
           ) : (
             <div key={message.id} className="turn model">
-              <Mark solid className="avatar-mark" />
+              <Mark className="avatar-mark" />
               <div className="body">
                 {message.status && (
                   <div className="status-line">
@@ -319,7 +305,7 @@ export function AskPage({ resumeId }: Props) {
                   <div className="answer-foot">
                     {message.confidence && (
                       <span className={`pill confidence ${message.confidence.level}`} title={message.confidence.reason}>
-                        <i /> {message.confidence.level === 'high' ? 'High' : message.confidence.level === 'medium' ? 'Medium' : 'Low'} confidence
+                        <span className="dot" /> {message.confidence.level === 'high' ? 'High' : message.confidence.level === 'medium' ? 'Medium' : 'Low'} confidence
                       </span>
                     )}
                     {message.confidence?.reason && <span className="faint">{message.confidence.reason}</span>}
