@@ -25,15 +25,14 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
    | `GEMINI_API_KEY` | Answers, reranking, question tagging, follow-ups, guide summaries. |
    | `VOYAGE_API_KEY` | Semantic search. Must be the provider that built the index. |
    | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | The board: questions, notices, offers, guide summaries. |
-   | `CRON_SECRET`, `RESEND_API_KEY`, `DIGEST_FROM` | The weekly email of open questions. |
    | `ROR_GROUP_URL` | Where listings and rides are sent. Defaults to the group. |
 
 3. Deploy. `GET /api/health` reports what is active. `board.ok` comes from a real probe of the database and
    `board.problem` says what is wrong when it is false.
 
 Routes: `GET /api/health`, `/api/home`, `/api/search`, `/api/post?id=`, `/api/courses`, `/api/guide`
-(`section=`, `item=`, `course=`), `/api/digest`; `POST /api/ask` (server-sent events); `GET|POST /api/board`
-(`op=stats|question|mine|announcements|offers|leaderboard` on GET, `profile|digest|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer`
+(`section=`, `item=`, `course=`); `POST /api/ask` (server-sent events); `GET|POST /api/board`
+(`op=stats|question|mine|announcements|offers|leaderboard` on GET, `profile|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer`
 on POST). Every route is rate-limited per IP.
 
 ## Scrape the group

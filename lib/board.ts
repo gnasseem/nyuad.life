@@ -26,8 +26,6 @@ export interface Profile {
   major: string;
   classOf: number;
   answers: number;
-  /** Wants the weekly email of open questions they could answer. */
-  digest: boolean;
   createdAt: string;
   lastSeenAt: string;
 }
@@ -106,7 +104,7 @@ export function validateNetId(value: unknown): string {
   return netId;
 }
 
-export function validateProfile(body: Record<string, unknown>): Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'> & { digest?: boolean } {
+export function validateProfile(body: Record<string, unknown>): Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'> {
   const netId = validateNetId(body.netId);
   const name = collapseWhitespace(String(body.name ?? '')).slice(0, 60);
   if (name.length < 2) throw new ApiError(400, 'Enter your name.', 'bad_name');
@@ -115,7 +113,7 @@ export function validateProfile(body: Record<string, unknown>): Pick<Profile, 'n
   const classOf = Number(body.classOf);
   const thisYear = new Date().getUTCFullYear();
   if (!Number.isInteger(classOf) || classOf < thisYear - 15 || classOf > thisYear + 6) throw new ApiError(400, 'Choose a class year.', 'bad_class_of');
-  return { netId, name, major, classOf, ...(typeof body.digest === 'boolean' ? { digest: body.digest } : {}) };
+  return { netId, name, major, classOf };
 }
 
 export function validateQuestionText(value: unknown): string {

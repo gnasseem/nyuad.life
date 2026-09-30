@@ -108,9 +108,6 @@ create table if not exists public.guide_summaries (
   created_at timestamptz not null default now()
 );
 
--- Added after the first release: whether a helper wants the weekly roundup of open questions.
-alter table public.board_profiles add column if not exists digest boolean not null default true;
-
 alter table public.board_profiles      enable row level security;
 alter table public.board_questions     enable row level security;
 alter table public.board_answers       enable row level security;

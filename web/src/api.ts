@@ -96,8 +96,6 @@ export interface Profile {
   classOf: number;
   year: Standing;
   answers: number;
-  /** Weekly email of open questions; undefined on profiles saved before it existed (treated as on). */
-  digest?: boolean;
 }
 
 export interface Question {
@@ -296,7 +294,6 @@ export const api = {
     offerDone: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'offer_done', ...body }),
     unoffer: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unoffer', ...body }),
     leaderboard: () => request<{ helpers: LeaderboardEntry[] }>('/api/board?op=leaderboard'),
-    digest: (body: { netId: string; on: boolean }) => post<{ ok: true; digest: boolean }>('/api/board', { op: 'digest', ...body }),
   },
   guide: {
     sections: () => request<{ official: { available: boolean; pages: number; fetchedAt: string }; sections: GuideSection[] }>('/api/guide'),

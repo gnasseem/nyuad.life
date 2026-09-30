@@ -1,7 +1,7 @@
 /**
  * The student board and the announcements feed, on one route so the function count stays small:
  *   GET  /api/board?op=stats | question&id= | mine&key= | announcements | offers[&key=] | leaderboard
- *   POST /api/board { op: profile | digest | ask | next | answer | skip | announce | unannounce | offer | offer_done | unoffer, ... }
+ *   POST /api/board { op: profile | ask | next | answer | skip | announce | unannounce | offer | offer_done | unoffer, ... }
  */
 import {
   eligibleQuestions,
@@ -84,13 +84,6 @@ export default route(['GET', 'POST'], async (req, res) => {
       rateLimit(req, 10, 10, 'board-profile');
       const profile = await store.upsertProfile(validateProfile(body));
       sendJson(res, 200, { profile: publicProfile(profile) });
-      return;
-    }
-    case 'digest': {
-      rateLimit(req, 20, 20, 'board-profile');
-      const profile = await requireProfile(store, body.netId);
-      await store.setDigest(profile.netId, body.on !== false);
-      sendJson(res, 200, { ok: true, digest: body.on !== false });
       return;
     }
     case 'offer': {
@@ -208,7 +201,7 @@ async function askQuestion(store: BoardStore, body: Body) {
 }
 
 function publicProfile(profile: Profile) {
-  return { netId: profile.netId, name: profile.name, major: profile.major, classOf: profile.classOf, year: standingFor(profile.classOf), answers: profile.answers, digest: profile.digest };
+  return { netId: profile.netId, name: profile.name, major: profile.major, classOf: profile.classOf, year: standingFor(profile.classOf), answers: profile.answers };
 }
 
 function publicOffer(offer: Offer) {

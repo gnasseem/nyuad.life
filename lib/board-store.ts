@@ -27,11 +27,8 @@ export interface BoardStore {
   /** Talks to the database once and says whether it is usable, and if not, why. */
   check(): Promise<BoardCheck>;
   getProfile(netId: string): Promise<Profile | null>;
-  upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'> & { digest?: boolean }): Promise<Profile>;
+  upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>): Promise<Profile>;
   touchProfile(netId: string, answered: boolean): Promise<void>;
-  setDigest(netId: string, on: boolean): Promise<void>;
-  /** Helpers who want the weekly email. */
-  listDigestProfiles(limit: number): Promise<Profile[]>;
   createQuestion(question: Omit<Question, 'id' | 'createdAt' | 'updatedAt'>): Promise<Question>;
   getQuestion(id: string): Promise<Question | null>;
   /** Questions still worth handing out, newest first. */
@@ -81,20 +78,12 @@ export class MemoryBoardStore implements BoardStore {
   async getProfile(netId: string): Promise<Profile | null> {
     return this.profiles.get(netId) ?? null;
   }
-  async upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'> & { digest?: boolean }): Promise<Profile> {
+  async upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>): Promise<Profile> {
     const now = new Date().toISOString();
     const current = this.profiles.get(profile.netId);
-    const { digest, ...rest } = profile;
-    const next: Profile = { ...rest, digest: digest ?? current?.digest ?? true, answers: current?.answers ?? 0, createdAt: current?.createdAt ?? now, lastSeenAt: now };
+    const next: Profile = { ...profile, answers: current?.answers ?? 0, createdAt: current?.createdAt ?? now, lastSeenAt: now };
     this.profiles.set(profile.netId, next);
     return next;
-  }
-  async setDigest(netId: string, on: boolean): Promise<void> {
-    const profile = this.profiles.get(netId);
-    if (profile) profile.digest = on;
-  }
-  async listDigestProfiles(limit: number): Promise<Profile[]> {
-    return [...this.profiles.values()].filter((profile) => profile.digest).slice(0, limit);
   }
   async touchProfile(netId: string, answered: boolean): Promise<void> {
     const profile = this.profiles.get(netId);
@@ -327,20 +316,12 @@ export class SupabaseBoardStore implements BoardStore {
     const rows = await this.select('board_profiles', `net_id=eq.${enc(netId)}&limit=1`);
     return rows[0] ? profileFrom(rows[0]) : null;
   }
-  async upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'> & { digest?: boolean }): Promise<Profile> {
-    const row: Row = { net_id: profile.netId, name: profile.name, major: profile.major, class_of: profile.classOf, last_seen_at: new Date().toISOString() };
-    if (profile.digest !== undefined) row.digest = profile.digest;
-    const rows = await this.write('POST', 'board_profiles?on_conflict=net_id', row, 'resolution=merge-duplicates,return=representation');
+  async upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>): Promise<Profile> {
+    const rows = await this.write('POST', 'board_profiles?on_conflict=net_id', { net_id: profile.netId, name: profile.name, major: profile.major, class_of: profile.classOf, last_seen_at: new Date().toISOString() }, 'resolution=merge-duplicates,return=representation');
     return profileFrom(rows[0]!);
   }
   async touchProfile(netId: string, answered: boolean): Promise<void> {
     await this.rpc('board_touch_profile', { p_net_id: netId, p_answered: answered });
-  }
-  async setDigest(netId: string, on: boolean): Promise<void> {
-    await this.write('PATCH', `board_profiles?net_id=eq.${enc(netId)}`, { digest: on }, 'return=minimal');
-  }
-  async listDigestProfiles(limit: number): Promise<Profile[]> {
-    return (await this.select('board_profiles', `digest=eq.true&order=last_seen_at.desc&limit=${limit}`)).map(profileFrom);
   }
   async createQuestion(question: Omit<Question, 'id' | 'createdAt' | 'updatedAt'>): Promise<Question> {
     const rows = await this.write('POST', 'board_questions', {
@@ -521,7 +502,6 @@ function profileFrom(row: Row): Profile {
     major: String(row.major),
     classOf: Number(row.class_of),
     answers: Number(row.answers ?? 0),
-    digest: row.digest === undefined || row.digest === null ? true : Boolean(row.digest),
     createdAt: String(row.created_at),
     lastSeenAt: String(row.last_seen_at),
   };

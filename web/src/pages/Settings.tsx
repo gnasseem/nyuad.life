@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api';
 import { APP_NAME, APP_TAGLINE, APP_VERSION, GROUP_URL } from '../brand';
 import { Segmented } from '../components/Segmented';
 import { useApp } from '../context';
@@ -30,16 +29,6 @@ export function SettingsPage() {
     forgetDevice();
     setProfile(null);
     window.location.href = '/';
-  };
-
-  const toggleDigest = () => {
-    if (!profile) return;
-    const on = profile.digest === false;
-    setProfile({ ...profile, digest: on });
-    api.board
-      .digest({ netId: profile.netId, on })
-      .then(() => toast(on ? 'Weekly email on' : 'Weekly email off'))
-      .catch((err) => toast(err instanceof Error ? err.message : 'Could not save the setting.'));
   };
 
   const server = health
@@ -100,15 +89,6 @@ export function SettingsPage() {
               <button type="button" className="btn sm primary" onClick={() => void requestProfile()}>
                 Add details
               </button>
-            </div>
-          )}
-          {profile && (
-            <div className="settings-row">
-              <div className="text">
-                <b>Weekly email</b>
-                <span>Open questions for a {profile.major} {standingLabel(profile.year)}, sent to {profile.netId}@nyu.edu on Mondays.</span>
-              </div>
-              <button type="button" role="switch" className="switch" aria-checked={profile.digest !== false} aria-label="Weekly email" onClick={toggleDigest} />
             </div>
           )}
         </div>
