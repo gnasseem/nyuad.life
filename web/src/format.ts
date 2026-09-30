@@ -29,6 +29,10 @@ export function relativeDate(iso: string): string {
   return `${Math.round(days / 365)} years ago`;
 }
 
+export function compact(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
+}
+
 export function plural(n: number, singular: string, pluralForm = `${singular}s`): string {
   return `${n.toLocaleString()} ${n === 1 ? singular : pluralForm}`;
 }
@@ -57,8 +61,10 @@ export function topicLabel(id: string): string {
   return TOPIC_LABELS[id] ?? id.replace(/-/g, ' ');
 }
 
+export const STANDING_LABELS: Record<string, string> = { 'first-year': 'first year', sophomore: 'sophomore', junior: 'junior', senior: 'senior', alumni: 'alumni' };
+
 export function standingLabel(id: string): string {
-  return id === 'first-year' ? 'first year' : id;
+  return STANDING_LABELS[id] ?? id;
 }
 
 export function initials(name: string): string {

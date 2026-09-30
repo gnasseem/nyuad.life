@@ -1,20 +1,20 @@
-import type { SourceCard } from '../api';
-import { formatDate } from '../format';
+import type { SourceCard as Source } from '../api';
+import { formatDate, plural } from '../format';
 import { navigate } from '../router';
 
 interface Props {
-  source: SourceCard;
+  source: Source;
   hot?: boolean;
   id?: string;
   onHover?(n: number | null): void;
 }
 
-const KIND_LABEL: Record<SourceCard['kind'], string> = { archive: 'Thread', board: 'Student answer', announcement: 'Announcement', official: 'Official page' };
-
-export function SourceRow({ source, hot, id, onHover }: Props) {
+export function SourceCard({ source, hot, id, onHover }: Props) {
+  const kind = source.kind === 'board' ? 'Student answer' : source.kind === 'announcement' ? 'Announcement' : source.kind === 'official' ? 'Official NYUAD page' : '';
   const open = () => {
     if (source.kind === 'archive') navigate({ name: 'post', id: source.postId });
     else if (source.kind === 'board') navigate({ name: 'question', id: source.postId });
+    else if (source.kind === 'official') window.open(source.url, '_blank', 'noreferrer');
     else if (source.url) window.open(source.url, '_blank', 'noreferrer');
     else navigate({ name: 'announcements' });
   };
@@ -22,15 +22,15 @@ export function SourceRow({ source, hot, id, onHover }: Props) {
     <div id={id} className={`source${hot ? ' hot' : ''}`} onMouseEnter={() => onHover?.(source.n)} onMouseLeave={() => onHover?.(null)}>
       <div className="source-top">
         <span className="source-n">{source.n}</span>
-        <b>{source.author || 'Unknown'}</b>
-        <span>{formatDate(source.date)}</span>
-        <span>{KIND_LABEL[source.kind]}</span>
+        <span className="source-who">{source.author || 'Unknown'}</span>
+        <span className="source-date small">{formatDate(source.date)}</span>
       </div>
+      {kind && <span className="source-kind">{kind}</span>}
       {source.title && <div className="source-title">{source.title}</div>}
       <div className="source-text">{source.snippet || source.text}</div>
       <div className="source-links">
         <button type="button" onClick={open}>
-          Open
+          {source.kind === 'archive' ? `Open thread · ${plural(source.commentCount, 'comment')}` : source.kind === 'board' ? 'Open question' : source.kind === 'official' ? 'Open on nyuad.nyu.edu' : source.url ? 'Open link' : 'See announcements'}
         </button>
         {source.kind === 'archive' && source.url && (
           <a href={source.url} target="_blank" rel="noreferrer">

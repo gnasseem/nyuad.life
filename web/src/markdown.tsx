@@ -1,4 +1,4 @@
-/** A small Markdown renderer for model answers: paragraphs, headings, lists, bold, code, links and [n] citations. Italics render as plain text. */
+/** A small Markdown renderer for model answers: paragraphs, headings, lists, bold/italic/code, links and [n] citations. */
 import type { ReactNode } from 'react';
 
 export interface MarkdownProps {
@@ -123,7 +123,7 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
     const token = match[0];
     if (token.startsWith('**') || token.startsWith('__')) nodes.push(<strong key={key++}>{inline(token.slice(2, -2), options)}</strong>);
     else if (token.startsWith('`')) nodes.push(<code key={key++}>{token.slice(1, -1)}</code>);
-    else if ((token.startsWith('*') || token.startsWith('_')) && token.length > 2) nodes.push(...inline(token.slice(1, -1), options).map((node) => (typeof node === 'string' ? node : <span key={key++}>{node}</span>)));
+    else if ((token.startsWith('*') || token.startsWith('_')) && token.length > 2) nodes.push(<em key={key++}>{inline(token.slice(1, -1), options)}</em>);
     else if (/^\[\d/.test(token)) {
       const numbers = token.match(/\d+/g)?.map(Number) ?? [];
       numbers.forEach((n) => {
@@ -150,4 +150,12 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
   }
   if (cursor < text.length) nodes.push(text.slice(cursor));
   return nodes;
+}
+
+/** Wraps matching terms in <mark> for search snippets. */
+export function highlight(text: string, terms: string[]): ReactNode[] {
+  const clean = terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).filter((term) => term.length > 1);
+  if (clean.length === 0) return [text];
+  const pattern = new RegExp(`(${clean.join('|')})`, 'gi');
+  return text.split(pattern).map((part, index) => (index % 2 === 1 ? <mark key={index}>{part}</mark> : part));
 }
