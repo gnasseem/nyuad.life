@@ -1,7 +1,8 @@
-# Hall of Requirement
+# nyuad.life
 
-Answers for NYU Abu Dhabi students. The name is a nod to the Room of Requirement group, one size up, and lives in one
-constant (`web/src/brand.ts`) so it is easy to change.
+What NYUAD students already figured out, in one place. The name, the tagline and the version live in
+`web/src/brand.ts`; the mark (two rounded squares turned into the eight-point star from the campus mashrabiya, with the
+dot from the domain name in the middle) lives in `web/src/components/Logo.tsx` and `web/public/favicon.svg`.
 
 Three things happen here:
 
@@ -12,8 +13,13 @@ Three things happen here:
   NetID, major and class year once, then get questions one at a time, flashcard style: answer or skip. Questions are
   tagged by the lite model for the majors and years best placed to answer, and handed out least-seen first, with views,
   skips and answers tracked. Answered questions feed straight back into Ask.
-- **Announcements.** Events, deadlines, opportunities, club notices. Dated ones drop off the day after; undated ones
+- **Announcements** (shown as "What's on"). Events, deadlines, opportunities, club notices, grouped by day with a countdown for today's. Dated ones drop off the day after; undated ones
   after two weeks.
+
+The first time someone opens the site a welcome sheet explains the three things above and asks for name, NetID, major
+and class year (skippable; also available under Settings). That profile is what routes questions to the right people
+and what goes next to an answer or an announcement. Settings also holds the theme (system, light or dark), the saved
+conversations and a "forget this device" button.
 
 Small things that know what time of year it is: the starter questions on Ask lead with what is in season (registration,
 housing, internships, finals); on 1 May everyone's class year rolls over, the app says so with confetti the next
@@ -29,7 +35,7 @@ Everything is TypeScript in one repository:
 | Piece | Where | What it is |
 | --- | --- | --- |
 | API | `api/`, `lib/` | Vercel serverless functions. Holds the keys, the archive and the board. |
-| Web app | `web/` | Vite + React. Sidebar shell, works on phones. |
+| Web app | `web/` | Vite + React. Sidebar shell on desktop, tab bar on phones, light and dark themes. |
 | Scraper | `scripts/scrape.ts` | Pulls posts and comments out of the Facebook group with your own login (runs on your laptop). |
 | Indexer | `scripts/index.ts`, `.github/workflows/index.yml` | Cleans and embeds posts, locally or in GitHub Actions. |
 | Board schema | `supabase/schema.sql` | Tables and functions for questions, answers, profiles and announcements. |
@@ -48,7 +54,9 @@ Everything is TypeScript in one repository:
    | `GEMINI_CHAT_MODEL`, `GEMINI_CHAT_FALLBACK_MODELS`, `GEMINI_LITE_MODEL` | no | Defaults: `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-flash-lite`. |
 
 3. Deploy. `GET /api/health` shows what is active: `embeddings.semanticSearch`, `gemini.configured`,
-   `board.configured`.
+   `board.configured` and `board.ok`. The last one comes from a real probe of the database, and when it is false
+   `board.problem` says what to do (run the schema, swap the anon key for the service key, restore a paused project).
+   The same sentence is shown on the Questions and Announcements pages and under Settings → About.
 
 Routes: `GET /api/health`, `GET /api/home`, `GET /api/search`, `GET /api/post?id=`, `GET /api/courses`,
 `POST /api/ask` (server-sent events: `status`, `redirect`, `sources`, `delta`, `followups`, `done`, `error`), and
@@ -109,7 +117,16 @@ that changed and commits `data/index/`. The same key must be set on Vercel so qu
    request passes through the app's validation and rate limits. The file is safe to run more than once, and the test
    suite applies it to a real Postgres (PGlite) on every run.
 3. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (Project → Settings → API) on Vercel and in `.env`, then
-   redeploy. `GET /api/health` reports `board.configured: true` once both are in place.
+   redeploy. `GET /api/health` reports `board.configured: true` once both are in place and `board.ok: true` once the
+   database answers.
+
+If the pages say the board tables are missing, the schema was not run in the project `SUPABASE_URL` points at (each
+Supabase project is its own database). If they say the key was rejected, the anon or publishable key was pasted
+instead of the `service_role` secret: with row level security on and no policies, the anon key can read nothing and
+write nothing, which is by design. The URL can be pasted as the project URL, the dashboard URL or the bare project
+ref; all three are normalised. Every failed database call is logged on the server with Supabase's own status and
+message, and returned to the client as a specific error code (`board_schema_missing`, `board_key_rejected`,
+`board_url_wrong`, `board_unreachable`) rather than a generic one.
 
 Locally, with nothing set, the board runs in memory so `npm run dev` works without a database (nothing survives a
 restart). In production it is switched off until the two variables exist, rather than silently losing questions.

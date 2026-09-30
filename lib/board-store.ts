@@ -13,9 +13,19 @@ export interface BoardStats {
   helpers: number;
 }
 
+export interface BoardCheck {
+  ok: boolean;
+  /** One of: board_schema_missing | board_key_rejected | board_url_wrong | board_unreachable | board_storage. */
+  code?: string;
+  /** What is wrong and what to do about it, written for the person who set the server up. */
+  problem?: string;
+}
+
 export interface BoardStore {
   /** False for the in-memory store: nothing survives a restart. */
   readonly persistent: boolean;
+  /** Talks to the database once and says whether it is usable, and if not, why. */
+  check(): Promise<BoardCheck>;
   getProfile(netId: string): Promise<Profile | null>;
   upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>): Promise<Profile>;
   touchProfile(netId: string, answered: boolean): Promise<void>;
@@ -44,6 +54,9 @@ export interface BoardStore {
 
 export class MemoryBoardStore implements BoardStore {
   readonly persistent = false;
+  async check(): Promise<BoardCheck> {
+    return { ok: true };
+  }
   private profiles = new Map<string, Profile>();
   private questions = new Map<string, Question>();
   private answers: Answer[] = [];
@@ -159,9 +172,83 @@ export interface SupabaseConfig {
 }
 
 export function supabaseConfig(env: NodeJS.ProcessEnv = process.env): SupabaseConfig | null {
-  const url = (env.SUPABASE_URL ?? '').trim().replace(/\/$/, '');
-  const serviceKey = (env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SERVICE_KEY ?? '').trim();
+  const url = normalizeSupabaseUrl(env.SUPABASE_URL ?? '');
+  const serviceKey = (env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SERVICE_KEY ?? '').trim().replace(/^["']|["']$/g, '');
   return url && serviceKey ? { url, serviceKey } : null;
+}
+
+/**
+ * Turns whatever was pasted into SUPABASE_URL into the REST origin: the project URL as given, the dashboard URL of
+ * the project, a URL with /rest/v1 already on the end, or a bare project ref all become https://<ref>.supabase.co.
+ */
+export function normalizeSupabaseUrl(raw: string): string {
+  let value = raw.trim().replace(/^["']|["']$/g, '');
+  if (!value) return '';
+  const dashboard = /supabase\.com\/dashboard\/project\/([a-z0-9]{20})/i.exec(value);
+  if (dashboard) return `https://${dashboard[1]!.toLowerCase()}.supabase.co`;
+  if (/^[a-z0-9]{20}$/i.test(value)) return `https://${value.toLowerCase()}.supabase.co`;
+  if (!/^https?:\/\//i.test(value)) value = `https://${value}`;
+  return value.replace(/\/+$/, '').replace(/\/rest\/v1$/i, '').replace(/\/+$/, '');
+}
+
+/** Which role a Supabase key carries: legacy keys are JWTs with a role claim, new keys say it in their prefix. */
+export function keyRole(key: string): 'service_role' | 'anon' | 'unknown' {
+  if (key.startsWith('sb_secret_')) return 'service_role';
+  if (key.startsWith('sb_publishable_')) return 'anon';
+  const parts = key.split('.');
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(Buffer.from(parts[1]!.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')) as { role?: string };
+      if (payload.role === 'service_role' || payload.role === 'anon') return payload.role;
+    } catch {
+      // not a JWT
+    }
+  }
+  return 'unknown';
+}
+
+/**
+ * Reads a failed PostgREST response and says what is actually wrong, so the person running the server does not have
+ * to guess: the schema was never run, the wrong key was pasted, the URL is not the REST API, or the project is down.
+ */
+export function storageError(status: number, body: string, what = 'request'): ApiError {
+  let message = body.slice(0, 300);
+  let code = '';
+  try {
+    const json = JSON.parse(body) as { message?: string; msg?: string; error?: string; code?: string | number; error_description?: string };
+    message = json.message ?? json.msg ?? json.error_description ?? json.error ?? message;
+    code = json.code === undefined ? '' : String(json.code);
+  } catch {
+    // keep the raw body
+  }
+  console.error(`[board] Supabase ${status} on ${what}: ${code ? `${code} ` : ''}${message}`);
+  const missingTable = code === 'PGRST205' || code === '42P01' || /could not find the table|relation .* does not exist/i.test(message);
+  const missingFunction = code === 'PGRST202' || code === '42883' || /could not find the function/i.test(message);
+  if (missingTable || missingFunction) {
+    return new ApiError(
+      503,
+      'The board tables are not in this Supabase project yet. Open the project in Supabase, go to SQL Editor → New query, paste the whole of supabase/schema.sql and run it, then try again.',
+      'board_schema_missing',
+    );
+  }
+  if (status === 401 || status === 403 || code === '42501' || code === 'PGRST301' || /row-level security|invalid api key|jwt|permission denied|apikey/i.test(message)) {
+    return new ApiError(
+      503,
+      'Supabase rejected the board key. SUPABASE_SERVICE_ROLE_KEY must be the service_role (secret) key from Project → Settings → API, not the anon or publishable key, and SUPABASE_URL must be the same project.',
+      'board_key_rejected',
+    );
+  }
+  if (status === 404 && !code) {
+    return new ApiError(503, 'SUPABASE_URL does not point at a Supabase REST API. Use the project URL from Project → Settings → API, which looks like https://abcdefghijklmnopqrst.supabase.co.', 'board_url_wrong');
+  }
+  if (status >= 500 || /paused|not available|unavailable/i.test(message)) {
+    return new ApiError(
+      503,
+      `Supabase is not answering (${status}${message ? `: ${message}` : ''}). Free projects pause after a week without traffic: open the Supabase dashboard and restore the project.`,
+      'board_unreachable',
+    );
+  }
+  return new ApiError(502, `The board database refused that (${status}${message ? `: ${message}` : ''}).`, 'board_storage');
 }
 
 type Row = Record<string, unknown>;
@@ -169,6 +256,25 @@ type Row = Record<string, unknown>;
 export class SupabaseBoardStore implements BoardStore {
   readonly persistent = true;
   constructor(private readonly cfg: SupabaseConfig) {}
+
+  /** One cheap read and one function call: enough to tell a missing schema, a wrong key or a paused project apart. */
+  async check(): Promise<BoardCheck> {
+    if (keyRole(this.cfg.serviceKey) === 'anon') {
+      return {
+        ok: false,
+        code: 'board_key_rejected',
+        problem: 'SUPABASE_SERVICE_ROLE_KEY holds the anon (public) key, which row level security stops from writing anything. Paste the service_role secret from Project → Settings → API instead.',
+      };
+    }
+    try {
+      await this.select('board_profiles', 'select=net_id&limit=1');
+      await this.rpc('board_stats', {});
+      return { ok: true };
+    } catch (error) {
+      if (error instanceof ApiError) return { ok: false, code: error.code, problem: error.message };
+      return { ok: false, code: 'board_unreachable', problem: (error as Error).message };
+    }
+  }
 
   async getProfile(netId: string): Promise<Profile | null> {
     const rows = await this.select('board_profiles', `net_id=eq.${enc(netId)}&limit=1`);
@@ -266,8 +372,7 @@ export class SupabaseBoardStore implements BoardStore {
     return sortAnnouncements((await this.select('board_announcements', `expires_at=gt.${enc(now.toISOString())}&order=created_at.desc&limit=200`)).map(announcementFrom));
   }
   async deleteAnnouncement(id: string, posterKey: string): Promise<boolean> {
-    const response = await fetch(`${this.cfg.url}/rest/v1/board_announcements?id=eq.${enc(id)}&poster_key=eq.${enc(posterKey)}`, { method: 'DELETE', headers: this.headers('return=representation') });
-    const rows = (await this.parse(response)) as Row[] | null;
+    const rows = (await this.call(`board_announcements?id=eq.${enc(id)}&poster_key=eq.${enc(posterKey)}`, { method: 'DELETE', headers: this.headers('return=representation') })) as Row[] | null;
     return Array.isArray(rows) && rows.length > 0;
   }
 
@@ -277,32 +382,40 @@ export class SupabaseBoardStore implements BoardStore {
     return headers;
   }
   private async select(table: string, query: string): Promise<Row[]> {
-    const response = await fetch(`${this.cfg.url}/rest/v1/${table}?${query}`, { headers: this.headers() });
-    return (await this.parse(response)) as Row[];
+    const rows = await this.call(`${table}?${query}`, { headers: this.headers() });
+    return Array.isArray(rows) ? (rows as Row[]) : [];
   }
   private async write(method: 'POST' | 'PATCH', path: string, body: unknown, prefer = 'return=representation'): Promise<Row[]> {
-    const response = await fetch(`${this.cfg.url}/rest/v1/${path}`, { method, headers: this.headers(prefer), body: JSON.stringify(body) });
-    const parsed = await this.parse(response);
+    const parsed = await this.call(path, { method, headers: this.headers(prefer), body: JSON.stringify(body) });
     return Array.isArray(parsed) ? (parsed as Row[]) : [];
   }
   private async rpc(name: string, args: Record<string, unknown>): Promise<unknown> {
-    const response = await fetch(`${this.cfg.url}/rest/v1/rpc/${name}`, { method: 'POST', headers: this.headers(), body: JSON.stringify(args) });
-    return this.parse(response);
+    return this.call(`rpc/${name}`, { method: 'POST', headers: this.headers(), body: JSON.stringify(args) });
   }
-  private async parse(response: Response): Promise<unknown> {
-    const text = await response.text();
-    if (!response.ok) {
-      let message = text.slice(0, 300);
+  /**
+   * One PostgREST call with a timeout. A read that fails on the network or with a 5xx is tried once more, since a
+   * serverless function often wakes the database up with its first request; a failed response becomes a specific
+   * ApiError (see storageError) instead of a generic one.
+   */
+  private async call(path: string, init: RequestInit & { method?: string }): Promise<unknown> {
+    const url = `${this.cfg.url}/rest/v1/${path}`;
+    const what = `${init.method ?? 'GET'} ${path.split('?')[0]}`;
+    const readOnly = !init.method || init.method === 'GET';
+    for (let attempt = 0; ; attempt++) {
+      let response: Response;
       try {
-        const json = JSON.parse(text) as { message?: string; hint?: string };
-        message = json.message ?? message;
-      } catch {
-        // keep the raw body
+        response = await fetch(url, { ...init, signal: AbortSignal.timeout(12_000) });
+      } catch (error) {
+        if (readOnly && attempt === 0) continue;
+        const reason = error instanceof Error ? error.message : String(error);
+        console.error(`[board] could not reach Supabase for ${what}: ${reason}`);
+        throw new ApiError(503, `Could not reach Supabase at ${new URL(this.cfg.url).host} (${reason}). Check SUPABASE_URL and that the project is not paused.`, 'board_unreachable');
       }
-      console.error(`[board] Supabase ${response.status}: ${message}`);
-      throw new ApiError(502, 'The board database is not answering. Try again in a moment.', 'board_storage');
+      const text = await response.text();
+      if (response.ok) return text ? JSON.parse(text) : null;
+      if (readOnly && attempt === 0 && response.status >= 500) continue;
+      throw storageError(response.status, text, what);
     }
-    return text ? JSON.parse(text) : null;
   }
 }
 

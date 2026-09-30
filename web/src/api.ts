@@ -67,8 +67,19 @@ export interface HomePayload {
 
 export interface Health {
   ok: boolean;
-  gemini: { configured: boolean };
-  board: { configured: boolean; persistent?: boolean };
+  gemini: { configured: boolean; chatModel?: string };
+  embeddings?: { semanticSearch: boolean; provider?: string | null };
+  archive?: { posts: number; comments: number; newestPost: string };
+  /** `ok` comes from a real probe of the database; `problem` says what is wrong when it is not. */
+  board: { configured: boolean; persistent?: boolean; ok?: boolean; code?: string; problem?: string; hint?: string };
+}
+
+/** Why the board cannot be used right now, in a sentence for the screen, or null when it is fine. */
+export function boardProblem(health: Health | null): string | null {
+  if (!health) return null;
+  if (!health.board.configured) return 'The board is not set up on this server yet, so questions and announcements are switched off. ' + (health.board.hint ?? '');
+  if (health.board.ok === false) return health.board.problem ?? 'The board database is not answering.';
+  return null;
 }
 
 export interface SearchParams {

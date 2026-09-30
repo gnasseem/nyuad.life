@@ -1,8 +1,21 @@
-import { boardStore } from '../lib/board-store.ts';
+import { boardStore, type BoardCheck, type BoardStore } from '../lib/board-store.ts';
 import { embedderForIndex, keysFor, providerForModel } from '../lib/embeddings.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { route, sendJson } from '../lib/http.ts';
 import { loadArchive } from '../lib/store.ts';
+
+/** The board probe costs two database calls, so its result is kept for a while: five minutes when fine, half a minute when not. */
+let boardProbe: { at: number; result: BoardCheck } | undefined;
+
+async function boardHealth(board: BoardStore | null): Promise<Record<string, unknown>> {
+  if (!board) return { configured: false, ok: false, hint: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (see supabase/schema.sql) to enable the board.' };
+  const now = Date.now();
+  if (!boardProbe || now - boardProbe.at > (boardProbe.result.ok ? 300_000 : 30_000)) {
+    boardProbe = { at: now, result: await board.check() };
+  }
+  const { ok, code, problem } = boardProbe.result;
+  return { configured: true, persistent: board.persistent, ok, ...(ok ? {} : { code, problem }) };
+}
 
 export default route(['GET'], async (_req, res) => {
   const cfg = geminiConfig();
@@ -44,7 +57,8 @@ export default route(['GET'], async (_req, res) => {
         }
       : undefined,
     gemini: cfg ? { configured: true, chatModel: cfg.chatModel, chatFallbacks: cfg.chatFallbacks, liteModel: cfg.liteModel } : { configured: false },
-    // The board needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in production; locally it runs in memory.
-    board: board ? { configured: true, persistent: board.persistent } : { configured: false, hint: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (see supabase/schema.sql) to enable the board.' },
+    // The board needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in production; locally it runs in memory. `ok` comes
+    // from a real probe, so a schema that was never run or a wrong key shows up here instead of as a vague error.
+    board: await boardHealth(board),
   });
 });

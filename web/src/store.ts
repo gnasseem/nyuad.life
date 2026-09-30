@@ -26,6 +26,8 @@ const CONVERSATIONS_KEY = 'room.conversations';
 const THEME_KEY = 'room.theme';
 const PROFILE_KEY = 'room.profile';
 const KEY_KEY = 'room.key';
+const WELCOME_KEY = 'life.welcomed';
+const ANNOUNCED_KEY = 'room.announced';
 const MAX_CONVERSATIONS = 60;
 
 function read<T>(key: string, fallback: T): T {
@@ -126,6 +128,35 @@ export function askerKey(): string {
     }
   }
   return key;
+}
+
+/** Whether the welcome sheet has been shown on this device (it is shown once, whether or not a profile was saved). */
+export function hasBeenWelcomed(): boolean {
+  try {
+    return localStorage.getItem(WELCOME_KEY) === '1';
+  } catch {
+    return true;
+  }
+}
+
+export function markWelcomed(): void {
+  try {
+    localStorage.setItem(WELCOME_KEY, '1');
+  } catch {
+    // ignore
+  }
+}
+
+/** Removes everything this site keeps in the browser: profile, conversations, the anonymous key and the theme. */
+export function forgetDevice(): void {
+  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, KEY_KEY, WELCOME_KEY, ANNOUNCED_KEY]) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // ignore
+    }
+  }
+  notify();
 }
 
 /* ---------- Theme ---------- */

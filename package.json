@@ -1,8 +1,8 @@
 {
   "name": "ror-answers",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "Hall of Requirement: answers for NYU Abu Dhabi students from the Room of Requirement archive, a student question board and an announcements feed.",
+  "description": "nyuad.life: what NYUAD students already figured out, in one place. Answers from the Room of Requirement archive, a student question board and a what's-on feed.",
   "type": "module",
   "engines": {
     "node": "22.x"

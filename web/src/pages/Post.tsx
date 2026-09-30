@@ -44,7 +44,7 @@ export function PostPage({ id }: Props) {
   };
 
   return (
-    <div className="content">
+    <div className="page">
       <button type="button" className="btn ghost sm back" onClick={() => (window.history.length > 1 ? window.history.back() : navigate({ name: 'browse' }))}>
         <IconBack /> Back
       </button>

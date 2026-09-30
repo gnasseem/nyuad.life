@@ -124,7 +124,7 @@ export function BrowsePage({ search }: Props) {
   };
 
   return (
-    <div className="content">
+    <div className="page">
       <ArchiveHead view="threads" />
       <label className="searchbar">
         <IconSearch />

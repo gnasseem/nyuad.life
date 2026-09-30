@@ -46,7 +46,7 @@ function CourseIndex() {
   const shown = courses.filter((course) => (!dept || course.department === dept) && (!q || course.code.toLowerCase().includes(q.toLowerCase())));
 
   return (
-    <div className="content wide">
+    <div className="page">
       <ArchiveHead view="courses" />
       <label className="searchbar" style={{ maxWidth: 420 }}>
         <IconSearch />
@@ -104,7 +104,7 @@ function CourseDetail({ code }: { code: string }) {
   };
 
   return (
-    <div className="content">
+    <div className="page">
       <button type="button" className="btn ghost sm back" onClick={() => navigate({ name: 'courses' })}>
         <IconBack /> All courses
       </button>

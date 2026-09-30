@@ -147,3 +147,85 @@ describe('MemoryBoardStore', () => {
     expect(await store.deleteAnnouncement(announcement.id, 'key-1234567')).toBe(true);
   });
 });
+
+describe('SupabaseBoardStore', () => {
+  it('turns whatever was pasted into SUPABASE_URL into the REST origin', async () => {
+    const { normalizeSupabaseUrl, supabaseConfig } = await import('./board-store.ts');
+    expect(normalizeSupabaseUrl('https://abcdefghijklmnopqrst.supabase.co/')).toBe('https://abcdefghijklmnopqrst.supabase.co');
+    expect(normalizeSupabaseUrl('https://abcdefghijklmnopqrst.supabase.co/rest/v1/')).toBe('https://abcdefghijklmnopqrst.supabase.co');
+    expect(normalizeSupabaseUrl('https://supabase.com/dashboard/project/abcdefghijklmnopqrst/settings/api')).toBe('https://abcdefghijklmnopqrst.supabase.co');
+    expect(normalizeSupabaseUrl('abcdefghijklmnopqrst')).toBe('https://abcdefghijklmnopqrst.supabase.co');
+    expect(normalizeSupabaseUrl(' "abcdefghijklmnopqrst.supabase.co" ')).toBe('https://abcdefghijklmnopqrst.supabase.co');
+    expect(normalizeSupabaseUrl('')).toBe('');
+    expect(supabaseConfig({ SUPABASE_URL: 'x', SUPABASE_SERVICE_ROLE_KEY: '' })).toBeNull();
+    expect(supabaseConfig({ SUPABASE_URL: 'abcdefghijklmnopqrst', SUPABASE_SERVICE_ROLE_KEY: ' "sb_secret_1" ' })).toEqual({ url: 'https://abcdefghijklmnopqrst.supabase.co', serviceKey: 'sb_secret_1' });
+  });
+
+  it('knows an anon key from a service key', async () => {
+    const { keyRole } = await import('./board-store.ts');
+    const jwt = (role: string) => `h.${Buffer.from(JSON.stringify({ role })).toString('base64url')}.s`;
+    expect(keyRole(jwt('anon'))).toBe('anon');
+    expect(keyRole(jwt('service_role'))).toBe('service_role');
+    expect(keyRole('sb_publishable_abc')).toBe('anon');
+    expect(keyRole('sb_secret_abc')).toBe('service_role');
+    expect(keyRole('whatever')).toBe('unknown');
+  });
+
+  it('explains what Supabase refused instead of saying it is not answering', async () => {
+    const { storageError } = await import('./board-store.ts');
+    expect(storageError(404, JSON.stringify({ code: 'PGRST205', message: "Could not find the table 'public.board_profiles' in the schema cache" })).code).toBe('board_schema_missing');
+    expect(storageError(404, JSON.stringify({ code: 'PGRST202', message: 'Could not find the function public.board_stats' })).code).toBe('board_schema_missing');
+    expect(storageError(401, JSON.stringify({ message: 'Invalid API key' })).code).toBe('board_key_rejected');
+    expect(storageError(401, JSON.stringify({ code: '42501', message: 'new row violates row-level security policy for table "board_profiles"' })).code).toBe('board_key_rejected');
+    expect(storageError(404, '<html>not found</html>').code).toBe('board_url_wrong');
+    expect(storageError(503, JSON.stringify({ message: 'Project is paused' })).code).toBe('board_unreachable');
+    expect(storageError(400, JSON.stringify({ message: 'invalid input syntax for type uuid' })).message).toContain('invalid input syntax');
+  });
+
+  it('probes a fake PostgREST and reports the schema, the key and a working database', async () => {
+    const { createServer } = await import('node:http');
+    const { SupabaseBoardStore } = await import('./board-store.ts');
+    let mode: 'no-schema' | 'bad-key' | 'fine' | 'flaky' = 'no-schema';
+    let calls = 0;
+    const server = createServer((req, res) => {
+      calls++;
+      res.setHeader('content-type', 'application/json');
+      if (req.headers.apikey !== 'sb_secret_test') {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ message: 'Invalid API key' }));
+        return;
+      }
+      if (mode === 'no-schema') {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ code: 'PGRST205', message: "Could not find the table 'public.board_profiles' in the schema cache" }));
+        return;
+      }
+      if (mode === 'flaky' && calls % 2 === 1) {
+        res.statusCode = 502;
+        res.end('bad gateway');
+        return;
+      }
+      if (req.url?.startsWith('/rest/v1/rpc/board_stats')) res.end(JSON.stringify([{ open: 1, answered: 2, answers: 3, helpers: 1 }]));
+      else res.end('[]');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    try {
+      const store = new SupabaseBoardStore({ url, serviceKey: 'sb_secret_test' });
+      expect(await store.check()).toMatchObject({ ok: false, code: 'board_schema_missing' });
+      mode = 'fine';
+      expect(await store.check()).toEqual({ ok: true });
+      expect(await store.stats()).toEqual({ open: 1, answered: 2, answers: 3, helpers: 1 });
+      const wrongKey = new SupabaseBoardStore({ url, serviceKey: 'sb_secret_wrong' });
+      expect(await wrongKey.check()).toMatchObject({ ok: false, code: 'board_key_rejected' });
+      const anon = new SupabaseBoardStore({ url, serviceKey: 'sb_publishable_x' });
+      expect((await anon.check()).problem).toContain('anon');
+      mode = 'flaky';
+      calls = 0;
+      expect(await store.listOpen(5)).toEqual([]); // the first 502 is retried once
+      await expect(store.getProfile('abc1')).resolves.toBeNull();
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});

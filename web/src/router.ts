@@ -7,7 +7,8 @@ export type Route =
   | { name: 'announcements' }
   | { name: 'browse' }
   | { name: 'post'; id: string }
-  | { name: 'courses'; code?: string };
+  | { name: 'courses'; code?: string }
+  | { name: 'settings' };
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent);
@@ -25,6 +26,8 @@ export function parseRoute(pathname: string): Route {
       return { name: 'courses', code: parts[1] };
     case 'post':
       return parts[1] ? { name: 'post', id: parts[1] } : { name: 'browse' };
+    case 'settings':
+      return { name: 'settings' };
     default:
       return { name: 'ask' };
   }
@@ -46,6 +49,8 @@ export function routePath(route: Route): string {
       return `/post/${encodeURIComponent(route.id)}`;
     case 'courses':
       return route.code ? `/archive/courses/${encodeURIComponent(route.code)}` : '/archive/courses';
+    case 'settings':
+      return '/settings';
   }
 }
 
