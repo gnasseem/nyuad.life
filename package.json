@@ -1,8 +1,8 @@
 {
   "name": "ror-answers",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "Hall of Requirement: answers for NYU Abu Dhabi students from the Room of Requirement archive, a student question board and an announcements feed.",
+  "description": "nyuad.life: what NYUAD students already figured out, in one place. Answers from the Room of Requirement archive, a student question board and a what's-on feed.",
   "type": "module",
   "engines": {
     "node": "22.x"
@@ -16,7 +16,9 @@
     "index": "tsx scripts/index.ts",
     "scrape": "tsx scripts/scrape.ts",
     "check": "npm run typecheck && npm run test && npm run build",
-    "ensure-index": "tsx scripts/ensure-index.ts"
+    "ensure-index": "tsx scripts/ensure-index.ts",
+    "scrape:official": "tsx scripts/scrape-official.ts",
+    "index:official": "tsx scripts/index-official.ts"
   },
   "dependencies": {
     "react": "^19.2.0",

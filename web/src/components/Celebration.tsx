@@ -7,7 +7,7 @@ interface Props {
   onClose(): void;
 }
 
-const COLOURS = ['#4b2d8b', '#b5a0f0', '#2e7a4e', '#a4691a', '#d9a54e', '#1b1a17', '#e3dfd5'];
+const COLOURS = ['#6c3de0', '#c04ac7', '#f5a524', '#1a9c96', '#ef5a4c', '#a98cff', '#fffdf9'];
 
 /** A short burst of confetti behind a small card. Respects reduced-motion settings by skipping the animation. */
 export function Celebration({ title, message, action = 'Nice', onClose }: Props) {

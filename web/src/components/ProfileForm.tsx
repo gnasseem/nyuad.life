@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react';
-import { api } from '../api';
+import { api, ApiError, type Profile } from '../api';
 import { useApp } from '../context';
-import { classYears } from '../year';
+import { Modal } from './Modal';
+import { classYears, standingFor } from '../year';
 
 export const MAJORS = [
   'Arab Crossroads Studies', 'Art and Art History', 'Bioengineering', 'Biology', 'Business, Organizations and Society', 'Chemistry', 'Civil Engineering',
@@ -10,14 +11,16 @@ export const MAJORS = [
   'Political Science', 'Psychology', 'Social Research and Public Policy', 'Theater', 'Undecided', 'Other',
 ];
 
-interface Props {
-  title: string;
-  reason: string;
-  onDone?(): void;
+interface FormProps {
+  submitLabel?: string;
+  onDone?(profile: Profile): void;
+  /** When given, a secondary button lets the person leave without saving. */
+  onSkip?(): void;
+  skipLabel?: string;
 }
 
-/** The one-time "who are you" step before answering questions or posting announcements. */
-export function ProfileGate({ title, reason, onDone }: Props) {
+/** Name, NetID, major and class year: the four fields everything else on the board hangs off. */
+export function ProfileForm({ submitLabel = 'Continue', onDone, onSkip, skipLabel = 'Skip for now' }: FormProps) {
   const { profile, setProfile } = useApp();
   const years = classYears();
   const [name, setName] = useState(profile?.name ?? '');
@@ -31,29 +34,29 @@ export function ProfileGate({ title, reason, onDone }: Props) {
     event.preventDefault();
     setError('');
     setSaving(true);
+    const draft = { netId: netId.trim().toLowerCase(), name: name.trim(), major, classOf };
     try {
-      const result = await api.board.profile({ netId: netId.trim(), name: name.trim(), major, classOf });
+      const result = await api.board.profile(draft);
       setProfile(result.profile);
-      onDone?.();
+      onDone?.(result.profile);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save that.');
+      // A server without a working board must not stop anyone using the rest of the site: keep the profile on the device.
+      if (err instanceof ApiError && err.status === 503 && /^[a-z]{1,8}\d{1,6}$/.test(draft.netId) && draft.name.length >= 2 && draft.major) {
+        const local: Profile = { ...draft, year: standingFor(classOf), answers: profile?.answers ?? 0 };
+        setProfile(local);
+        onDone?.(local);
+      } else setError(err instanceof Error ? err.message : 'Could not save that.');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <form className="gate" onSubmit={(event) => void submit(event)}>
-      <div>
-        <h2>{title}</h2>
-        <p className="muted" style={{ marginTop: 6 }}>
-          {reason}
-        </p>
-      </div>
+    <form className="stack" style={{ gap: 16 }} onSubmit={(event) => void submit(event)}>
       <div className="form-grid">
         <div className="field">
           <label htmlFor="pf-name">Name</label>
-          <input id="pf-name" className="input" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" maxLength={60} required />
+          <input id="pf-name" className="input" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" maxLength={60} placeholder="What people call you" required />
         </div>
         <div className="field">
           <label htmlFor="pf-netid">NetID</label>
@@ -84,11 +87,34 @@ export function ProfileGate({ title, reason, onDone }: Props) {
         </div>
       </div>
       {error && <div className="alert">{error}</div>}
-      <div className="row">
+      <div className="modal-actions" style={{ marginTop: 2 }}>
+        {onSkip && (
+          <button type="button" className="btn ghost" onClick={onSkip} disabled={saving}>
+            {skipLabel}
+          </button>
+        )}
+        <span className="spacer" />
         <button type="submit" className="btn primary" disabled={saving}>
-          {saving ? 'Saving' : 'Continue'}
+          {saving ? 'Saving' : submitLabel}
         </button>
       </div>
     </form>
+  );
+}
+
+interface ModalProps {
+  open: boolean;
+  title: string;
+  reason: string;
+  onClose(): void;
+  onDone(profile: Profile): void;
+}
+
+/** The one-time "who are you" step, as a sheet over whatever page asked for it. */
+export function ProfileModal({ open, title, reason, onClose, onDone }: ModalProps) {
+  return (
+    <Modal open={open} onClose={onClose} title={title} subtitle={reason} width={540}>
+      <ProfileForm onDone={onDone} />
+    </Modal>
   );
 }

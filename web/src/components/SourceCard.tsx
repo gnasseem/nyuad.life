@@ -10,10 +10,11 @@ interface Props {
 }
 
 export function SourceCard({ source, hot, id, onHover }: Props) {
-  const kind = source.kind === 'board' ? 'Student answer' : source.kind === 'announcement' ? 'Announcement' : '';
+  const kind = source.kind === 'board' ? 'Student answer' : source.kind === 'announcement' ? 'Announcement' : source.kind === 'official' ? 'Official NYUAD page' : '';
   const open = () => {
     if (source.kind === 'archive') navigate({ name: 'post', id: source.postId });
     else if (source.kind === 'board') navigate({ name: 'question', id: source.postId });
+    else if (source.kind === 'official') window.open(source.url, '_blank', 'noreferrer');
     else if (source.url) window.open(source.url, '_blank', 'noreferrer');
     else navigate({ name: 'announcements' });
   };
@@ -29,7 +30,7 @@ export function SourceCard({ source, hot, id, onHover }: Props) {
       <div className="source-text">{source.snippet || source.text}</div>
       <div className="source-links">
         <button type="button" onClick={open}>
-          {source.kind === 'archive' ? `Open thread · ${plural(source.commentCount, 'comment')}` : source.kind === 'board' ? 'Open question' : source.url ? 'Open link' : 'See announcements'}
+          {source.kind === 'archive' ? `Open thread · ${plural(source.commentCount, 'comment')}` : source.kind === 'board' ? 'Open question' : source.kind === 'official' ? 'Open on nyuad.nyu.edu' : source.url ? 'Open link' : 'See announcements'}
         </button>
         {source.kind === 'archive' && source.url && (
           <a href={source.url} target="_blank" rel="noreferrer">

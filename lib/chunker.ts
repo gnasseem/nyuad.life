@@ -48,6 +48,17 @@ export function chunkPosts(posts: SourcePost[], options: ChunkOptions): Chunk[] 
   return posts.flatMap((post) => chunkPost(post, options));
 }
 
+/** Chunks any document: a header repeated on every chunk, then the body split at sentences and packed to the limit. */
+export function chunkDocument(id: string, header: string, body: string, options: ChunkOptions): Chunk[] {
+  const clean = collapseWhitespace(body);
+  if (!clean) return [];
+  const make = (text: string, n: number): Chunk => ({ id: `${id}#${n}`, postId: id, n, text, hash: chunkHash(text, options) });
+  const whole = `${header}\n${clean}`;
+  if (whole.length <= CHUNK_LIMIT) return [make(whole, 1)];
+  const payloadLimit = Math.max(400, CHUNK_LIMIT - header.length - 1);
+  return pack(splitAtSentences(clean, payloadLimit), payloadLimit).map((payload, index) => make(`${header}\n${payload}`, index + 1));
+}
+
 export function chunkHash(text: string, options: ChunkOptions): string {
   return createHash('sha256').update(`${options.model}|${options.dimensions}|${text}`).digest('hex').slice(0, 24);
 }

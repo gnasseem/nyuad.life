@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { askStream, type SourceCard as Source } from '../api';
 import { ASK_PLACEHOLDER } from '../brand';
+import { Mark } from '../components/Logo';
 import { SourceCard } from '../components/SourceCard';
 import { useApp } from '../context';
+import { compact, formatDate } from '../format';
 import { IconArrow, IconChevron, IconCopy, IconPlus, IconSend, IconStop } from '../icons';
 import { Markdown } from '../markdown';
 import { navigate } from '../router';
@@ -216,9 +218,13 @@ export function AskPage({ resumeId }: Props) {
 
   if (empty) {
     return (
-      <div className="content ask">
-        <div className="ask-empty">
-          <h1 className="greeting">{ASK_PLACEHOLDER}</h1>
+      <div className="page ask">
+        <div className="hero">
+          <Mark className="hero-mark" />
+          <h1 className="greeting">What do you need?</h1>
+          <p className="hero-sub">
+            {home ? `Answers from ${compact(home.stats.posts)} Room of Requirement threads${health?.official?.pages ? `, ${compact(health.official.pages)} official NYUAD pages` : ''} and the students who answer here, with sources.` : 'Answers from what the Room of Requirement already worked out, official NYUAD pages and the students who answer here.'}
+          </p>
           {composer}
           {home && home.suggestions.length > 0 && (
             <div className="starters">
@@ -229,6 +235,21 @@ export function AskPage({ resumeId }: Props) {
               ))}
             </div>
           )}
+          {home && (
+            <div className="hero-stats">
+              <span>
+                <b>{home.stats.posts.toLocaleString()}</b> threads
+              </span>
+              <span>
+                <b>{home.stats.comments.toLocaleString()}</b> comments
+              </span>
+              {home.stats.newestPost && (
+                <span>
+                  newest <b>{formatDate(home.stats.newestPost)}</b>
+                </span>
+              )}
+            </div>
+          )}
           {health && !health.gemini.configured && <p className="ask-note">Answers are switched off on this server until a model key is added. Search still works.</p>}
         </div>
       </div>
@@ -236,10 +257,10 @@ export function AskPage({ resumeId }: Props) {
   }
 
   return (
-    <div className="content ask">
+    <div className="page ask">
       <div className="conversation-head">
         <button type="button" className="btn ghost sm" onClick={startNew}>
-          <IconPlus /> New
+          <IconPlus /> New question
         </button>
       </div>
       <div className="thread">
@@ -250,73 +271,76 @@ export function AskPage({ resumeId }: Props) {
             </div>
           ) : (
             <div key={message.id} className="turn model">
-              {message.status && (
-                <div className="status-line">
-                  <span className="spinner" /> {message.status}
-                </div>
-              )}
-              {message.redirect && (
-                <div className="redirect">
-                  <h3>{message.redirect.title}</h3>
-                  <p>{message.redirect.message}</p>
-                  <div className="row" style={{ marginTop: 6 }}>
-                    <a className="btn primary" href={message.redirect.link.url} target="_blank" rel="noreferrer">
-                      {message.redirect.link.label}
-                    </a>
+              <Mark className="avatar-mark" />
+              <div className="body">
+                {message.status && (
+                  <div className="status-line">
+                    <span className="spinner" /> {message.status}
                   </div>
-                </div>
-              )}
-              {message.content && (
-                <div className="answer">
-                  <Markdown
-                    text={message.content}
-                    hot={hot?.messageId === message.id ? hot.n : null}
-                    onCitation={(n) => jumpToSource(message.id, n)}
-                    onCitationHover={(n, rect) => setHot(n === null ? null : { messageId: message.id, n, rect })}
-                  />
-                  {message.pending && <span className="cursor" />}
-                </div>
-              )}
-              {message.error && <div className="alert">{message.error}</div>}
-              {!message.pending && message.content && (
-                <div className="answer-foot">
-                  {message.confidence && (
-                    <span className={`confidence ${message.confidence.level}`} title={message.confidence.reason}>
-                      <i /> {message.confidence.level === 'high' ? 'High' : message.confidence.level === 'medium' ? 'Medium' : 'Low'} confidence
-                      {message.confidence.reason ? ` · ${message.confidence.reason}` : ''}
-                    </span>
-                  )}
-                  {message.sources && message.sources.length > 0 && (
-                    <button type="button" className={`foot-btn${expanded.has(message.id) ? ' open' : ''}`} onClick={() => toggleSources(message.id)} aria-expanded={expanded.has(message.id)}>
-                      {message.sources.length} {message.sources.length === 1 ? 'source' : 'sources'} <IconChevron className="chev" />
+                )}
+                {message.redirect && (
+                  <div className="redirect">
+                    <h3>{message.redirect.title}</h3>
+                    <p>{message.redirect.message}</p>
+                    <div className="row" style={{ marginTop: 6 }}>
+                      <a className="btn primary" href={message.redirect.link.url} target="_blank" rel="noreferrer">
+                        {message.redirect.link.label}
+                      </a>
+                    </div>
+                  </div>
+                )}
+                {message.content && (
+                  <div className="answer">
+                    <Markdown
+                      text={message.content}
+                      hot={hot?.messageId === message.id ? hot.n : null}
+                      onCitation={(n) => jumpToSource(message.id, n)}
+                      onCitationHover={(n, rect) => setHot(n === null ? null : { messageId: message.id, n, rect })}
+                    />
+                    {message.pending && <span className="cursor" />}
+                  </div>
+                )}
+                {message.error && <div className="alert">{message.error}</div>}
+                {!message.pending && message.content && (
+                  <div className="answer-foot">
+                    {message.confidence && (
+                      <span className={`pill confidence ${message.confidence.level}`} title={message.confidence.reason}>
+                        <span className="dot" /> {message.confidence.level === 'high' ? 'High' : message.confidence.level === 'medium' ? 'Medium' : 'Low'} confidence
+                      </span>
+                    )}
+                    {message.confidence?.reason && <span className="faint">{message.confidence.reason}</span>}
+                    {message.sources && message.sources.length > 0 && (
+                      <button type="button" className={`foot-btn${expanded.has(message.id) ? ' open' : ''}`} onClick={() => toggleSources(message.id)} aria-expanded={expanded.has(message.id)}>
+                        {message.sources.length} {message.sources.length === 1 ? 'source' : 'sources'} <IconChevron className="chev" />
+                      </button>
+                    )}
+                    <button type="button" className="foot-btn" onClick={() => void copy(message.content)}>
+                      <IconCopy /> Copy
                     </button>
-                  )}
-                  <button type="button" className="foot-btn" onClick={() => void copy(message.content)}>
-                    <IconCopy /> Copy
-                  </button>
-                  {(!message.confidence || message.confidence.level !== 'high') && (
-                    <button type="button" className="foot-btn" onClick={() => askStudents(questionBefore(conversation.messages, message.id))}>
-                      Ask students <IconArrow />
-                    </button>
-                  )}
-                </div>
-              )}
-              {message.sources && message.sources.length > 0 && expanded.has(message.id) && (
-                <div className="sources-panel">
-                  {message.sources.map((source: Source) => (
-                    <SourceCard key={source.n} id={`source-${message.id}-${source.n}`} source={source} hot={hot?.messageId === message.id && hot.n === source.n} onHover={(n) => setHot(n === null ? null : { messageId: message.id, n })} />
-                  ))}
-                </div>
-              )}
-              {!message.pending && message.followups && message.followups.length > 0 && (
-                <div className="followups">
-                  {message.followups.map((question) => (
-                    <button key={question} type="button" className="followup" onClick={() => void send(question)} disabled={running}>
-                      {question} <IconArrow />
-                    </button>
-                  ))}
-                </div>
-              )}
+                    {(!message.confidence || message.confidence.level !== 'high') && (
+                      <button type="button" className="foot-btn" onClick={() => askStudents(questionBefore(conversation.messages, message.id))}>
+                        Ask students <IconArrow />
+                      </button>
+                    )}
+                  </div>
+                )}
+                {message.sources && message.sources.length > 0 && expanded.has(message.id) && (
+                  <div className="sources-panel">
+                    {message.sources.map((source: Source) => (
+                      <SourceCard key={source.n} id={`source-${message.id}-${source.n}`} source={source} hot={hot?.messageId === message.id && hot.n === source.n} onHover={(n) => setHot(n === null ? null : { messageId: message.id, n })} />
+                    ))}
+                  </div>
+                )}
+                {!message.pending && message.followups && message.followups.length > 0 && (
+                  <div className="followups">
+                    {message.followups.map((question) => (
+                      <button key={question} type="button" className="followup" onClick={() => void send(question)} disabled={running}>
+                        {question} <IconArrow />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           ),
         )}

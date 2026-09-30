@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_GROUP_URL, FALCON_MARKET_URL, detectRedirect } from './domains.ts';
+import { DEFAULT_GROUP_URL, FALCONS_PATH, detectRedirect } from './domains.ts';
 
 describe('detectRedirect', () => {
-  it('sends Falcon-dirham trades to Falcon Market', () => {
+  it('sends Falcon-dirham trades to the Falcons page', () => {
     for (const question of ['selling 2000 falcons', 'Anyone buying falcons?', 'where can I exchange my falcons for cash', 'need 500 falcon dirhams asap']) {
-      expect(detectRedirect(question, {})?.link.url, question).toBe(FALCON_MARKET_URL);
+      expect(detectRedirect(question, {})?.link.url, question).toBe(FALCONS_PATH);
     }
   });
   it('lets the archive answer questions about how falcons work', () => {

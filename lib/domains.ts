@@ -1,7 +1,7 @@
 /**
  * Questions the archive should not try to answer, and where to send people instead. Falcon-dirham trades belong on
- * Falcon Market; listings, rides and lost-and-found are live requests for the group itself, not questions with a
- * durable answer.
+ * this site's own Falcons exchange; listings, rides and lost-and-found are live requests for the group itself, not
+ * questions with a durable answer.
  */
 
 export type OffTopicDomain = 'falcons' | 'listing' | 'ride' | 'lost-found' | 'live';
@@ -13,7 +13,8 @@ export interface Redirect {
   link: { url: string; label: string };
 }
 
-export const FALCON_MARKET_URL = 'https://www.falconmarket.me';
+/** The in-app exchange; a path, so the web app routes it without a page load. */
+export const FALCONS_PATH = '/falcons';
 export const DEFAULT_GROUP_URL = 'https://www.facebook.com/groups/nyuad.room.of.requirement';
 
 export function groupUrl(env: NodeJS.ProcessEnv = process.env): string {
@@ -51,9 +52,9 @@ export function detectRedirect(question: string, env: NodeJS.ProcessEnv = proces
   if (FALCON.test(text) && !FALCON_NOT_CURRENCY.test(text) && FALCON_TRADE.test(text)) {
     return {
       domain: 'falcons',
-      title: 'Falcons are traded on Falcon Market',
-      message: 'Buying, selling and exchanging Falcon dirhams happens on Falcon Market. Trade posts are left out of this archive.',
-      link: { url: FALCON_MARKET_URL, label: 'Open Falcon Market' },
+      title: 'Falcons are traded on the Falcons page',
+      message: 'Buying and selling Falcon dirhams happens on this site\'s Falcons exchange: post what you have or want, at your rate, and people contact you directly. Trade posts are left out of the archive.',
+      link: { url: FALCONS_PATH, label: 'Open Falcons' },
     };
   }
   if (LISTING.some((pattern) => pattern.test(text))) {

@@ -1,0 +1,54 @@
+# Crawls the official NYUAD pages (nyuad.nyu.edu, the student portal, the bulletin) and embeds them, so the guide and
+# the answer engine have authoritative text for requirements, programmes and policies. Runs weekly and on demand.
+name: Crawl official NYUAD pages
+
+on:
+  schedule:
+    - cron: '17 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      max:
+        description: Most pages to fetch
+        default: '4000'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: official-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Crawl
+        run: npm run scrape:official -- --max ${{ github.event.inputs.max || '4000' }}
+      - name: Embed
+        env:
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          VOYAGE_EMBED_MODEL: ${{ vars.VOYAGE_EMBED_MODEL }}
+          VOYAGE_EMBED_DIMENSIONS: ${{ vars.VOYAGE_EMBED_DIMENSIONS }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ROR_EMBED_PROVIDER: ${{ vars.ROR_EMBED_PROVIDER }}
+        run: |
+          if [ -z "$VOYAGE_API_KEY" ] && [ -z "$CLOUDFLARE_API_TOKEN" ] && [ -z "$GEMINI_API_KEY" ]; then
+            npm run index:official -- --no-embed
+          else
+            npm run index:official
+          fi
+      - name: Commit
+        run: |
+          git config user.name "ror-indexer"
+          git config user.email "ror-indexer@users.noreply.github.com"
+          git add data/official.jsonl data/official-index
+          if git diff --cached --quiet; then echo "Nothing changed."; else git commit -m "Update official pages [skip ci]" && git push; fi

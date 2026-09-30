@@ -8,6 +8,7 @@ import { detectRedirect } from './domains.ts';
 import { embedderForIndex, type Embedder } from './embeddings.ts';
 import { GeminiError, generateJson, generateStream, generateText, type GeminiConfig, type Message } from './gemini.ts';
 import { ApiError } from './http.ts';
+import { officialCards, officialSourceBlock, retrieveOfficial, type OfficialCorpus } from './official.ts';
 import { bm25Query, denseQuery, fuse, type Hit } from './search.ts';
 import type { Archive } from './store.ts';
 import { bestWindow, collapseWhitespace, dayNumber, formatDate, tokenize, truncate } from './text.ts';
@@ -128,6 +129,25 @@ export interface LiveSource {
   question?: Question;
   answers?: Answer[];
   announcement?: Announcement;
+  /** Pre-rendered block for an official page. */
+  officialText?: string;
+}
+
+const MAX_OFFICIAL = 4;
+
+/** Official NYUAD pages that speak to the question, numbered before everything else: they are the authority on facts. */
+export async function officialSources(corpus: OfficialCorpus | null | undefined, query: string, vector: Float32Array | undefined, startAt: number): Promise<LiveSource[]> {
+  if (!corpus || corpus.chunks.length === 0) return [];
+  try {
+    const { hits, terms } = await retrieveOfficial(corpus, query, { k: MAX_OFFICIAL, vector });
+    const top = hits[0]?.score ?? 0;
+    const strong = hits.filter((hit) => hit.score >= Math.max(0.012, top * 0.45));
+    const cards = officialCards(corpus, strong, terms, startAt);
+    return cards.map((card, i) => ({ card, officialText: officialSourceBlock(corpus, card, corpus.chunks[strong[i]!.chunk]!.text) }));
+  } catch (error) {
+    console.warn('[ask] official pages unavailable:', (error as Error).message);
+    return [];
+  }
 }
 
 /** Board answers and announcements that speak to the question, as cards numbered after the archive threads. */
@@ -208,6 +228,7 @@ export function sourcesBlock(archive: Archive, cards: SourceCard[], live: LiveSo
   return cards
     .map((card) => {
       const entry = liveByN.get(card.n);
+      if (card.kind === 'official' && entry?.officialText) return entry.officialText;
       if (card.kind === 'board' && entry?.question) {
         const lines = entry.answers!.map((answer) => `- ${answer.helperName} (${answer.helperMajor}, ${STANDING_LABELS[answer.helperYear].toLowerCase()}, ${formatDate(answer.createdAt.slice(0, 10))}): ${truncate(collapseWhitespace(answer.text), 700)}`);
         return [`[${card.n}] Student answers on this site, to the question: "${truncate(collapseWhitespace(entry.question.text), 300)}"`, ...lines].join('\n');
@@ -241,7 +262,9 @@ const GLOSSARY =
   'J-Term = January term; SIG = student interest group; CDC = Career Development Center; capstone = the senior-year project; ROR = the Room of Requirement Facebook group.';
 
 export function systemPrompt(today = new Date()): string {
-  return `You answer questions from NYU Abu Dhabi students using only the numbered sources you are given: threads from the Room of Requirement Facebook group, answers other students wrote on this site, and current announcements. Today is ${today.toISOString().slice(0, 10)}.
+  return `You answer questions from NYU Abu Dhabi students using only the numbered sources you are given: official NYUAD pages (the university website, the student portal and the bulletin), threads from the Room of Requirement Facebook group, answers other students wrote on this site, and current announcements. Today is ${today.toISOString().slice(0, 10)}.
+
+Official pages are the authority on requirements, deadlines, policies, programme structure and what an office does; use them for those facts and cite them. Student threads are the authority on experience: what a course or professor is like, what actually happens, what people recommend. When the two disagree, give the official rule first and then what students report, and say which is which.
 
 Write like a helpful senior talking to a friend: plain words, short sentences, no filler, no hedging beyond what the sources justify.
 
@@ -415,6 +438,7 @@ export function validateAsk(body: Partial<AskRequest>): AskRequest {
 
 export interface AskContext {
   board?: BoardStore | null;
+  official?: OfficialCorpus | null;
 }
 
 /** The full pipeline. Emits sources first, then answer deltas, then follow-ups; also returns everything at the end. */
@@ -436,10 +460,11 @@ export async function ask(archive: Archive, cfg: GeminiConfig, request: AskReque
 
   events.status?.('Searching the archive');
   const retrieval = await retrieve(archive, searchQuery, { k: CANDIDATES });
+  const official = await officialSources(context.official, searchQuery, retrieval.vector, 1);
   const chosen = retrieval.hits.length ? ((await withStatus(events, 'Picking the best threads', rerank(cfg, archive, searchQuery, retrieval.hits, retrieval.terms))) ?? retrieval.hits.slice(0, 12)).slice(0, MAX_SOURCES) : [];
-  const archiveCards = toSourceCards(archive, chosen, retrieval.terms);
-  const live = await liveSources(board, searchQuery, retrieval.terms, retrieval.vector, archiveCards.length + 1);
-  const cards = [...archiveCards, ...live.map((entry) => entry.card)];
+  const archiveCards = toSourceCards(archive, chosen, retrieval.terms, official.length + 1);
+  const live = await liveSources(board, searchQuery, retrieval.terms, retrieval.vector, official.length + archiveCards.length + 1);
+  const cards = [...official.map((entry) => entry.card), ...archiveCards, ...live.map((entry) => entry.card)];
   events.sources?.(cards);
 
   if (cards.length === 0) {
@@ -456,7 +481,7 @@ export async function ask(archive: Archive, cfg: GeminiConfig, request: AskReque
 
   events.status?.('Writing the answer');
   const messages: Message[] = history.slice(-6).map((turn) => ({ role: turn.role, text: truncate(turn.content, 2500) }));
-  messages.push({ role: 'user', text: `Question: ${request.question}\n\nSources:\n${sourcesBlock(archive, cards, live)}` });
+  messages.push({ role: 'user', text: `Question: ${request.question}\n\nSources:\n${sourcesBlock(archive, cards, [...official, ...live])}` });
   const { answer, model } = await writeAnswer(cfg, messages, events, signal);
   if (!answer.trim()) throw new ApiError(502, 'The model returned an empty answer. Try again.', 'empty_answer');
   const questions = await followupsPromise;

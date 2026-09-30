@@ -1,9 +1,10 @@
-# Hall of Requirement
+# nyuad.life
 
-Answers for NYU Abu Dhabi students. The name is a nod to the Room of Requirement group, one size up, and lives in one
-constant (`web/src/brand.ts`) so it is easy to change.
+What NYUAD students already figured out, in one place. The name, the tagline and the version live in
+`web/src/brand.ts`; the mark (two rounded squares turned into the eight-point star from the campus mashrabiya, with the
+dot from the domain name in the middle) lives in `web/src/components/Logo.tsx` and `web/public/favicon.svg`.
 
-Three things happen here:
+Five things happen here:
 
 - **Ask.** A question goes to the archive of the Room of Requirement Facebook group (hybrid keyword + vector search,
   reranked by Gemini) and comes back as a short, plain answer that cites the threads it used, says how sure it is, and
@@ -12,27 +13,44 @@ Three things happen here:
   NetID, major and class year once, then get questions one at a time, flashcard style: answer or skip. Questions are
   tagged by the lite model for the majors and years best placed to answer, and handed out least-seen first, with views,
   skips and answers tracked. Answered questions feed straight back into Ask.
-- **Announcements.** Events, deadlines, opportunities, club notices. Dated ones drop off the day after; undated ones
-  after two weeks.
+- **What's on.** Events, deadlines, opportunities, club notices, grouped by day with a countdown for today's. Dated
+  ones drop off the day after; undated ones after two weeks.
+- **Falcons.** The campus-dirham exchange: post what you are selling or buying, at your rate, with a contact method
+  people reveal by tapping; best ask, best bid and volume on top; offers drop off after five days. Trade questions on
+  Ask are sent here instead of to an outside site.
+- **Guide.** Official NYUAD pages (the university site, the student portal, the NYU bulletin for Abu Dhabi) crawled
+  into sections (majors, minors, core, study away, housing, visa, money, careers...), plus every course with a code.
+  Opening an entry slides in a panel with a summary written by the lite model from the official text and the group's
+  threads (facts, what students said, keep in mind, confidence), cached in Supabase for a month. The archive of
+  threads is no longer browsed directly; it feeds Ask and these summaries.
+
+The first time someone opens the site a welcome sheet explains the three things above and asks for name, NetID, major
+and class year (skippable; also available under Settings). That profile is what routes questions to the right people
+and what goes next to an answer or an announcement. Settings also holds the theme (system, light or dark), the saved
+conversations and a "forget this device" button.
 
 Small things that know what time of year it is: the starter questions on Ask lead with what is in season (registration,
 housing, internships, finals); on 1 May everyone's class year rolls over, the app says so with confetti the next
 time they open it, and the board starts routing questions to them as the sophomore, junior, senior or alumni they now
 are; a helper's first, tenth, twenty-fifth, fiftieth and hundredth answers get the same treatment.
 
-What the site refuses to be: a marketplace. Feed ads, Falcon-dirham trades and bare listings are filtered out of the
-archive, and so are the "bump", tag-a-friend and emoji comments. A question that is really a trade, a listing, a ride
-or a lost-and-found request is sent to Falcon Market or to the group itself instead of being answered from old posts.
+What the archive refuses to be: a marketplace. Feed ads, Falcon-dirham trades and bare listings are filtered out of
+the archive, and so are the "bump", tag-a-friend and emoji comments. A question that is really a trade goes to the
+Falcons page; a listing, a ride or a lost-and-found request is sent to the group itself.
+
+Helpers who opt in get a Monday email (`api/digest.ts`, Resend) with the open questions their major and year fit best,
+and the Questions page shows a leaderboard with weekly streaks.
 
 Everything is TypeScript in one repository:
 
 | Piece | Where | What it is |
 | --- | --- | --- |
 | API | `api/`, `lib/` | Vercel serverless functions. Holds the keys, the archive and the board. |
-| Web app | `web/` | Vite + React. Sidebar shell, works on phones. |
+| Web app | `web/` | Vite + React. Sidebar shell on desktop, tab bar on phones, light and dark themes. |
 | Scraper | `scripts/scrape.ts` | Pulls posts and comments out of the Facebook group with your own login (runs on your laptop). |
 | Indexer | `scripts/index.ts`, `.github/workflows/index.yml` | Cleans and embeds posts, locally or in GitHub Actions. |
-| Board schema | `supabase/schema.sql` | Tables and functions for questions, answers, profiles and announcements. |
+| Official crawler | `scripts/scrape-official.ts`, `scripts/index-official.ts`, `.github/workflows/official.yml` | Crawls nyuad.nyu.edu, the student portal and the bulletin into `data/official.jsonl` and embeds it into `data/official-index/`. |
+| Board schema | `supabase/schema.sql` | Tables and functions for questions, answers, profiles, announcements, Falcons offers and guide summaries. |
 
 ## 1. Deploy on Vercel
 
@@ -45,15 +63,20 @@ Everything is TypeScript in one repository:
    | `VOYAGE_API_KEY` | for semantic search | Embeds each question the way the index was embedded (section 3). |
    | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | for the board | Section 4. Without them the Questions and Announcements pages say the board is not set up. |
    | `ROR_GROUP_URL` | no | Where listings, rides and lost-and-found requests are sent. Defaults to the group. |
+   | `CRON_SECRET`, `RESEND_API_KEY`, `DIGEST_FROM` | for the weekly roundup | Vercel's cron calls `/api/digest` every Monday with the secret; Resend sends the mails. Without the key the route only composes them. |
    | `GEMINI_CHAT_MODEL`, `GEMINI_CHAT_FALLBACK_MODELS`, `GEMINI_LITE_MODEL` | no | Defaults: `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-flash-lite`. |
 
 3. Deploy. `GET /api/health` shows what is active: `embeddings.semanticSearch`, `gemini.configured`,
-   `board.configured`.
+   `board.configured` and `board.ok`. The last one comes from a real probe of the database, and when it is false
+   `board.problem` says what to do (run the schema, swap the anon key for the service key, restore a paused project).
+   The same sentence is shown on the Questions and Announcements pages and under Settings → About.
 
 Routes: `GET /api/health`, `GET /api/home`, `GET /api/search`, `GET /api/post?id=`, `GET /api/courses`,
-`POST /api/ask` (server-sent events: `status`, `redirect`, `sources`, `delta`, `followups`, `done`, `error`), and
-`GET|POST /api/board` (`op=stats|question|mine|announcements` on GET; `profile|ask|next|answer|skip|announce|unannounce`
-on POST). Every route is rate-limited per IP and per purpose.
+`GET /api/guide` (`section=`, `item=`, `course=`), `GET /api/digest`, `POST /api/ask` (server-sent events: `status`,
+`redirect`, `sources`, `delta`, `followups`, `done`, `error`), and `GET|POST /api/board`
+(`op=stats|question|mine|announcements|offers|leaderboard` on GET;
+`profile|digest|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer` on POST). Every route is
+rate-limited per IP and per purpose.
 
 ## 2. Scrape the group (runs on your laptop)
 
@@ -100,6 +123,20 @@ that changed and commits `data/index/`. The same key must be set on Vercel so qu
 **Manual:** `cp .env.example .env`, put the key in it, `npm run index`, then commit `data/index/`. Options:
 `--provider`, `--fresh`, `--limit 300`, `--batch 64 --concurrency 2`, `--no-embed` (keyword-only).
 
+## 3b. Official NYUAD pages
+
+`npm run scrape:official` crawls from a list of seeds (academics, majors and minors, core curriculum, study away,
+campus life, admissions, the student portal, the bulletin) and follows links on the same hosts under the allowed
+paths, skipping news, events, media and people pages. The bulletin's course listings are split into one document per
+course (code, title, credits, description). Pages already on disk are refreshed; ones that fail keep their last copy.
+`npm run index:official` embeds the result with the same provider as the archive. The workflow
+`.github/workflows/official.yml` does both every Sunday and on demand (Actions → Crawl official NYUAD pages → Run),
+and commits `data/official.jsonl` and `data/official-index/`, which the next Vercel deploy picks up.
+
+Official pages become numbered sources in Ask ahead of the threads, and the prompt tells the model they are the
+authority on rules and requirements while threads are the authority on experience. `/api/health` reports
+`official.pages`.
+
 ## 4. The board (Supabase)
 
 1. Create a Supabase project. In the dashboard open **SQL Editor → New query**.
@@ -109,7 +146,16 @@ that changed and commits `data/index/`. The same key must be set on Vercel so qu
    request passes through the app's validation and rate limits. The file is safe to run more than once, and the test
    suite applies it to a real Postgres (PGlite) on every run.
 3. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (Project → Settings → API) on Vercel and in `.env`, then
-   redeploy. `GET /api/health` reports `board.configured: true` once both are in place.
+   redeploy. `GET /api/health` reports `board.configured: true` once both are in place and `board.ok: true` once the
+   database answers.
+
+If the pages say the board tables are missing, the schema was not run in the project `SUPABASE_URL` points at (each
+Supabase project is its own database). If they say the key was rejected, the anon or publishable key was pasted
+instead of the `service_role` secret: with row level security on and no policies, the anon key can read nothing and
+write nothing, which is by design. The URL can be pasted as the project URL, the dashboard URL or the bare project
+ref; all three are normalised. Every failed database call is logged on the server with Supabase's own status and
+message, and returned to the client as a specific error code (`board_schema_missing`, `board_key_rejected`,
+`board_url_wrong`, `board_unreachable`) rather than a generic one.
 
 Locally, with nothing set, the board runs in memory so `npm run dev` works without a database (nothing survives a
 restart). In production it is switched off until the two variables exist, rather than silently losing questions.
@@ -135,7 +181,7 @@ itself otherwise).
 
 ## How answers are produced
 
-1. Off-platform requests are caught first (`lib/domains.ts`): Falcon trades go to Falcon Market; listings, rides,
+1. Off-platform requests are caught first (`lib/domains.ts`): Falcon trades go to the Falcons page; listings, rides,
    lost-and-found and "does anyone have X right now" go to the group.
 2. Follow-ups are rewritten into standalone queries; NYUAD shorthand (D2, A5, core, J-Term) is expanded for search.
 3. Retrieval fuses BM25 over chunks with cosine similarity over the embeddings (reciprocal-rank fusion, small recency
