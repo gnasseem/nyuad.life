@@ -102,19 +102,19 @@ export function validateNetId(value: unknown): string {
   const netId = String(value ?? '')
     .trim()
     .toLowerCase();
-  if (!/^[a-z]{1,8}\d{1,6}$/.test(netId)) throw new ApiError(400, 'That does not look like a NetID (letters then digits, like abc1234).', 'bad_net_id');
+  if (!/^[a-z]{1,8}\d{1,6}$/.test(netId)) throw new ApiError(400, 'Enter a NetID like abc1234.', 'bad_net_id');
   return netId;
 }
 
 export function validateProfile(body: Record<string, unknown>): Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'> & { digest?: boolean } {
   const netId = validateNetId(body.netId);
   const name = collapseWhitespace(String(body.name ?? '')).slice(0, 60);
-  if (name.length < 2) throw new ApiError(400, 'Add your name.', 'bad_name');
+  if (name.length < 2) throw new ApiError(400, 'Enter your name.', 'bad_name');
   const major = collapseWhitespace(String(body.major ?? '')).slice(0, 60);
-  if (!major) throw new ApiError(400, 'Pick a major.', 'bad_major');
+  if (!major) throw new ApiError(400, 'Choose a major.', 'bad_major');
   const classOf = Number(body.classOf);
   const thisYear = new Date().getUTCFullYear();
-  if (!Number.isInteger(classOf) || classOf < thisYear - 15 || classOf > thisYear + 6) throw new ApiError(400, 'Pick your class year.', 'bad_class_of');
+  if (!Number.isInteger(classOf) || classOf < thisYear - 15 || classOf > thisYear + 6) throw new ApiError(400, 'Choose a class year.', 'bad_class_of');
   return { netId, name, major, classOf, ...(typeof body.digest === 'boolean' ? { digest: body.digest } : {}) };
 }
 
@@ -124,7 +124,7 @@ export function validateQuestionText(value: unknown): string {
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-  if (text.length < QUESTION_MIN) throw new ApiError(400, 'Give people a little more to go on.', 'question_too_short');
+  if (text.length < QUESTION_MIN) throw new ApiError(400, 'The question is too short.', 'question_too_short');
   if (text.length > QUESTION_MAX) throw new ApiError(400, `Keep questions under ${QUESTION_MAX} characters.`, 'question_too_long');
   return text;
 }
@@ -133,7 +133,7 @@ export function validateAnswerText(value: unknown): string {
   const text = String(value ?? '')
     .replace(/\r\n?/g, '\n')
     .trim();
-  if (text.length < ANSWER_MIN) throw new ApiError(400, 'Write an answer first.', 'answer_too_short');
+  if (text.length < ANSWER_MIN) throw new ApiError(400, 'The answer is too short.', 'answer_too_short');
   if (text.length > ANSWER_MAX) throw new ApiError(400, `Keep answers under ${ANSWER_MAX} characters.`, 'answer_too_long');
   return text;
 }
@@ -307,19 +307,19 @@ export const ANNOUNCEMENT_DAYS = 14;
 
 export function validateAnnouncement(body: Record<string, unknown>, now = new Date()): Omit<Announcement, 'id' | 'createdAt' | 'posterKey' | 'posterNetId' | 'posterName'> {
   const title = collapseWhitespace(String(body.title ?? '')).slice(0, 120);
-  if (title.length < 4) throw new ApiError(400, 'Give the announcement a title.', 'bad_title');
+  if (title.length < 4) throw new ApiError(400, 'Enter a title.', 'bad_title');
   const text = String(body.body ?? '')
     .replace(/\r\n?/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   if (text.length > 1500) throw new ApiError(400, 'Keep the details under 1,500 characters.', 'body_too_long');
   const kind = String(body.kind ?? 'notice') as AnnouncementKind;
-  if (!ANNOUNCEMENT_KINDS.includes(kind)) throw new ApiError(400, 'Pick what kind of announcement this is.', 'bad_kind');
+  if (!ANNOUNCEMENT_KINDS.includes(kind)) throw new ApiError(400, 'Choose a kind.', 'bad_kind');
   let startsAt: string | undefined;
   if (body.startsAt) {
     const parsed = Date.parse(String(body.startsAt));
-    if (Number.isNaN(parsed)) throw new ApiError(400, 'That date did not make sense.', 'bad_date');
-    if (parsed < now.getTime() - 86_400_000) throw new ApiError(400, 'That date is already in the past.', 'past_date');
+    if (Number.isNaN(parsed)) throw new ApiError(400, 'The date is invalid.', 'bad_date');
+    if (parsed < now.getTime() - 86_400_000) throw new ApiError(400, 'The date is in the past.', 'past_date');
     startsAt = new Date(parsed).toISOString();
   }
   const location = collapseWhitespace(String(body.location ?? '')).slice(0, 80);
@@ -413,16 +413,16 @@ export const OFFER_MAX = 20_000;
 
 export function validateOffer(body: Record<string, unknown>, now = new Date()): Omit<Offer, 'id' | 'createdAt' | 'posterKey' | 'posterNetId' | 'posterName' | 'status'> {
   const side = String(body.side ?? '') as OfferSide;
-  if (side !== 'sell' && side !== 'buy') throw new ApiError(400, 'Say whether you are selling or buying Falcons.', 'bad_side');
+  if (side !== 'sell' && side !== 'buy') throw new ApiError(400, 'Choose sell or buy.', 'bad_side');
   const amount = Math.round(Number(body.amount));
   if (!Number.isFinite(amount) || amount < OFFER_MIN || amount > OFFER_MAX) throw new ApiError(400, `Amount must be between ${OFFER_MIN} and ${OFFER_MAX.toLocaleString()} Falcons.`, 'bad_amount');
   const rate = Math.round(Number(body.rate) * 100) / 100;
-  if (!Number.isFinite(rate) || rate < 0.1 || rate > 2) throw new ApiError(400, 'Rate is dirhams per Falcon, between 0.10 and 2.00.', 'bad_rate');
+  if (!Number.isFinite(rate) || rate < 0.1 || rate > 2) throw new ApiError(400, 'The rate must be between 0.10 and 2.00 AED per Falcon.', 'bad_rate');
   const contactKind = String(body.contactKind ?? 'whatsapp') as ContactKind;
-  if (!CONTACT_KINDS.includes(contactKind)) throw new ApiError(400, 'Pick how people should contact you.', 'bad_contact_kind');
+  if (!CONTACT_KINDS.includes(contactKind)) throw new ApiError(400, 'Choose a contact method.', 'bad_contact_kind');
   const contact = collapseWhitespace(String(body.contact ?? '')).slice(0, 80);
-  if (contact.length < 3) throw new ApiError(400, 'Add a way to reach you.', 'bad_contact');
-  if (contactKind === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact)) throw new ApiError(400, 'That email does not look right.', 'bad_contact');
+  if (contact.length < 3) throw new ApiError(400, 'Enter your contact details.', 'bad_contact');
+  if (contactKind === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact)) throw new ApiError(400, 'Enter a valid email address.', 'bad_contact');
   if ((contactKind === 'whatsapp' || contactKind === 'phone') && !/^\+?[\d\s()-]{7,20}$/.test(contact)) throw new ApiError(400, 'Use a phone number with the country code, like +971 50 123 4567.', 'bad_contact');
   const note = collapseWhitespace(String(body.note ?? '')).slice(0, 200);
   const expiresAt = new Date(now.getTime() + OFFER_DAYS * 86_400_000).toISOString();

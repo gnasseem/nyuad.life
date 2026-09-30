@@ -14,9 +14,9 @@ export default route(['GET', 'POST'], async (req, res) => {
   const secret = (process.env.CRON_SECRET ?? '').trim();
   const given = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '').trim() || queryString(req, 'key').trim();
   if (secret && given !== secret) throw new ApiError(401, 'This route is for the scheduler.', 'unauthorized');
-  if (!secret && process.env.VERCEL === '1') throw new ApiError(503, 'Set CRON_SECRET on the server to enable the weekly roundup.', 'no_secret');
+  if (!secret && process.env.VERCEL === '1') throw new ApiError(503, 'Set CRON_SECRET on the server to enable the weekly email.', 'no_secret');
   const store = boardStore();
-  if (!store) throw new ApiError(503, 'The board is not set up on this server yet.', 'board_unavailable');
+  if (!store) throw new ApiError(503, 'The board is not set up on this server.', 'board_unavailable');
 
   const dry = queryString(req, 'dry') === '1' || !process.env.RESEND_API_KEY;
   const now = new Date();
@@ -63,25 +63,17 @@ function compose(helper: Profile, picks: Question[], openTotal: number) {
   const first = helper.name.split(/\s+/)[0] ?? helper.name;
   const lines = picks.map((question, i) => `${i + 1}. ${truncate(collapseWhitespace(question.text), 220)}${question.courses.length ? ` (${question.courses.join(', ')})` : ''}`);
   const url = `${SITE()}/questions?tab=help`;
-  const text = [
-    `Hi ${first},`,
-    '',
-    `${openTotal} questions are waiting on nyuad.life this week. These ${picks.length} fit a ${helper.major} ${standing} best:`,
-    '',
-    ...lines,
-    '',
-    `Answer them one at a time here: ${url}`,
-    '',
-    `You get this once a week because you signed up to help. Turn it off under Settings on ${SITE()}.`,
-  ].join('\n');
+  const intro = `${picks.length} of the ${openTotal} open questions on nyuad.life fit a ${helper.major} ${standing}:`;
+  const outro = `Sent on Mondays while the weekly email is on in Settings at ${SITE()}/settings.`;
+  const text = [`Hi ${first},`, '', intro, '', ...lines, '', `Answer them here: ${url}`, '', outro].join('\n');
   const html = [
     `<p>Hi ${escape(first)},</p>`,
-    `<p>${openTotal} questions are waiting on <a href="${SITE()}">nyuad.life</a> this week. These ${picks.length} fit a ${escape(helper.major)} ${standing} best:</p>`,
-    `<ol>${picks.map((question) => `<li>${escape(truncate(collapseWhitespace(question.text), 220))}${question.courses.length ? ` <em>(${escape(question.courses.join(', '))})</em>` : ''}</li>`).join('')}</ol>`,
-    `<p><a href="${url}" style="display:inline-block;padding:10px 16px;background:#111;color:#fff;border-radius:8px;text-decoration:none">Answer them</a></p>`,
-    `<p style="color:#777;font-size:13px">You get this once a week because you signed up to help. Turn it off under Settings on <a href="${SITE()}/settings">nyuad.life</a>.</p>`,
+    `<p>${escape(intro)}</p>`,
+    `<ol>${picks.map((question) => `<li>${escape(truncate(collapseWhitespace(question.text), 220))}${question.courses.length ? ` (${escape(question.courses.join(', '))})` : ''}</li>`).join('')}</ol>`,
+    `<p><a href="${url}">Answer them</a></p>`,
+    `<p style="color:#777;font-size:12px">${escape(outro)}</p>`,
   ].join('');
-  return { to: `${helper.netId}@nyu.edu`, subject: `${picks.length} question${picks.length === 1 ? '' : 's'} a ${helper.major} ${standing} could answer this week`, text, html, count: picks.length };
+  return { to: `${helper.netId}@nyu.edu`, subject: `${picks.length} open question${picks.length === 1 ? '' : 's'} for a ${helper.major} ${standing}`, text, html, count: picks.length };
 }
 
 function escape(value: string): string {

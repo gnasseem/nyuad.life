@@ -278,28 +278,28 @@ export function storageError(status: number, body: string, what = 'request'): Ap
   if (missingTable || missingFunction) {
     return new ApiError(
       503,
-      'The board tables are not in this Supabase project yet. Open the project in Supabase, go to SQL Editor → New query, paste the whole of supabase/schema.sql and run it, then try again.',
+      'The board tables are missing: run supabase/schema.sql in this Supabase project.',
       'board_schema_missing',
     );
   }
   if (status === 401 || status === 403 || code === '42501' || code === 'PGRST301' || /row-level security|invalid api key|jwt|permission denied|apikey/i.test(message)) {
     return new ApiError(
       503,
-      'Supabase rejected the board key. SUPABASE_SERVICE_ROLE_KEY must be the service_role (secret) key from Project → Settings → API, not the anon or publishable key, and SUPABASE_URL must be the same project.',
+      'Supabase rejected the board key: SUPABASE_SERVICE_ROLE_KEY must be the service_role key of the project at SUPABASE_URL.',
       'board_key_rejected',
     );
   }
   if (status === 404 && !code) {
-    return new ApiError(503, 'SUPABASE_URL does not point at a Supabase REST API. Use the project URL from Project → Settings → API, which looks like https://abcdefghijklmnopqrst.supabase.co.', 'board_url_wrong');
+    return new ApiError(503, 'SUPABASE_URL is not a Supabase project URL like https://abcdefghijklmnopqrst.supabase.co.', 'board_url_wrong');
   }
   if (status >= 500 || /paused|not available|unavailable/i.test(message)) {
     return new ApiError(
       503,
-      `Supabase is not answering (${status}${message ? `: ${message}` : ''}). Free projects pause after a week without traffic: open the Supabase dashboard and restore the project.`,
+      `Supabase is not answering (${status}${message ? `: ${message}` : ''}), which usually means the project is paused.`,
       'board_unreachable',
     );
   }
-  return new ApiError(502, `The board database refused that (${status}${message ? `: ${message}` : ''}).`, 'board_storage');
+  return new ApiError(502, `The board database refused the request (${status}${message ? `: ${message}` : ''}).`, 'board_storage');
 }
 
 type Row = Record<string, unknown>;
@@ -314,7 +314,7 @@ export class SupabaseBoardStore implements BoardStore {
       return {
         ok: false,
         code: 'board_key_rejected',
-        problem: 'SUPABASE_SERVICE_ROLE_KEY holds the anon (public) key, which row level security stops from writing anything. Paste the service_role secret from Project → Settings → API instead.',
+        problem: 'SUPABASE_SERVICE_ROLE_KEY is the anon key, not the service_role key.',
       };
     }
     try {
@@ -507,7 +507,7 @@ export class SupabaseBoardStore implements BoardStore {
         if (readOnly && attempt === 0) continue;
         const reason = error instanceof Error ? error.message : String(error);
         console.error(`[board] could not reach Supabase for ${what}: ${reason}`);
-        throw new ApiError(503, `Could not reach Supabase at ${new URL(this.cfg.url).host} (${reason}). Check SUPABASE_URL and that the project is not paused.`, 'board_unreachable');
+        throw new ApiError(503, `Could not reach Supabase at ${new URL(this.cfg.url).host} (${reason}).`, 'board_unreachable');
       }
       const text = await response.text();
       if (response.ok) return text ? JSON.parse(text) : null;

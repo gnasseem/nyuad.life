@@ -425,7 +425,7 @@ export interface AskEvents {
 
 export function validateAsk(body: Partial<AskRequest>): AskRequest {
   const question = collapseWhitespace(String(body.question ?? ''));
-  if (!question) throw new ApiError(400, 'Ask a question first.', 'empty_question');
+  if (!question) throw new ApiError(400, 'The question is empty.', 'empty_question');
   if (question.length > MAX_QUESTION_CHARS) throw new ApiError(400, `Keep questions under ${MAX_QUESTION_CHARS} characters.`, 'question_too_long');
   const history = Array.isArray(body.history)
     ? body.history
@@ -458,17 +458,17 @@ export async function ask(archive: Archive, cfg: GeminiConfig, request: AskReque
   events.status?.('Reading the question');
   const searchQuery = await standaloneQuestion(cfg, history, request.question);
 
-  events.status?.('Searching the archive');
+  events.status?.('Searching');
   const retrieval = await retrieve(archive, searchQuery, { k: CANDIDATES });
   const official = await officialSources(context.official, searchQuery, retrieval.vector, 1);
-  const chosen = retrieval.hits.length ? ((await withStatus(events, 'Picking the best threads', rerank(cfg, archive, searchQuery, retrieval.hits, retrieval.terms))) ?? retrieval.hits.slice(0, 12)).slice(0, MAX_SOURCES) : [];
+  const chosen = retrieval.hits.length ? ((await withStatus(events, 'Ranking sources', rerank(cfg, archive, searchQuery, retrieval.hits, retrieval.terms))) ?? retrieval.hits.slice(0, 12)).slice(0, MAX_SOURCES) : [];
   const archiveCards = toSourceCards(archive, chosen, retrieval.terms, official.length + 1);
   const live = await liveSources(board, searchQuery, retrieval.terms, retrieval.vector, official.length + archiveCards.length + 1);
   const cards = [...official.map((entry) => entry.card), ...archiveCards, ...live.map((entry) => entry.card)];
   events.sources?.(cards);
 
   if (cards.length === 0) {
-    const answer = 'Nobody in the group has covered this yet, so there is nothing reliable to pass on. Ask the students on the board and someone who knows can answer you directly.';
+    const answer = 'No source covers this. Ask students on the Questions page.';
     events.delta?.(answer);
     events.followups?.([]);
     return { answer, sources: [], followups: [], model: cfg.chatModel, confidence: { level: 'low', reason: 'no matching threads' }, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
@@ -479,11 +479,11 @@ export async function ask(archive: Archive, cfg: GeminiConfig, request: AskReque
     return questions;
   });
 
-  events.status?.('Writing the answer');
+  events.status?.('Writing');
   const messages: Message[] = history.slice(-6).map((turn) => ({ role: turn.role, text: truncate(turn.content, 2500) }));
   messages.push({ role: 'user', text: `Question: ${request.question}\n\nSources:\n${sourcesBlock(archive, cards, [...official, ...live])}` });
   const { answer, model } = await writeAnswer(cfg, messages, events, signal);
-  if (!answer.trim()) throw new ApiError(502, 'The model returned an empty answer. Try again.', 'empty_answer');
+  if (!answer.trim()) throw new ApiError(502, 'The model returned an empty answer.', 'empty_answer');
   const questions = await followupsPromise;
   const parsed = parseConfidence(answer);
   return {
@@ -529,5 +529,5 @@ async function writeAnswer(cfg: GeminiConfig, messages: Message[], events: AskEv
       events.status?.('Switching to a backup model');
     }
   }
-  throw new ApiError(503, 'All answer models are out of quota for now. Try again in a while.', 'quota');
+  throw new ApiError(503, 'All answer models are out of quota.', 'quota');
 }

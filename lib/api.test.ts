@@ -158,7 +158,7 @@ describe('api', () => {
     const home = await getJson(`${apiUrl}/api/home`, { headers });
     expect(home.stats.posts).toBe(4);
     expect(home.stats.semantic).toBe(true);
-    expect(home.suggestions.length).toBeGreaterThan(3);
+    expect(home.suggestions).toHaveLength(3);
     expect(home.courses.map((c: { code: string }) => c.code).sort()).toEqual(['CS-UH 1001', 'MATH-UH 1012']);
     expect(home.topics.find((t: { id: string }) => t.id === 'housing')).toBeTruthy();
   });

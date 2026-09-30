@@ -1,7 +1,6 @@
 /**
- * Questions the archive should not try to answer, and where to send people instead. Falcon-dirham trades belong on
- * this site's own Falcons exchange; listings, rides and lost-and-found are live requests for the group itself, not
- * questions with a durable answer.
+ * Questions the archive should not try to answer, and where to send people instead. Falcon trades belong on the
+ * Falcons page; listings, rides and lost-and-found are live requests for the group, not questions with a durable answer.
  */
 
 export type OffTopicDomain = 'falcons' | 'listing' | 'ride' | 'lost-found' | 'live';
@@ -48,46 +47,21 @@ const LIVE_NEED = /\b(?:have|has|got|lend|borrow|spare|give|bring)\b/i;
 export function detectRedirect(question: string, env: NodeJS.ProcessEnv = process.env): Redirect | null {
   const text = question.trim();
   if (!text) return null;
-  const group = groupUrl(env);
+  const group = { url: groupUrl(env), label: 'Open the group' };
   if (FALCON.test(text) && !FALCON_NOT_CURRENCY.test(text) && FALCON_TRADE.test(text)) {
-    return {
-      domain: 'falcons',
-      title: 'Falcons are traded on the Falcons page',
-      message: 'Buying and selling Falcon dirhams happens on this site\'s Falcons exchange: post what you have or want, at your rate, and people contact you directly. Trade posts are left out of the archive.',
-      link: { url: FALCONS_PATH, label: 'Open Falcons' },
-    };
+    return { domain: 'falcons', title: 'Trade Falcons on the Falcons page', message: 'Post what you have or want and people contact you directly.', link: { url: FALCONS_PATH, label: 'Open Falcons' } };
   }
   if (LISTING.some((pattern) => pattern.test(text))) {
-    return {
-      domain: 'listing',
-      title: 'Listings go in the group',
-      message: 'This site keeps advice and experiences, not things for sale. Post the listing in the Room of Requirement group so people can message you.',
-      link: { url: group, label: 'Open the group' },
-    };
+    return { domain: 'listing', title: 'Listings go in the group', message: 'This site keeps advice and experience, not things for sale.', link: group };
   }
   if (RIDE.some((pattern) => pattern.test(text))) {
-    return {
-      domain: 'ride',
-      title: 'Rides need a live audience',
-      message: 'A carpool or shared taxi only works with people who are around right now, so post it in the group instead of searching old threads.',
-      link: { url: group, label: 'Open the group' },
-    };
+    return { domain: 'ride', title: 'Rides go in the group', message: 'A ride needs people who are around now, not old threads.', link: group };
   }
   if (LOST_FOUND.some((pattern) => pattern.test(text))) {
-    return {
-      domain: 'lost-found',
-      title: 'Lost and found is a live request',
-      message: 'Old threads will not know where your things are. Post in the group with where and when you last had them.',
-      link: { url: group, label: 'Open the group' },
-    };
+    return { domain: 'lost-found', title: 'Lost and found goes in the group', message: 'Post where and when you last had it.', link: group };
   }
   if (LIVE.some((pattern) => pattern.test(text)) && LIVE_NEED.test(text)) {
-    return {
-      domain: 'live',
-      title: 'Ask the group for this one',
-      message: 'This needs someone who can help right now, so it belongs in the group rather than in a search of past threads.',
-      link: { url: group, label: 'Open the group' },
-    };
+    return { domain: 'live', title: 'Ask the group', message: 'This needs someone who can help right now.', link: group };
   }
   return null;
 }

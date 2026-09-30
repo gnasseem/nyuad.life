@@ -9,7 +9,7 @@ import { loadArchive } from '../lib/store.ts';
 let boardProbe: { at: number; result: BoardCheck } | undefined;
 
 async function boardHealth(board: BoardStore | null): Promise<Record<string, unknown>> {
-  if (!board) return { configured: false, ok: false, hint: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (see supabase/schema.sql) to enable the board.' };
+  if (!board) return { configured: false, ok: false, hint: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to enable the board.' };
   const now = Date.now();
   if (!boardProbe || now - boardProbe.at > (boardProbe.result.ok ? 300_000 : 30_000)) {
     boardProbe = { at: now, result: await board.check() };
@@ -55,11 +55,11 @@ export default route(['GET'], async (_req, res) => {
           model: archive.meta.model,
           keyConfigured: Boolean(queryEmbedder),
           semanticSearch: archive.vectors.count > 0 && Boolean(queryEmbedder),
-          hint: archive.vectors.count === 0 ? 'The index has no vectors yet; run the Build search index workflow.' : queryEmbedder ? undefined : `Set ${provider ? keysFor(provider) : 'the embedding key'} on the server to enable semantic search.`,
+          hint: archive.vectors.count === 0 ? 'Run the Build search index workflow to add vectors.' : queryEmbedder ? undefined : `Set ${provider ? keysFor(provider) : 'the embedding key'} on the server to enable semantic search.`,
         }
       : undefined,
     // Official NYUAD pages: crawled by the "Crawl official NYUAD pages" workflow into data/official.jsonl.
-    official: official && official.docs.length ? { pages: official.docs.length, courses: official.byCode.size, chunks: official.chunks.length, vectors: official.vectors.count > 0, fetchedAt: official.meta.newestPost, source: official.source } : { pages: 0, hint: 'Run the "Crawl official NYUAD pages" workflow (or npm run scrape:official && npm run index:official) to add official pages.' },
+    official: official && official.docs.length ? { pages: official.docs.length, courses: official.byCode.size, chunks: official.chunks.length, vectors: official.vectors.count > 0, fetchedAt: official.meta.newestPost, source: official.source } : { pages: 0, hint: 'Run the Crawl official NYUAD pages workflow to add official pages.' },
     gemini: cfg ? { configured: true, chatModel: cfg.chatModel, chatFallbacks: cfg.chatFallbacks, liteModel: cfg.liteModel } : { configured: false },
     // The board needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in production; locally it runs in memory. `ok` comes
     // from a real probe, so a schema that was never run or a wrong key shows up here instead of as a vague error.

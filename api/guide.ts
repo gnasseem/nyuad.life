@@ -51,7 +51,7 @@ export default route(['GET'], async (req, res) => {
   }
   if (item) {
     const position = official.docPosition.get(item);
-    if (position === undefined) throw new ApiError(404, 'That page is not in the guide.', 'not_found');
+    if (position === undefined) throw new ApiError(404, 'No page with that id.', 'not_found');
     sendJson(res, 200, await pageDetail(archive, official, official.docs[position]!));
     return;
   }
@@ -115,7 +115,7 @@ async function courseDetail(archive: Archive, official: OfficialCorpus, code: st
   const position = official.byCode.get(code);
   const doc = position === undefined ? null : official.docs[position]!;
   const threadPositions = archive.byCourse.get(code) ?? [];
-  if (!doc && threadPositions.length === 0) throw new ApiError(404, 'Nothing is known about that course yet.', 'not_found');
+  if (!doc && threadPositions.length === 0) throw new ApiError(404, 'No information about that course.', 'not_found');
   const query = doc ? `${code} ${doc.title}` : `${code} course`;
   const retrieval = await retrieve(archive, query, { k: 8, filter: (post) => post.courses.includes(code) });
   const hits = retrieval.hits.length ? retrieval.hits : threadPositions.slice(0, 6).map((post) => ({ post, chunk: archive.postChunk[post]!, score: 0 }));

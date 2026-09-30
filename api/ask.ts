@@ -11,7 +11,7 @@ export const config = { maxDuration: 60 };
 export default route(['POST'], async (req, res) => {
   rateLimit(req, 12, 10, 'ask');
   const cfg = geminiConfig();
-  if (!cfg) throw new ApiError(503, 'GEMINI_API_KEY is not configured on the server.', 'no_model');
+  if (!cfg) throw new ApiError(503, 'GEMINI_API_KEY is not set on the server.', 'no_model');
   const request = validateAsk(await readJson<Partial<AskRequest>>(req));
   const archive = await loadArchive();
   const official = await loadOfficial().catch((error) => {

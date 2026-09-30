@@ -4,7 +4,7 @@ import { dotRows } from '../lib/vectors.ts';
 
 export default route(['GET'], async (req, res) => {
   const id = queryString(req, 'id').trim();
-  if (!id) throw new ApiError(400, 'Pass ?id=<post id>.', 'missing_id');
+  if (!id) throw new ApiError(400, 'Missing id.', 'missing_id');
   const archive = await loadArchive();
   const post = postById(archive, id);
   if (!post) throw new ApiError(404, 'No post with that id in the archive.', 'not_found');

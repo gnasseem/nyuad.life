@@ -1,6 +1,6 @@
 import { route, sendJson } from '../lib/http.ts';
 import { loadArchive, summarizePost } from '../lib/store.ts';
-import { sampleSuggestions } from '../lib/suggestions.ts';
+import { starterQuestions } from '../lib/suggestions.ts';
 import { dayNumber } from '../lib/text.ts';
 import { TOPIC_LABELS } from '../lib/topics.ts';
 
@@ -37,7 +37,7 @@ export default route(['GET'], async (_req, res) => {
         builtAt: archive.meta.builtAt,
         semantic: archive.vectors.count > 0,
       },
-      suggestions: sampleSuggestions(8, Math.floor(Date.now() / 3_600_000)),
+      suggestions: starterQuestions(),
       trending,
       latest: archive.posts.slice(0, 8).map((post) => summarizePost(post)),
       topics,

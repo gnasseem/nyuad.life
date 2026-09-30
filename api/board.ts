@@ -37,7 +37,7 @@ type Body = Record<string, unknown>;
 
 export default route(['GET', 'POST'], async (req, res) => {
   const store = boardStore();
-  if (!store) throw new ApiError(503, 'The board is not set up on this server yet.', 'board_unavailable');
+  if (!store) throw new ApiError(503, 'The board is not set up on this server.', 'board_unavailable');
   const body: Body = req.method === 'POST' ? await readJson<Body>(req) : {};
   const op = String(req.method === 'POST' ? body.op ?? '' : queryString(req, 'op')).trim();
 
@@ -66,7 +66,7 @@ export default route(['GET', 'POST'], async (req, res) => {
     case 'question': {
       rateLimit(req, 60, 60, 'board-read');
       const question = await store.getQuestion(queryString(req, 'id').trim());
-      if (!question) throw new ApiError(404, 'That question is gone.', 'not_found');
+      if (!question) throw new ApiError(404, 'No question with that id.', 'not_found');
       sendJson(res, 200, { question: publicQuestion(question), answers: (await store.listAnswers([question.id])).map(publicAnswer) });
       return;
     }
@@ -98,7 +98,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       const profile = await requireProfile(store, body.netId);
       const posterKey = validateKey(body.key);
       const open = (await store.listOffersByPoster(posterKey)).filter((offer) => offer.status === 'open' && Date.parse(offer.expiresAt) > Date.now());
-      if (open.length >= 3) throw new ApiError(400, 'You already have three open offers. Mark one done first.', 'too_many_offers');
+      if (open.length >= 3) throw new ApiError(400, 'You already have three open offers.', 'too_many_offers');
       const offer = await store.createOffer({ ...validateOffer(body), posterKey, posterNetId: profile.netId, posterName: profile.name, status: 'open' });
       sendJson(res, 200, { offer: publicOffer(offer) });
       return;
@@ -168,7 +168,7 @@ export default route(['GET', 'POST'], async (req, res) => {
 
 async function requireProfile(store: BoardStore, netId: unknown): Promise<Profile> {
   const profile = await store.getProfile(validateNetId(netId));
-  if (!profile) throw new ApiError(404, 'Tell us who you are first.', 'no_profile');
+  if (!profile) throw new ApiError(404, 'Add your details first.', 'no_profile');
   return profile;
 }
 

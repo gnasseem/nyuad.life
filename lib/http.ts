@@ -84,7 +84,7 @@ export function rateLimit(req: IncomingMessage, capacity: number, perMinute: num
   bucket.updated = now;
   if (bucket.tokens < 1) {
     buckets.set(ip, bucket);
-    throw new ApiError(429, 'Too many requests. Give it a minute and try again.', 'rate_limited');
+    throw new ApiError(429, 'Too many requests, try again in a minute.', 'rate_limited');
   }
   bucket.tokens -= 1;
   buckets.set(ip, bucket);
