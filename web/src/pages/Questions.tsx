@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { api, ApiError, type Answer, type LeaderboardEntry, type PostSummary, type Question, type QuestionWithAnswers, type Redirect } from '../api';
 import { Mark } from '../components/Logo';
-import { PostCard } from '../components/PostCard';
+import { PostRow } from '../components/PostRow';
 import { Segmented } from '../components/Segmented';
 import { useApp } from '../context';
 import { initials, plural, relativeDate, standingLabel, topicLabel } from '../format';
@@ -264,7 +264,7 @@ function AskStudents({ onPosted }: { onPosted(): void }) {
               </h2>
               <div className="post-list">
                 {posted.related.map((post) => (
-                  <PostCard key={post.id} post={post} showSnippet={false} />
+                  <PostRow key={post.id} post={post} />
                 ))}
               </div>
             </>

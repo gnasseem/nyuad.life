@@ -16,16 +16,16 @@ import { navigate, onLinkClick, routePath, useRoute, type Route } from './router
 import { applyTheme, clearConversations, deleteConversation, loadConversations, loadProfile, loadTheme, onConversationsChange, saveProfile, type Conversation, type Theme } from './store';
 import { standingFor } from './year';
 
-const NAV: Array<{ route: Route; label: string; short: string; icon: typeof IconAsk; matches: Route['name'][] }> = [
-  { route: { name: 'ask' }, label: 'Ask', short: 'Ask', icon: IconAsk, matches: ['ask'] },
-  { route: { name: 'questions' }, label: 'Questions', short: 'Questions', icon: IconQuestions, matches: ['questions', 'question'] },
-  { route: { name: 'announcements' }, label: 'What’s on', short: 'What’s on', icon: IconMegaphone, matches: ['announcements'] },
-  { route: { name: 'falcons' }, label: 'Falcons', short: 'Falcons', icon: IconCoins, matches: ['falcons'] },
-  { route: { name: 'guide' }, label: 'Guide', short: 'Guide', icon: IconBook, matches: ['guide', 'post', 'browse', 'courses'] },
+const NAV: Array<{ route: Route; label: string; icon: typeof IconAsk; matches: Route['name'][] }> = [
+  { route: { name: 'ask' }, label: 'Ask', icon: IconAsk, matches: ['ask'] },
+  { route: { name: 'questions' }, label: 'Questions', icon: IconQuestions, matches: ['questions', 'question'] },
+  { route: { name: 'announcements' }, label: 'Notices', icon: IconMegaphone, matches: ['announcements'] },
+  { route: { name: 'falcons' }, label: 'Falcons', icon: IconCoins, matches: ['falcons'] },
+  { route: { name: 'guide' }, label: 'Guide', icon: IconBook, matches: ['guide', 'post'] },
 ];
 
-const THEME_LABEL: Record<Theme, string> = { system: 'Theme follows your system', light: 'Light theme', dark: 'Dark theme' };
-const DEFAULT_PROFILE_REQUEST = { title: 'Who are you?', reason: 'Your major and year route the right questions to you, and your name goes next to what you write. One time only.' };
+const THEME_LABEL: Record<Theme, string> = { system: 'System theme', light: 'Light theme', dark: 'Dark theme' };
+const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: 'Your major and year decide which questions reach you. Your name appears next to what you write.' };
 
 function useConversations(): Conversation[] {
   const [items, setItems] = useState(loadConversations);
@@ -136,16 +136,13 @@ export function App() {
         return <PostPage id={route.id} />;
       case 'settings':
         return <SettingsPage />;
-      case 'browse':
-      case 'courses':
-        return <GuidePage section={route.name === 'courses' ? 'courses' : undefined} id={route.name === 'courses' ? route.code : undefined} search={search} />;
       default:
         return <AskPage resumeId={currentConversation ?? undefined} />;
     }
   })();
 
   const clearAll = () => {
-    if (!window.confirm('Delete every saved conversation on this device?')) return;
+    if (!window.confirm('Delete all saved conversations?')) return;
     clearConversations();
     if (currentConversation) navigate({ name: 'ask' });
   };
@@ -156,22 +153,21 @@ export function App() {
   };
 
   const settingsActive = route.name === 'settings';
-  const navLinks = (short: boolean) =>
-    NAV.map((item) => {
-      const active = item.matches.includes(route.name);
-      return (
-        <a key={item.label} href={routePath(item.route)} className={active ? 'active' : undefined} aria-current={active ? 'page' : undefined} onClick={onLinkClick}>
-          <item.icon /> {short ? item.short : item.label}
-        </a>
-      );
-    });
+  const navLinks = NAV.map((item) => {
+    const active = item.matches.includes(route.name);
+    return (
+      <a key={item.label} href={routePath(item.route)} className={active ? 'active' : undefined} aria-current={active ? 'page' : undefined} onClick={onLinkClick}>
+        <item.icon /> {item.label}
+      </a>
+    );
+  });
 
   return (
     <AppContext.Provider value={context}>
       <div className="shell">
         <div className={`scrim${drawer ? ' open' : ''}`} onClick={() => setDrawer(false)} aria-hidden="true" />
         <aside className={`sidebar${drawer ? ' open' : ''}`} aria-label="Navigation">
-          <div className="row between">
+          <div className="sidebar-top">
             <a href="/" className="wordmark" onClick={onLinkClick}>
               <Wordmark />
             </a>
@@ -179,10 +175,10 @@ export function App() {
               <IconClose />
             </button>
           </div>
-          <nav className="nav">{navLinks(false)}</nav>
+          <nav className="nav">{navLinks}</nav>
           <div className="recent">
             <div className="recent-head">
-              <span>Recent</span>
+              <span className="label">Recent</span>
               {conversations.length > 0 && (
                 <button type="button" onClick={clearAll}>
                   Clear
@@ -190,7 +186,7 @@ export function App() {
               )}
             </div>
             {conversations.length === 0 ? (
-              <div className="recent-empty">Questions you ask are kept here.</div>
+              <div className="recent-empty">No conversations yet.</div>
             ) : (
               <div className="recent-list">
                 {conversations.slice(0, 40).map((conversation) => (
@@ -208,7 +204,7 @@ export function App() {
           </div>
           <div className="sidebar-foot">
             {profile ? (
-              <a href="/settings" className="me" onClick={onLinkClick} title="Your details">
+              <a href="/settings" className="me" onClick={onLinkClick}>
                 <span className="avatar">{initials(profile.name)}</span>
                 <span className="who">
                   <b>{profile.name}</b>
@@ -223,8 +219,8 @@ export function App() {
                   <IconUser style={{ width: 14, height: 14 }} />
                 </span>
                 <span className="who">
-                  <b>Introduce yourself</b>
-                  <span>To answer and post</span>
+                  <b>Add your details</b>
+                  <span>Needed to answer or post</span>
                 </span>
               </button>
             )}
@@ -251,7 +247,7 @@ export function App() {
           </header>
           <main>{page}</main>
           <nav className="tabbar" aria-label="Sections">
-            {navLinks(true)}
+            {navLinks}
           </nav>
         </div>
       </div>

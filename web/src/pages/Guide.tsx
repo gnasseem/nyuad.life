@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type GuideCourse, type GuideDetail, type GuideItem, type GuideSection } from '../api';
 import { Mark } from '../components/Logo';
-import { PostCard } from '../components/PostCard';
+import { PostRow } from '../components/PostRow';
 import { useApp } from '../context';
 import { formatDate, plural } from '../format';
 import { IconAsk, IconBack, IconChevronRight, IconClose, IconExternal, IconInfo, IconSearch, IconShield } from '../icons';
@@ -275,7 +275,7 @@ function Detail({ section, id, onClose }: { section: string; id: string; onClose
                   <h3>What students said</h3>
                   <div className="post-list">
                     {detail.threads.map((post) => (
-                      <PostCard key={post.id} post={post} showSnippet={false} />
+                      <PostRow key={post.id} post={post} />
                     ))}
                   </div>
                 </>

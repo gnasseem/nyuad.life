@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, type PostDetail, type PostSummary } from '../api';
-import { PostCard } from '../components/PostCard';
+import { PostRow } from '../components/PostRow';
 import { useApp } from '../context';
 import { formatDate, plural, topicLabel } from '../format';
 import { IconAsk, IconBack, IconExternal } from '../icons';
@@ -115,7 +115,7 @@ export function PostPage({ id }: Props) {
               <h2 className="section-title">Related threads</h2>
               <div className="post-list">
                 {related.map((entry) => (
-                  <PostCard key={entry.id} post={entry} showSnippet={false} />
+                  <PostRow key={entry.id} post={entry} />
                 ))}
               </div>
             </>

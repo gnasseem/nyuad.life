@@ -5,9 +5,7 @@ export type Route =
   | { name: 'questions' }
   | { name: 'question'; id: string }
   | { name: 'announcements' }
-  | { name: 'browse' }
   | { name: 'post'; id: string }
-  | { name: 'courses'; code?: string }
   | { name: 'falcons' }
   | { name: 'guide'; section?: string; id?: string }
   | { name: 'settings' };
@@ -19,13 +17,14 @@ export function parseRoute(pathname: string): Route {
       return parts[1] ? { name: 'question', id: parts[1] } : { name: 'questions' };
     case 'announcements':
       return { name: 'announcements' };
+    // Old links to the archive and its course pages land in the guide.
     case 'archive':
     case 'browse':
       return parts[1] === 'courses' ? { name: 'guide', section: 'courses', id: parts[2] } : { name: 'guide' };
     case 'courses':
       return { name: 'guide', section: 'courses', id: parts[1] };
     case 'post':
-      return parts[1] ? { name: 'post', id: parts[1] } : { name: 'browse' };
+      return parts[1] ? { name: 'post', id: parts[1] } : { name: 'guide' };
     case 'settings':
       return { name: 'settings' };
     case 'falcons':
@@ -47,12 +46,8 @@ export function routePath(route: Route): string {
       return `/questions/${encodeURIComponent(route.id)}`;
     case 'announcements':
       return '/announcements';
-    case 'browse':
-      return '/archive';
     case 'post':
       return `/post/${encodeURIComponent(route.id)}`;
-    case 'courses':
-      return route.code ? `/archive/courses/${encodeURIComponent(route.code)}` : '/archive/courses';
     case 'settings':
       return '/settings';
     case 'falcons':
