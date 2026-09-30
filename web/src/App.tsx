@@ -43,7 +43,7 @@ export function App() {
   const [moment, setMoment] = useState<{ title: string; message: string; action?: string } | null>(null);
   const conversations = useConversations();
 
-  // Every 31 August the class years roll over: say so once, and keep the stored standing current for the board.
+  // Every 1 May the class years roll over: say so once, and keep the stored standing current for the board.
   useEffect(() => {
     if (!profile) return;
     const current = standingFor(profile.classOf);

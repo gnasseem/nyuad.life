@@ -16,7 +16,7 @@ Three things happen here:
   after two weeks.
 
 Small things that know what time of year it is: the starter questions on Ask lead with what is in season (registration,
-housing, internships, finals); on 31 August everyone's class year rolls over, the app says so with confetti the next
+housing, internships, finals); on 1 May everyone's class year rolls over, the app says so with confetti the next
 time they open it, and the board starts routing questions to them as the sophomore, junior, senior or alumni they now
 are; a helper's first, tenth, twenty-fifth, fiftieth and hundredth answers get the same treatment.
 
@@ -64,15 +64,22 @@ client loads, so it does not depend on fragile page selectors, and it is increme
 npm install
 npx playwright install chromium
 npm run scrape -- --login       # optional: just open the window, log in once, and exit
-npm run scrape -- --full        # first time: walk the group back to its first post (hours; leave it running)
+npm run scrape -- --all-time    # first time: the whole group, every year, month by month (hours; leave it running)
 npm run scrape                  # later: only new posts and threads whose comment counts changed
 ```
 
 Log in in the window that opens; the login is kept in `.scraper-profile/` (git-ignored). Progress is saved every few
-minutes and on Ctrl+C, and an interrupted `--full` run continues where it stopped. Options: `--max-posts 200`,
-`--no-comments`, `--delay 2`, `--chrome`, `--debug`, `--restart-feed`, `--only-comments`. This is your personal export
-of a group you belong to; don't share the raw file outside the community. When a run finishes, commit and push
-`data/posts.jsonl`.
+minutes and on Ctrl+C, and an interrupted run continues where it stopped.
+
+Facebook's group feed stops paging after a year or two of posts and then claims there are no more, so `--full`
+(walk the feed by cursor) never reaches an old group's first post. `--all-time` uses the group's search page instead,
+whose "date posted" filter reaches any month: for every month back to `--from` (default `2010-01`) it searches a
+handful of very common words (`--terms a,the,...` to change them) and pages through all the results. Every post found
+is saved or refreshed whether or not it was already on disk; months that are finished are skipped by the next
+`--all-time` run, and `--restart-feed` forgets them. Other options: `--max-posts 200`, `--no-comments`, `--delay 2`,
+`--chrome`, `--debug`, `--only-comments` (also retries threads that still looked incomplete after two visits).
+This is your personal export of a group you belong to; don't share the raw file outside the community. When a run
+finishes, commit and push `data/posts.jsonl`.
 
 ## 3. Index (cleaning and semantic search)
 

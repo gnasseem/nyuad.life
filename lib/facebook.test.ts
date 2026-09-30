@@ -9,13 +9,53 @@ import {
   idFromFeedback,
   idFromStoryId,
   isFeedPaginationRequest,
+  isSearchPaginationRequest,
   parseGraphqlForm,
   parseJsonDocuments,
+  parseSearchDateFilters,
+  searchDateFilters,
   toSourcePosts,
   withGraphqlVariables,
 } from './facebook.ts';
 
 const b64 = (value: string) => Buffer.from(value).toString('base64');
+
+describe('group search', () => {
+  it('builds the date filter Facebook puts in the address bar and reads it back', () => {
+    const filters = searchDateFilters('2019-03-01', '2019-03-31');
+    const decoded = JSON.parse(Buffer.from(filters, 'base64').toString('utf8')) as Record<string, string>;
+    expect(Object.keys(decoded)).toEqual(['rp_creation_time:0', 'rp_chrono_sort:0']);
+    const creation = JSON.parse(decoded['rp_creation_time:0']!) as { name: string; args: string };
+    expect(creation.name).toBe('creation_time');
+    expect(JSON.parse(creation.args)).toEqual({ start_year: '2019', start_month: '2019-3', end_year: '2019', end_month: '2019-3', start_day: '2019-3-1', end_day: '2019-3-31' });
+    expect(JSON.parse(decoded['rp_chrono_sort:0']!)).toEqual({ name: 'chronosort', args: '' });
+    expect(parseSearchDateFilters(filters)).toEqual({ startDay: '2019-03-01', endDay: '2019-03-31' });
+    expect(parseSearchDateFilters(null)).toBeNull();
+    expect(parseSearchDateFilters('not base64 json')).toBeNull();
+  });
+
+  it('recognises the request that loads more search results, and only that', () => {
+    expect(isSearchPaginationRequest({ friendlyName: 'SearchCometResultsPaginatedResultsQuery', docId: '1', variables: { cursor: 'x', count: 5 } })).toBe(true);
+    expect(isSearchPaginationRequest({ friendlyName: 'SomethingElse', docId: '1', variables: { cursor: 'x', args: { text: 'anyone' } } })).toBe(true);
+    expect(isSearchPaginationRequest({ friendlyName: 'SearchCometResultsInitialResultsQuery', docId: '1', variables: { args: { text: 'anyone' } } })).toBe(false); // no cursor
+    expect(isSearchPaginationRequest({ friendlyName: 'GroupsCometFeedRegularStoriesPaginationQuery', docId: '1', variables: { cursor: 'x', sortingSetting: 'CHRONOLOGICAL' } })).toBe(false);
+    expect(isFeedPaginationRequest({ friendlyName: 'SearchCometResultsPaginatedResultsQuery', docId: '1', variables: { cursor: 'x', count: 5 } })).toBe(false);
+  });
+
+  it('prefers the results connection when picking the page cursor', () => {
+    const doc = {
+      data: {
+        serpResponse: {
+          results: {
+            edges: [{ node: { story: { feedback: { comments: { page_info: { end_cursor: 'comment-cursor', has_next_page: true } } } } } }],
+            page_info: { end_cursor: 'result-cursor', has_next_page: false },
+          },
+        },
+      },
+    };
+    expect(extractFeedPageInfo(doc)).toEqual({ endCursor: 'result-cursor', hasNextPage: false });
+  });
+});
 
 const feedResponse = {
   data: {

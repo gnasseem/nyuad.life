@@ -110,3 +110,51 @@ describe.skipIf(!executable)('scraper against a fake Facebook', () => {
     expect(third.output).toMatch(/0 changed in this run/);
   }, 240_000);
 });
+
+describe.skipIf(!executable)('--all-time against a fake Facebook whose feed stops early', () => {
+  // The feed only reaches the newest 30 of these 64 posts (the real site stops paging after a year or two);
+  // they span 2026-03-15 to 2026-09-20, so the month-by-month search has seven months to cover.
+  let limited: FakeFacebook;
+  let dir = '';
+
+  beforeAll(async () => {
+    dir = mkdtempSync(path.join(tmpdir(), 'ror-scrape-all-'));
+    limited = await startFakeFacebook({ slug: 'testgroup', posts, pageSize: 3, loginDelayMs: 500, feedLimit: 30 });
+    fake = limited;
+    workDir = dir;
+  });
+  afterAll(async () => {
+    await limited?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reaches every post through dated searches, then skips the months it has covered', async () => {
+    const full = await runScraper(['--full', '--no-comments', '--stop-after-known', '8']);
+    expect(full.code, full.output).toBe(0);
+    expect(full.output).toContain('Reached the first post of the group.');
+    expect((await readPostsJsonl(path.join(dir, 'posts.jsonl'))).length).toBe(30);
+
+    const searchPagesBefore = limited.calls.searchPages;
+    const first = await runScraper(['--all-time', '--from', '2026-03', '--terms', 'post,course', '--stop-after-known', '8']);
+    expect(first.code, first.output).toBe(0);
+    expect(first.output).toMatch(/\d+ of \d+ months to go, 2 words each/);
+    expect(first.output).toMatch(/2026-09: \d+ posts found/);
+    expect(first.output).toMatch(/2026-03: \d+ posts found/);
+    expect(first.output).toContain('Every month back to 2026-03 is covered.');
+    expect(limited.calls.searches).toBeGreaterThanOrEqual(14);
+    expect(limited.calls.searchPages).toBeGreaterThan(searchPagesBefore); // months with more than one page were paged by cursor
+
+    const all = await readPostsJsonl(path.join(dir, 'posts.jsonl'));
+    expect(all.map((post) => post.id).sort()).toEqual(posts.map((post) => post.id).sort());
+    expect(all.every((post) => post.comments.length === (post.commentCount ?? 0))).toBe(true);
+    const saved = state() as unknown as { completedFeed: boolean; monthsDone: string[] };
+    expect(saved.completedFeed).toBe(true);
+    expect(saved.monthsDone).toEqual(expect.arrayContaining(['2026-03', '2026-06', '2026-09']));
+
+    const searchesBefore = limited.calls.searches;
+    const second = await runScraper(['--all-time', '--from', '2026-03', '--terms', 'post,course']);
+    expect(second.code, second.output).toBe(0);
+    expect(second.output).toMatch(/0 of \d+ months to go/);
+    expect(limited.calls.searches).toBe(searchesBefore);
+  }, 300_000);
+});

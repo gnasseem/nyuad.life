@@ -28,15 +28,16 @@ function question(overrides: Partial<Question>): Question {
 const profile: Profile = { netId: 'abc1234', name: 'Sara', major: 'Computer Science', classOf: 2028, answers: 0, createdAt: now.toISOString(), lastSeenAt: now.toISOString() };
 
 describe('standingFor', () => {
-  it('turns a class year into a standing that rolls over in August', () => {
+  it('turns a class year into a standing that rolls over on 1 May', () => {
     expect(standingFor(2030, now)).toBe('first-year');
     expect(standingFor(2029, now)).toBe('sophomore');
     expect(standingFor(2028, now)).toBe('junior');
     expect(standingFor(2027, now)).toBe('senior');
     expect(standingFor(2026, now)).toBe('alumni');
-    expect(standingFor(2027, new Date('2027-05-01T00:00:00Z'))).toBe('senior');
-    expect(standingFor(2027, new Date('2027-08-30T23:00:00Z'))).toBe('senior');
-    expect(standingFor(2027, new Date('2027-08-31T00:00:00Z'))).toBe('alumni');
+    expect(standingFor(2027, new Date('2027-01-15T00:00:00Z'))).toBe('senior');
+    expect(standingFor(2027, new Date('2027-04-30T23:00:00Z'))).toBe('senior');
+    expect(standingFor(2027, new Date('2027-05-01T00:00:00Z'))).toBe('alumni');
+    expect(standingFor(2028, new Date('2027-05-01T00:00:00Z'))).toBe('senior');
     expect(standingFor(2028, new Date('2027-08-31T00:00:00Z'))).toBe('senior');
   });
 });

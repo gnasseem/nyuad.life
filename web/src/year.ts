@@ -1,9 +1,8 @@
-/** Class years and standings, mirroring lib/board.ts: the academic year turns over on 31 August. */
+/** Class years and standings, mirroring lib/board.ts: the academic year turns over on 1 May. */
 import type { Standing } from './api';
 
 export function academicYearOf(now = new Date()): number {
-  const month = now.getUTCMonth();
-  const rolledOver = month > 7 || (month === 7 && now.getUTCDate() >= 31);
+  const rolledOver = now.getUTCMonth() >= 4; // May onwards
   return rolledOver ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
 }
 

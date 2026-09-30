@@ -80,10 +80,9 @@ export const ANSWER_MAX = 1200;
 /** Questions stop being handed out once this many people have answered. */
 export const ENOUGH_ANSWERS = 3;
 
-/** The academic year turns over on 31 August: class of 2030 is a first-year from 31 August 2026. */
+/** The academic year turns over on 1 May: the class of 2026 graduates on 1 May 2026, and the class of 2030 is a first-year from then. */
 export function academicYearOf(now = new Date()): number {
-  const month = now.getUTCMonth();
-  const rolledOver = month > 7 || (month === 7 && now.getUTCDate() >= 31);
+  const rolledOver = now.getUTCMonth() >= 4; // May onwards
   return rolledOver ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
 }
 

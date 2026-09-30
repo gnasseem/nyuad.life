@@ -5,6 +5,7 @@
  * The JSON shapes mirror what lib/facebook.ts expects from the real site.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { parseSearchDateFilters } from '../lib/facebook.ts';
 
 export interface FakePost {
   id: string;
@@ -20,6 +21,8 @@ export interface FakeOptions {
   posts: FakePost[];
   /** Posts per feed page when the client asks; the scraper may ask for more. */
   pageSize?: number;
+  /** Like the real site, the feed can refuse to page past the newest N posts; search with a date filter still reaches the rest. */
+  feedLimit?: number;
   /** Answer a feed request with a rate-limit error when this returns true (exercises the retry path). `nth` counts feed requests from 1. */
   failFeedRequest?: (request: { from: number; count: number; nth: number }) => boolean;
   loginDelayMs?: number;
@@ -28,7 +31,7 @@ export interface FakeOptions {
 export interface FakeFacebook {
   server: Server;
   url: string;
-  calls: { logins: number; feedPages: number; comments: number; groupViews: number };
+  calls: { logins: number; feedPages: number; comments: number; groupViews: number; searches: number; searchPages: number };
   close(): Promise<void>;
 }
 
@@ -47,8 +50,10 @@ export function makePosts(count: number, commentedEvery = 10): FakePost[] {
 export function startFakeFacebook(options: FakeOptions): Promise<FakeFacebook> {
   const pageSize = options.pageSize ?? 3;
   const loginDelay = options.loginDelayMs ?? 1500;
-  const calls = { logins: 0, feedPages: 0, comments: 0, groupViews: 0 };
+  const calls = { logins: 0, feedPages: 0, comments: 0, groupViews: 0, searches: 0, searchPages: 0 };
   const groupPath = `/groups/${options.slug}`;
+  /** What the feed can reach; the search page can reach every post. */
+  const feedPosts = options.feedLimit ? options.posts.slice(0, options.feedLimit) : options.posts;
   let origin = '';
 
   const storyNode = (post: FakePost) => ({
@@ -90,7 +95,7 @@ export function startFakeFacebook(options: FakeOptions): Promise<FakeFacebook> {
   });
 
   const feedDoc = (from: number, count: number) => {
-    const slice = options.posts.slice(from, from + count);
+    const slice = feedPosts.slice(from, from + count);
     const next = from + slice.length;
     return {
       data: {
@@ -98,8 +103,41 @@ export function startFakeFacebook(options: FakeOptions): Promise<FakeFacebook> {
           __typename: 'Group',
           id: '1234',
           group_feed: {
-            edges: slice.map((post) => ({ node: storyNode(post), cursor: `c:${options.posts.indexOf(post) + 1}` })),
-            page_info: { end_cursor: `c:${next}`, has_next_page: next < options.posts.length },
+            edges: slice.map((post) => ({ node: storyNode(post), cursor: `c:${feedPosts.indexOf(post) + 1}` })),
+            page_info: { end_cursor: `c:${next}`, has_next_page: next < feedPosts.length },
+          },
+        },
+      },
+    };
+  };
+
+  /** Posts created between two days (inclusive) whose text or comments contain the search term, newest first. */
+  const searchResults = (term: string, startDay: string, endDay: string) => {
+    const start = Date.parse(`${startDay}T00:00:00Z`) / 1000;
+    const end = Date.parse(`${endDay}T23:59:59Z`) / 1000;
+    const needle = term.toLowerCase();
+    return options.posts.filter((post) => post.createdAt >= start && post.createdAt <= end && [post.text, ...post.comments.map((comment) => comment.text)].some((text) => text.toLowerCase().includes(needle)));
+  };
+
+  /** Search cursors carry the query so the paginated request needs nothing else: "s:<base64 term|start|end>:<offset>". */
+  const searchCursor = (term: string, startDay: string, endDay: string, offset: number) => `s:${b64(`${term}|${startDay}|${endDay}`)}:${offset}`;
+  const parseSearchCursor = (cursor: string) => {
+    const match = /^s:([^:]+):(\d+)$/.exec(cursor);
+    if (!match) return null;
+    const [term, startDay, endDay] = Buffer.from(match[1]!, 'base64').toString('utf8').split('|') as [string, string, string];
+    return { term, startDay, endDay, offset: Number(match[2]) };
+  };
+
+  const searchDoc = (term: string, startDay: string, endDay: string, from: number, count: number) => {
+    const results = searchResults(term, startDay, endDay);
+    const slice = results.slice(from, from + count);
+    const next = from + slice.length;
+    return {
+      data: {
+        serpResponse: {
+          results: {
+            edges: slice.map((post) => ({ node: { role: 'ENTITY_POSTS', rendering_strategy: { view_model: { click_model: { story: storyNode(post) } } } }, cursor: searchCursor(term, startDay, endDay, results.indexOf(post) + 1) })),
+            page_info: { end_cursor: searchCursor(term, startDay, endDay, next), has_next_page: next < results.length },
           },
         },
       },
@@ -152,6 +190,44 @@ export function startFakeFacebook(options: FakeOptions): Promise<FakeFacebook> {
     return page(
       'Group',
       `<div role="navigation">Logged in as Test</div><div id="feed" role="feed"></div><script type="application/json" data-sjs>${JSON.stringify({ require: [['ScheduledServerJS', 'handle', null, [{ __bbox: { require: [['RelayPrefetchedStreamCache', 'next', [], ['adp_GroupsCometFeedQuery', { __bbox: { result: first } }]]] } }]]] })}</script><script>${client}</script>`,
+    );
+  };
+
+  const searchPage = (term: string, startDay: string, endDay: string) => {
+    const first = searchDoc(term, startDay, endDay, 0, 5);
+    const results = first.data.serpResponse.results;
+    const client = `
+      const state = { cursor: ${JSON.stringify(results.page_info.end_cursor)}, hasNext: ${results.page_info.has_next_page}, busy: false };
+      function append(node) {
+        const div = document.createElement('div');
+        div.setAttribute('role', 'article');
+        div.style.height = '420px';
+        div.textContent = node.rendering_strategy.view_model.click_model.story.comet_sections.content.story.message.text;
+        document.getElementById('results').appendChild(div);
+      }
+      for (const edge of ${JSON.stringify(results.edges)}) append(edge.node);
+      function loadMore() {
+        if (!state.hasNext || state.busy) return;
+        state.busy = true;
+        const variables = JSON.stringify({ allow_streaming: false, args: { callsite: 'COMET_GLOBAL_SEARCH', config: { exact_match: false }, text: ${JSON.stringify(term)} }, count: ${pageSize}, cursor: state.cursor, feedbackSource: 0, scale: 1 });
+        const body = new URLSearchParams({ av: '100', __user: '100', __a: '1', fb_dtsg: 'DTSG-TOKEN', jazoest: '25', lsd: 'LSD-TOKEN', fb_api_caller_class: 'RelayModern', fb_api_req_friendly_name: 'SearchCometResultsPaginatedResultsQuery', variables, server_timestamps: 'true', doc_id: '7000000003' }).toString();
+        fetch('/api/graphql/', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-fb-friendly-name': 'SearchCometResultsPaginatedResultsQuery', 'x-fb-lsd': 'LSD-TOKEN', 'x-asbd-id': '129477' }, body })
+          .then((response) => response.json())
+          .then((doc) => {
+            const page = doc.data.serpResponse.results;
+            for (const edge of page.edges) append(edge.node);
+            state.cursor = page.page_info.end_cursor;
+            state.hasNext = page.page_info.has_next_page;
+            state.busy = false;
+          })
+          .catch(() => { state.busy = false; });
+      }
+      window.addEventListener('scroll', () => {
+        if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 300) loadMore();
+      });`;
+    return page(
+      'Search results',
+      `<div role="navigation">Logged in as Test</div><h1>Results for ${term}</h1><div id="results" role="feed"></div><script type="application/json" data-sjs>${JSON.stringify({ require: [['ScheduledServerJS', 'handle', null, [{ __bbox: { require: [['RelayPrefetchedStreamCache', 'next', [], ['adp_SearchCometResultsInitialResultsQuery', { __bbox: { result: first } }]]] } }]]] })}</script><script>${client}</script>`,
     );
   };
 
@@ -223,6 +299,13 @@ export function startFakeFacebook(options: FakeOptions): Promise<FakeFacebook> {
           // Facebook streams a second, deferred document after the main one; mimic that.
           return send(res, 200, 'application/json', `${JSON.stringify(feedDoc(from, count))}\n${JSON.stringify({ label: 'deferred', path: ['node'], data: { extra: true } })}`);
         }
+        if (name === 'SearchCometResultsPaginatedResultsQuery') {
+          const parsed = parseSearchCursor(String(variables.cursor ?? ''));
+          if (!parsed) return send(res, 200, 'application/json', JSON.stringify({ data: null, errors: [{ summary: 'Bad cursor' }] }));
+          calls.searchPages++;
+          const count = Math.min(Number(variables.count) || pageSize, 25);
+          return send(res, 200, 'application/json', JSON.stringify(searchDoc(parsed.term, parsed.startDay, parsed.endDay, parsed.offset, count)));
+        }
         if (name === 'CommentsListComponentsPaginationQuery') {
           calls.comments++;
           const post = options.posts.find((entry) => b64(`feedback:${entry.id}`) === variables.id);
@@ -235,6 +318,13 @@ export function startFakeFacebook(options: FakeOptions): Promise<FakeFacebook> {
       }
       if (pathname.startsWith(groupPath)) {
         if (!loggedIn(req)) return send(res, 302, 'text/plain', '', { location: `/login/?next=${encodeURIComponent(url.pathname + url.search)}` });
+        if (pathname === `${groupPath}/search`) {
+          const term = url.searchParams.get('q') ?? '';
+          const range = parseSearchDateFilters(url.searchParams.get('filters'));
+          if (!term || !range) return send(res, 200, 'text/html', page('Search', '<h1>Search this group</h1>'));
+          calls.searches++;
+          return send(res, 200, 'text/html', searchPage(term, range.startDay, range.endDay));
+        }
         const thread = /\/posts\/(\d+)$/.exec(pathname);
         if (thread) {
           const post = options.posts.find((entry) => entry.id === thread[1]);

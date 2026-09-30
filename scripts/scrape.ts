@@ -3,7 +3,9 @@
  * to data/posts.jsonl. Runs on your laptop, never on the server.
  *
  *   npm run scrape                      newest posts until it meets posts it already has (incremental)
- *   npm run scrape -- --full            walk back to the very first post of the group (resumes where it stopped)
+ *   npm run scrape -- --full            walk back as far as the feed goes (resumes where it stopped)
+ *   npm run scrape -- --all-time        walk the whole group month by month through search (reaches every year)
+ *   npm run scrape -- --all-time --from 2013-01   ... but not before January 2013
  *   npm run scrape -- --login           only open the window so you can log in, then exit
  *   npm run scrape -- --max-posts 300   stop after 300 new or updated posts
  *   npm run scrape -- --only-comments   only fetch missing comments for posts already saved
@@ -20,6 +22,11 @@
  * grows the way scrolling does; if it ever fails, scrolling is the fallback. Comments are collected by opening
  * each thread and expanding it. Progress is saved regularly and on Ctrl+C, and the next run resumes.
  *
+ * Facebook's group feed stops paging long before the first post of an old group (it says "no more posts" after a
+ * year or two). --all-time gets around that with the group's search page, whose "date posted" filter reaches any
+ * month: for every month back to --from it searches a handful of very common words and pages through the results
+ * the same way. Months already covered are skipped on the next run; --restart-feed forgets them.
+ *
  * First run: a Chromium window opens on facebook.com. Log in there; the profile is kept in .scraper-profile/.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -33,8 +40,10 @@ import {
   extractStories,
   graphqlErrors,
   isFeedPaginationRequest,
+  isSearchPaginationRequest,
   parseGraphqlForm,
   parseJsonDocuments,
+  searchDateFilters,
   toSourcePosts,
   withGraphqlVariables,
   type CommentRecord,
@@ -71,6 +80,25 @@ const BROWSER_EXECUTABLE = process.env.ROR_BROWSER_EXECUTABLE || undefined;
 const STATE_FILE = path.join(path.dirname(postsFile()), 'scrape-state.json');
 const DEBUG_DIR = path.resolve('.scraper-debug');
 const FULL = flag('full');
+const ALL_TIME = flag('all-time');
+/** The earliest month --all-time looks at (YYYY-MM). NYU Abu Dhabi opened in 2010, so nothing in the group predates that. */
+const FROM_MONTH = (() => {
+  const raw = value('from', process.env.ROR_SCRAPE_FROM ?? '2010-01');
+  const match = /^(\d{4})-(\d{1,2})$/.exec(raw);
+  if (!match) {
+    console.error(`--from wants a month like 2013-01, not "${raw}".`);
+    process.exit(1);
+  }
+  return `${match[1]}-${match[2]!.padStart(2, '0')}`;
+})();
+/**
+ * The words --all-time searches for in every month. Facebook only searches with a query, so a few of the commonest
+ * words stand in for "everything"; between them they appear in nearly every post or its comments.
+ */
+const SEARCH_TERMS = value('terms', process.env.ROR_SCRAPE_TERMS ?? 'a,the,i,to,and,is,for,anyone,you,in,of,it,pm,me,does,selling')
+  .split(',')
+  .map((term) => term.trim())
+  .filter(Boolean);
 const LOGIN_ONLY = flag('login');
 const HEADLESS = flag('headless');
 const CHROME = flag('chrome');
@@ -93,6 +121,8 @@ interface State {
   feedCursorOldest?: string;
   /** How often each thread was opened for comments; threads that still look incomplete after two visits are left alone. */
   commentTries?: Record<string, number>;
+  /** Months (YYYY-MM) an --all-time walk has fully searched; the next --all-time run skips them. */
+  monthsDone?: string[];
 }
 
 /** The request Facebook's client used to load more posts, replayed with new cursors. Lives in memory only (it holds session tokens). */
@@ -110,7 +140,9 @@ if (!GROUP_SLUG) {
 
 const stories = new Map<string, StoryRecord>();
 const comments = new Map<string, CommentRecord>();
-const feedCapture: { template: FeedTemplate | null; nextCursor: string | null; version: number } = { template: null, nextCursor: null, version: 0 };
+const feedCapture: { template: FeedTemplate | null; nextCursor: string | null; version: number; mode: 'feed' | 'search' } = { template: null, nextCursor: null, version: 0, mode: 'feed' };
+/** Post ids the current search (one month, one word) returned, known or not. */
+const searchHits = new Set<string>();
 let currentPostId = '';
 let responseCounter = 0;
 let stopping = false;
@@ -140,6 +172,7 @@ function ingest(docs: unknown[], origin: string): { stories: number; comments: n
       const existing = stories.get(story.id);
       if (!existing) newStories++;
       stories.set(story.id, existing ? mergeStories(existing, story) : story);
+      if (feedCapture.mode === 'search') searchHits.add(story.id);
     }
     for (const comment of extractComments(doc)) {
       if (!comment.postId && currentPostId) comment.postId = currentPostId;
@@ -194,7 +227,9 @@ async function handleResponse(response: Response): Promise<void> {
   const docs = parseJsonDocuments(body);
   const parsed = request.method() === 'POST' ? parseGraphqlForm(request.postData()) : null;
   ingest(docs, parsed?.friendlyName || 'graphql');
-  if (!parsed || !isFeedPaginationRequest(parsed)) return;
+  if (!parsed) return;
+  // On the group page the feed's "more posts" request is the one to replay; on a search page it is the results one.
+  if (feedCapture.mode === 'search' ? !isSearchPaginationRequest(parsed) : !isFeedPaginationRequest(parsed)) return;
 
   const current = feedCapture.template;
   const better = !current || (/RegularStories/i.test(parsed.friendlyName) && !/RegularStories/i.test(current.friendlyName)) || current.friendlyName === parsed.friendlyName;
@@ -485,6 +520,12 @@ interface CursorOptions {
   stopOnKnown: boolean;
   /** Remember the position in the state file so an interrupted --full run resumes. */
   trackCursor: boolean;
+  /** What to say when Facebook reports no further page. */
+  endReason?: string;
+  /** Only log when something goes wrong (the month-by-month walk runs thousands of small walks). */
+  quiet?: boolean;
+  /** The page to reload when Facebook stops accepting the captured request (the group feed by default). */
+  reloadUrl?: string;
 }
 
 async function cursorWalk(walk: WalkContext, template: FeedTemplate, options: CursorOptions): Promise<WalkOutcome> {
@@ -498,7 +539,7 @@ async function cursorWalk(walk: WalkContext, template: FeedTemplate, options: Cu
   let lastSave = Date.now();
 
   const finish = (outcome: WalkOutcome, reason: string): WalkOutcome => {
-    log(`${reason} ${tracker.progress()}`);
+    if (!options.quiet || outcome === 'fallback') log(`${reason} ${tracker.progress()}`);
     return outcome;
   };
 
@@ -509,7 +550,7 @@ async function cursorWalk(walk: WalkContext, template: FeedTemplate, options: Cu
         delete state.feedCursor;
         delete state.feedCursorOldest;
       }
-      return finish('end', 'Reached the first post of the group.');
+      return finish('end', options.endReason ?? 'Reached the first post of the group.');
     }
     walk.page = await livePage(walk.context, walk.page);
     const result = await fetchFeedPage(walk.page, template, cursor, largerPages);
@@ -531,8 +572,8 @@ async function cursorWalk(walk: WalkContext, template: FeedTemplate, options: Cu
       }
       if (recaptures >= 2) return finish('fallback', 'Facebook keeps refusing to page the feed.');
       recaptures++;
-      log('Reloading the group to pick up a fresh session token…');
-      const fresh = await recaptureTemplate(walk);
+      log('Reloading the page to pick up a fresh session token…');
+      const fresh = await recaptureTemplate(walk, options.reloadUrl ?? FEED_URL);
       if (!fresh) return finish('fallback', 'Could not capture the feed request again.');
       template = fresh;
       failures = 0;
@@ -604,11 +645,11 @@ async function fetchFeedPage(page: Page, template: FeedTemplate, cursor: string,
   }
 }
 
-async function recaptureTemplate(walk: WalkContext): Promise<FeedTemplate | null> {
+async function recaptureTemplate(walk: WalkContext, url: string): Promise<FeedTemplate | null> {
   walk.page = await livePage(walk.context, walk.page);
   if (!(await hasSession(walk.context))) walk.page = await ensureLoggedIn(walk.context, walk.page);
   const version = feedCapture.version;
-  await gotoSafe(walk.page, FEED_URL);
+  await gotoSafe(walk.page, url);
   await polite(3000);
   await ingestPage(walk.page);
   walk.tracker.absorb();
@@ -661,6 +702,133 @@ async function scrollWalk(walk: WalkContext, stopOnKnown: boolean): Promise<void
     }
     await scrollDown(walk.page);
     await polite(1800);
+  }
+}
+
+/* ---------- The month-by-month walk (--all-time) ---------- */
+
+/** Months from the current one back to `from` (YYYY-MM), newest first. */
+function monthsBackTo(from: string, now = new Date()): string[] {
+  const out: string[] = [];
+  let year = now.getUTCFullYear();
+  let month = now.getUTCMonth() + 1;
+  const key = () => `${year}-${String(month).padStart(2, '0')}`;
+  while (key() >= from) {
+    out.push(key());
+    if (--month === 0) {
+      month = 12;
+      year--;
+    }
+  }
+  return out;
+}
+
+function lastDayOf(month: string): string {
+  const [year, m] = month.split('-').map(Number) as [number, number];
+  return `${month}-${String(new Date(Date.UTC(year, m, 0)).getUTCDate()).padStart(2, '0')}`;
+}
+
+let monthsLeft = 0;
+
+/**
+ * Searches the group month by month, newest first, one common word at a time, and pages through every result.
+ * Every post that turns up is saved or refreshed whether or not it was on disk already.
+ */
+async function walkAllTime(walk: WalkContext): Promise<void> {
+  const { tracker, state } = walk;
+  if (RESTART_FEED) delete state.monthsDone;
+  const done = new Set(state.monthsDone ?? []);
+  const months = monthsBackTo(FROM_MONTH);
+  const todo = months.filter((month) => !done.has(month));
+  monthsLeft = todo.length;
+  log(`Walking the whole group month by month back to ${FROM_MONTH} through the group's search: ${todo.length} of ${months.length} months to go, ${SEARCH_TERMS.length} words each. This takes hours; leave it running. Ctrl+C saves progress and the next --all-time run continues.`);
+  let lastSave = Date.now();
+  let emptyMonths = 0;
+  for (const [index, month] of todo.entries()) {
+    if (stopping || tracker.collected >= MAX_POSTS) break;
+    const collectedBefore = tracker.collected;
+    const found = new Set<string>();
+    let complete = true;
+    for (const term of SEARCH_TERMS) {
+      if (stopping) break;
+      const hits = await searchMonth(walk, month, term);
+      if (!hits) {
+        complete = false;
+        continue;
+      }
+      for (const id of hits) found.add(id);
+    }
+    if (stopping) break;
+    if (complete) {
+      done.add(month);
+      state.monthsDone = [...done];
+      monthsLeft--;
+      log(`${month}: ${found.size} posts found, ${tracker.collected - collectedBefore} new or changed.`);
+    } else {
+      log(`${month}: ${found.size} posts found, ${tracker.collected - collectedBefore} new or changed, but some searches could not be paged to the end; the month will be searched again next run.`);
+    }
+    if (Date.now() - lastSave > 180_000) {
+      await walk.persist();
+      lastSave = Date.now();
+    }
+    // A year of months without a single post means this is before the group existed; the rest would be empty too.
+    emptyMonths = complete && found.size === 0 ? emptyMonths + 1 : 0;
+    if (emptyMonths >= 12 && index < todo.length - 1) {
+      const rest = todo.slice(index + 1);
+      for (const skipped of rest) done.add(skipped);
+      state.monthsDone = [...done];
+      monthsLeft -= rest.length;
+      log(`Twelve months in a row without a post; assuming the group did not exist yet and skipping the ${rest.length} months before ${month}. Run again with --restart-feed --from ${rest.at(-1)} to search them anyway.`);
+      break;
+    }
+  }
+  if (tracker.collected >= MAX_POSTS) log(`Reached --max-posts ${MAX_POSTS}.`);
+  state.completedFeed = monthsLeft === 0;
+  if (monthsLeft === 0) log(`Every month back to ${FROM_MONTH} is covered. ${tracker.progress()}`);
+}
+
+/** One group search: posts created in `month` that contain `term`, paged to the end. Null when Facebook would not page them. */
+async function searchMonth(walk: WalkContext, month: string, term: string): Promise<Set<string> | null> {
+  const url = `${GROUP_URL}/search/?q=${encodeURIComponent(term)}&filters=${encodeURIComponent(searchDateFilters(`${month}-01`, lastDayOf(month)))}`;
+  feedCapture.mode = 'search';
+  feedCapture.template = null;
+  feedCapture.nextCursor = null;
+  searchHits.clear();
+  try {
+    walk.page = await livePage(walk.context, walk.page);
+    let loaded = await gotoSafe(walk.page, url);
+    await polite(3000);
+    if (/\/login|\/checkpoint/.test(safeUrl(walk.page)) || !(await hasSession(walk.context))) {
+      log('Facebook logged the browser out. Log in again in the window to continue.');
+      walk.page = await ensureLoggedIn(walk.context, walk.page);
+      loaded = await gotoSafe(walk.page, url);
+      await polite(3000);
+    }
+    if (!loaded) {
+      log(`The search page for ${month} ("${term}") did not load.`);
+      return null;
+    }
+    await ingestPage(walk.page);
+    walk.tracker.absorb();
+    if (searchHits.size === 0) {
+      // Results may still be on their way; one scroll gives the client a moment before the search counts as empty.
+      await scrollDown(walk.page);
+      await polite(1500);
+      await ingestPage(walk.page);
+      walk.tracker.absorb();
+      if (searchHits.size === 0) return new Set();
+    }
+    const template = await captureTemplate(walk, 6);
+    if (template) {
+      const outcome = await cursorWalk(walk, template, { cursor: feedCapture.nextCursor, stopOnKnown: false, trackCursor: false, quiet: true, endReason: 'Reached the end of the results.', reloadUrl: url });
+      if (outcome === 'fallback') return null;
+    }
+    if (DEBUG) log(`${month} "${term}": ${searchHits.size} results.`);
+    return new Set(searchHits);
+  } finally {
+    feedCapture.mode = 'feed';
+    feedCapture.template = null;
+    feedCapture.nextCursor = null;
   }
 }
 
@@ -850,7 +1018,8 @@ async function main(): Promise<void> {
       return;
     }
     if (!ONLY_COMMENTS && !stopping) {
-      await walkFeed(walk);
+      if (ALL_TIME) await walkAllTime(walk);
+      else await walkFeed(walk);
       await persist();
     }
     if (FETCH_COMMENTS && !stopping) await collectComments(walk, archive, known);
@@ -859,6 +1028,7 @@ async function main(): Promise<void> {
     const total = archive.reduce((sum, post) => sum + post.comments.length, 0);
     log(`Done. ${archive.length} posts and ${total} comments on disk; ${changed} changed in this run.`);
     if (browserGone) log('The browser window was closed. Run the command again to continue where this run stopped.');
+    else if (ALL_TIME && monthsLeft > 0) log(`The month-by-month walk is not finished yet (${monthsLeft} months to go). Run \`npm run scrape -- --all-time\` again to continue.`);
     else if (state.feedCursor && FULL) log(`The full walk is not finished yet (oldest post so far ${state.feedCursorOldest || 'unknown'}). Run \`npm run scrape -- --full\` again to continue.`);
     await context.close().catch(noop);
   }

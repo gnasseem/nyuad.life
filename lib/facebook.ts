@@ -274,7 +274,7 @@ export function extractFeedPageInfo(root: unknown): PageInfo | null {
   let bestScore = -1;
   walkKeyed(root, (value, key, parentKey) => {
     if (key !== 'page_info' || !isRecord(value) || typeof value.has_next_page !== 'boolean') return;
-    const score = /feed/i.test(parentKey) ? 2 : /stories|posts/i.test(parentKey) ? 1 : 0;
+    const score = /feed|results/i.test(parentKey) ? 2 : /stories|posts/i.test(parentKey) ? 1 : 0;
     if (score > bestScore) {
       bestScore = score;
       best = { endCursor: typeof value.end_cursor === 'string' ? value.end_cursor : '', hasNextPage: value.has_next_page };
@@ -317,6 +317,57 @@ export function isFeedPaginationRequest(request: GraphqlRequest): boolean {
   if (!('cursor' in variables)) return false;
   if (/feed/i.test(request.friendlyName) && /pagination/i.test(request.friendlyName)) return true;
   return 'sortingSetting' in variables || 'feedType' in variables || variables.feedLocation === 'GROUP';
+}
+
+/** True for the request Facebook's client sends to load more search results (the group's "search in group" page). */
+export function isSearchPaginationRequest(request: GraphqlRequest): boolean {
+  const variables = request.variables;
+  if (!('cursor' in variables)) return false;
+  if (/search/i.test(request.friendlyName) && /result/i.test(request.friendlyName)) return true;
+  return isRecord(variables.args) && typeof variables.args.text === 'string';
+}
+
+/**
+ * The `filters` query parameter of a group search URL that limits results to posts created between two days
+ * (inclusive, `YYYY-MM-DD`) and sorts them newest first. This is what the "Date posted" filter in Facebook's own
+ * search UI puts in the address bar; unlike the group feed, search can reach posts from any year.
+ */
+export function searchDateFilters(startDay: string, endDay: string): string {
+  const [startYear, startMonth] = startDay.split('-').map(Number) as [number, number];
+  const [endYear, endMonth] = endDay.split('-').map(Number) as [number, number];
+  const day = (value: string) => value.split('-').map(Number).join('-'); // Facebook writes 2020-1-5, not 2020-01-05
+  const args = JSON.stringify({
+    start_year: String(startYear),
+    start_month: `${startYear}-${startMonth}`,
+    end_year: String(endYear),
+    end_month: `${endYear}-${endMonth}`,
+    start_day: day(startDay),
+    end_day: day(endDay),
+  });
+  const filters = {
+    'rp_creation_time:0': JSON.stringify({ name: 'creation_time', args }),
+    'rp_chrono_sort:0': JSON.stringify({ name: 'chronosort', args: '' }),
+  };
+  return Buffer.from(JSON.stringify(filters)).toString('base64');
+}
+
+/** The inverse of `searchDateFilters`: the day range a group search URL's `filters` parameter asks for, if any. */
+export function parseSearchDateFilters(filters: string | null | undefined): { startDay: string; endDay: string } | null {
+  if (!filters) return null;
+  try {
+    const outer = JSON.parse(decodeBase64(filters)) as unknown;
+    if (!isRecord(outer)) return null;
+    const entry = Object.entries(outer).find(([key]) => key.startsWith('rp_creation_time'));
+    if (!entry || typeof entry[1] !== 'string') return null;
+    const inner = JSON.parse(entry[1]) as unknown;
+    if (!isRecord(inner) || typeof inner.args !== 'string') return null;
+    const args = JSON.parse(inner.args) as unknown;
+    if (!isRecord(args) || typeof args.start_day !== 'string' || typeof args.end_day !== 'string') return null;
+    const pad = (value: string) => value.split('-').map((part, index) => (index === 0 ? part : part.padStart(2, '0'))).join('-');
+    return { startDay: pad(args.start_day), endDay: pad(args.end_day) };
+  } catch {
+    return null;
+  }
 }
 
 /** Error messages Facebook reports inside an otherwise successful GraphQL response (rate limits, expired sessions…). */
