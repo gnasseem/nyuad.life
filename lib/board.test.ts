@@ -25,7 +25,7 @@ function question(overrides: Partial<Question>): Question {
   };
 }
 
-const profile: Profile = { netId: 'abc1234', name: 'Sara', major: 'Computer Science', classOf: 2028, answers: 0, digest: true, createdAt: now.toISOString(), lastSeenAt: now.toISOString() };
+const profile: Profile = { netId: 'abc1234', name: 'Sara', major: 'Computer Science', classOf: 2028, answers: 0, createdAt: now.toISOString(), lastSeenAt: now.toISOString() };
 
 describe('standingFor', () => {
   it('turns a class year into a standing that rolls over on 1 May', () => {

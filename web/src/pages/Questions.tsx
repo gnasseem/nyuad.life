@@ -130,9 +130,6 @@ function Leaderboard() {
           </div>
         ))}
       </div>
-      <p className="faint xs" style={{ marginTop: 8 }}>
-        Helpers get a Monday email with the open questions their major and year fit best. Turn it off in Settings.
-      </p>
     </>
   );
 }

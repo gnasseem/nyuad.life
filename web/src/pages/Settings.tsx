@@ -116,36 +116,6 @@ export function SettingsPage() {
         </div>
       </section>
 
-      {profile && (
-        <section className="settings-section">
-          <h2>Weekly roundup</h2>
-          <p>Every Monday, the open questions a {profile.major} {standingLabel(profile.year)} could answer, by email.</p>
-          <div className="settings-list">
-            <div className="settings-row">
-              <div className="text">
-                <b>Email me open questions</b>
-                <span>Sent to {profile.netId}@nyu.edu, at most once a week, only when there is something for you.</span>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                className="switch"
-                aria-checked={profile.digest !== false}
-                aria-label="Weekly roundup"
-                onClick={() => {
-                  const on = profile.digest === false;
-                  setProfile({ ...profile, digest: on });
-                  api.board
-                    .digest({ netId: profile.netId, on })
-                    .then(() => toast(on ? 'Roundup on' : 'Roundup off'))
-                    .catch((err) => toast(err instanceof Error ? err.message : 'Could not save that.'));
-                }}
-              />
-            </div>
-          </div>
-        </section>
-      )}
-
       <section className="settings-section">
         <h2>On this device</h2>
         <p>Conversations are kept in this browser only. Nothing you ask is stored on the server.</p>

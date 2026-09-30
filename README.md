@@ -38,8 +38,7 @@ What the archive refuses to be: a marketplace. Feed ads, Falcon-dirham trades an
 the archive, and so are the "bump", tag-a-friend and emoji comments. A question that is really a trade goes to the
 Falcons page; a listing, a ride or a lost-and-found request is sent to the group itself.
 
-Helpers who opt in get a Monday email (`api/digest.ts`, Resend) with the open questions their major and year fit best,
-and the Questions page shows a leaderboard with weekly streaks.
+The Questions page shows a leaderboard of helpers with weekly streaks.
 
 Everything is TypeScript in one repository:
 
@@ -63,7 +62,6 @@ Everything is TypeScript in one repository:
    | `VOYAGE_API_KEY` | for semantic search | Embeds each question the way the index was embedded (section 3). |
    | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | for the board | Section 4. Without them the Questions and Announcements pages say the board is not set up. |
    | `ROR_GROUP_URL` | no | Where listings, rides and lost-and-found requests are sent. Defaults to the group. |
-   | `CRON_SECRET`, `RESEND_API_KEY`, `DIGEST_FROM` | for the weekly roundup | Vercel's cron calls `/api/digest` every Monday with the secret; Resend sends the mails. Without the key the route only composes them. |
    | `GEMINI_CHAT_MODEL`, `GEMINI_CHAT_FALLBACK_MODELS`, `GEMINI_LITE_MODEL` | no | Defaults: `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-flash-lite`. |
 
 3. Deploy. `GET /api/health` shows what is active: `embeddings.semanticSearch`, `gemini.configured`,
@@ -72,10 +70,10 @@ Everything is TypeScript in one repository:
    The same sentence is shown on the Questions and Announcements pages and under Settings → About.
 
 Routes: `GET /api/health`, `GET /api/home`, `GET /api/search`, `GET /api/post?id=`, `GET /api/courses`,
-`GET /api/guide` (`section=`, `item=`, `course=`), `GET /api/digest`, `POST /api/ask` (server-sent events: `status`,
+`GET /api/guide` (`section=`, `item=`, `course=`), `POST /api/ask` (server-sent events: `status`,
 `redirect`, `sources`, `delta`, `followups`, `done`, `error`), and `GET|POST /api/board`
 (`op=stats|question|mine|announcements|offers|leaderboard` on GET;
-`profile|digest|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer` on POST). Every route is
+`profile|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer` on POST). Every route is
 rate-limited per IP and per purpose.
 
 ## 2. Scrape the group (runs on your laptop)
