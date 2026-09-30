@@ -129,6 +129,15 @@ export function askerKey(): string {
   return key;
 }
 
+/** Ids of the notices posted from this browser, so they show a Remove button. */
+export function loadAnnounced(): string[] {
+  return read<string[]>(ANNOUNCED_KEY, []);
+}
+
+export function saveAnnounced(ids: string[]): void {
+  write(ANNOUNCED_KEY, ids.slice(-50));
+}
+
 /** Removes everything this site keeps in the browser: profile, conversations, the anonymous key and the theme. */
 export function forgetDevice(): void {
   for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, KEY_KEY, ANNOUNCED_KEY]) {

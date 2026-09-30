@@ -1,37 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type Announcement, type AnnouncementKind } from '../api';
-import { Mark } from '../components/Logo';
 import { Modal } from '../components/Modal';
 import { useApp } from '../context';
-import { formatWhen, initials, relativeDate } from '../format';
-import { IconClock, IconInfo, IconLink, IconPin, IconPlus, IconTrash } from '../icons';
-import { askerKey } from '../store';
+import { formatWhen, relativeDate } from '../format';
+import { IconPlus } from '../icons';
+import { askerKey, loadAnnounced, saveAnnounced } from '../store';
 
-const KINDS: Array<{ id: AnnouncementKind; label: string; hint: string }> = [
-  { id: 'event', label: 'Event', hint: 'Something happening at a time and place' },
-  { id: 'deadline', label: 'Deadline', hint: 'Apply, register or submit by' },
-  { id: 'opportunity', label: 'Opportunity', hint: 'Jobs, grants, calls, funding' },
-  { id: 'club', label: 'Club', hint: 'SIG and club notices' },
-  { id: 'notice', label: 'Notice', hint: 'Everything else worth knowing' },
+const KINDS: Array<{ id: AnnouncementKind; label: string }> = [
+  { id: 'event', label: 'Event' },
+  { id: 'deadline', label: 'Deadline' },
+  { id: 'opportunity', label: 'Opportunity' },
+  { id: 'club', label: 'Club' },
+  { id: 'notice', label: 'General' },
 ];
-
-const MINE_KEY = 'room.announced';
-
-function myAnnouncements(): string[] {
-  try {
-    return JSON.parse(localStorage.getItem(MINE_KEY) ?? '[]') as string[];
-  } catch {
-    return [];
-  }
-}
-
-function rememberMine(ids: string[]): void {
-  try {
-    localStorage.setItem(MINE_KEY, JSON.stringify(ids.slice(-50)));
-  } catch {
-    // ignore
-  }
-}
 
 function startOfDay(date: Date): Date {
   const copy = new Date(date);
@@ -46,11 +27,10 @@ function dayDiff(when: Date, now: Date): number {
 interface Group {
   key: string;
   label: string;
-  sub?: string;
   items: Announcement[];
 }
 
-/** Dated announcements by day for the coming week, then "Next week" and "Later"; the input is already soonest first. */
+/** Dated notices by day for the coming week, then "Next week" and "Later"; the input is already soonest first. */
 function groupByDay(items: Announcement[], now: Date): Group[] {
   const groups: Group[] = [];
   for (const entry of items) {
@@ -59,13 +39,8 @@ function groupByDay(items: Announcement[], now: Date): Group[] {
     const key = diff <= 0 ? 'today' : diff === 1 ? 'tomorrow' : diff < 7 ? `day-${diff}` : diff < 14 ? 'next-week' : 'later';
     let group = groups.find((candidate) => candidate.key === key);
     if (!group) {
-      const date = when.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
-      group = {
-        key,
-        label: diff <= 0 ? 'Today' : diff === 1 ? 'Tomorrow' : diff < 7 ? when.toLocaleDateString('en-GB', { weekday: 'long' }) : diff < 14 ? 'Next week' : 'Later',
-        sub: diff < 7 ? date : undefined,
-        items: [],
-      };
+      const label = diff <= 0 ? 'Today' : diff === 1 ? 'Tomorrow' : diff < 7 ? when.toLocaleDateString('en-GB', { weekday: 'long' }) : diff < 14 ? 'Next week' : 'Later';
+      group = { key, label, items: [] };
       groups.push(group);
     }
     group.items.push(entry);
@@ -73,13 +48,13 @@ function groupByDay(items: Announcement[], now: Date): Group[] {
   return groups;
 }
 
-/** "In 40 min", "In 3 h", or "Happening now" for the first three hours after the start. */
-function startsIn(when: Date, now: Date): { text: string; live: boolean } | null {
+/** "In 40 min", "In 3 h", or "Now" for the first three hours after the start. */
+function startsIn(when: Date, now: Date): string | null {
   const minutes = Math.round((when.getTime() - now.getTime()) / 60_000);
-  if (minutes <= 0) return minutes > -180 ? { text: 'Happening now', live: true } : null;
-  if (minutes < 60) return { text: `In ${minutes} min`, live: false };
+  if (minutes <= 0) return minutes > -180 ? 'Now' : null;
+  if (minutes < 60) return `In ${minutes} min`;
   const hours = Math.round(minutes / 60);
-  return hours < 24 ? { text: `In ${hours} h`, live: false } : null;
+  return hours < 24 ? `In ${hours} h` : null;
 }
 
 export function AnnouncementsPage() {
@@ -88,7 +63,7 @@ export function AnnouncementsPage() {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<AnnouncementKind | ''>('');
   const [composing, setComposing] = useState(false);
-  const [mine, setMine] = useState<string[]>(myAnnouncements);
+  const [mine, setMine] = useState<string[]>(loadAnnounced);
   const now = useMemo(() => new Date(), [items]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(() => {
@@ -99,24 +74,24 @@ export function AnnouncementsPage() {
         setItems(result.announcements);
         setError('');
       })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load announcements.'));
+      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load notices.'));
   }, [boardProblem]);
 
   useEffect(load, [load]);
 
   const startPosting = async () => {
-    if (!profile && !(await requestProfile({ title: 'Before you post', reason: 'Your name goes on the announcement so people know who to ask. One time only.' }))) return;
+    if (!profile && !(await requestProfile({ title: 'Your details', reason: 'Your name appears on the notice.' }))) return;
     setComposing(true);
   };
 
   const remove = async (id: string) => {
-    if (!window.confirm('Remove this announcement?')) return;
+    if (!window.confirm('Remove this notice?')) return;
     try {
       await api.board.unannounce({ id, key: askerKey() });
       toast('Removed');
       load();
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not remove it.');
+      toast(err instanceof Error ? err.message : 'Could not remove the notice.');
     }
   };
 
@@ -136,8 +111,8 @@ export function AnnouncementsPage() {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>What’s on</h1>
-          <p>Events, deadlines and opportunities, posted by students. Dated ones drop off the day after; notices after two weeks.</p>
+          <h1>Notices</h1>
+          <p>Events, deadlines and opportunities posted by students.</p>
         </div>
         {!boardProblem && (
           <button type="button" className="btn primary" onClick={() => void startPosting()}>
@@ -145,11 +120,7 @@ export function AnnouncementsPage() {
           </button>
         )}
       </div>
-      {boardProblem && (
-        <div className="alert warn">
-          <IconInfo /> <span>{boardProblem}</span>
-        </div>
-      )}
+      {boardProblem && <div className="alert">{boardProblem}</div>}
       {!boardProblem && (
         <div className="chips" style={{ marginBottom: 20 }}>
           <button type="button" className={`chip${filter ? '' : ' on'}`} onClick={() => setFilter('')}>
@@ -163,31 +134,26 @@ export function AnnouncementsPage() {
           ))}
         </div>
       )}
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert error">{error}</div>}
       {!boardProblem && !items && !error && (
-        <div className="ann-skeleton" aria-busy="true">
-          <div className="skeleton" />
-          <div className="skeleton" />
-          <div className="skeleton" />
+        <div className="stack" aria-busy="true">
+          <div className="skeleton" style={{ height: 56 }} />
+          <div className="skeleton" style={{ height: 56 }} />
         </div>
       )}
       {items && shown.length === 0 && !error && (
         <div className="empty">
-          <Mark className="mark" />
-          <h3>{filter ? `No ${KINDS.find((kind) => kind.id === filter)?.label.toLowerCase()}s right now` : 'Nothing on right now'}</h3>
-          Know of something happening? Put it here and it reaches everyone who opens the site.
-          <button type="button" className="btn primary" onClick={() => void startPosting()}>
-            <IconPlus /> Post the first one
+          No notices.
+          <br />
+          <button type="button" className="btn" onClick={() => void startPosting()}>
+            Post one
           </button>
         </div>
       )}
       {dated.map((group) => (
         <section key={group.key} className="ann-group">
-          <div className="ann-group-head">
-            <h2>{group.label}</h2>
-            {group.sub && <span>{group.sub}</span>}
-          </div>
-          <div className="ann-list">
+          <h2 className="section-title">{group.label}</h2>
+          <div className="list">
             {group.items.map((entry) => (
               <Item key={entry.id} entry={entry} now={now} mine={mine.includes(entry.id)} onRemove={() => void remove(entry.id)} />
             ))}
@@ -196,23 +162,20 @@ export function AnnouncementsPage() {
       ))}
       {undated.length > 0 && (
         <section className="ann-group">
-          <div className="ann-group-head">
-            <h2>Notices</h2>
-            <span>no date attached</span>
-          </div>
-          <div className="ann-list">
+          <h2 className="section-title">Undated</h2>
+          <div className="list">
             {undated.map((entry) => (
               <Item key={entry.id} entry={entry} now={now} mine={mine.includes(entry.id)} onRemove={() => void remove(entry.id)} />
             ))}
           </div>
         </section>
       )}
-      <Modal open={composing} onClose={() => setComposing(false)} title="New announcement" subtitle="Keep it short; people skim this on their phones between classes." width={600}>
+      <Modal open={composing} onClose={() => setComposing(false)} title="New notice" width={560}>
         <Compose
           onDone={(announcement) => {
             const next = [...mine, announcement.id];
             setMine(next);
-            rememberMine(next);
+            saveAnnounced(next);
             setComposing(false);
             load();
             toast('Posted');
@@ -230,68 +193,39 @@ function Item({ entry, now, mine, onRemove }: { entry: Announcement; now: Date; 
   const label = KINDS.find((kind) => kind.id === entry.kind)?.label ?? entry.kind;
   const long = entry.body.length > 220 || entry.body.split('\n').length > 3;
   const soon = when ? startsIn(when, now) : null;
-  const hasTime = when ? when.getHours() !== 0 || when.getMinutes() !== 0 : false;
   return (
-    <article className={`ann kind-${entry.kind}${when ? '' : ' undated'}`}>
-      {when && (
-        <div className="when">
-          <span className="day">{when.getDate()}</span>
-          <span className="mon">{when.toLocaleDateString('en-GB', { month: 'short' })}</span>
-          {hasTime && <span className="time">{when.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>}
-        </div>
+    <article className={`ann kind-${entry.kind}`}>
+      <div className="ann-title">
+        <h3>{entry.title}</h3>
+        {soon && <span className="tag">{soon}</span>}
+      </div>
+      <div className="meta">
+        <span className="status">
+          <span className="dot" /> {label}
+        </span>
+        {when && <span>{formatWhen(entry.startsAt!)}</span>}
+        {entry.location && <span>{entry.location}</span>}
+      </div>
+      {entry.body && <div className={`details${long && !open ? ' clamped' : ''}`}>{entry.body}</div>}
+      {long && !open && (
+        <button type="button" className="link-btn" style={{ justifySelf: 'start', fontSize: 12 }} onClick={() => setOpen(true)}>
+          Read more
+        </button>
       )}
-      <div className="ann-body">
-        <div className="ann-title">
-          <h3>{entry.title}</h3>
-          <span className="tag kind">
-            <span className="dot" /> {label}
-          </span>
-          {soon && (
-            <span className={`pill soon${soon.live ? ' now' : ''}`}>
-              <span className="dot" /> {soon.text}
-            </span>
-          )}
-        </div>
-        {(when || entry.location) && (
-          <div className="ann-meta">
-            {when && (
-              <span>
-                <IconClock /> {formatWhen(entry.startsAt!)}
-              </span>
-            )}
-            {entry.location && (
-              <span>
-                <IconPin /> {entry.location}
-              </span>
-            )}
-          </div>
+      <div className="foot">
+        <span>
+          {entry.posterName}, {relativeDate(entry.createdAt)}
+        </span>
+        {entry.link && (
+          <a href={entry.link} target="_blank" rel="noreferrer">
+            Link
+          </a>
         )}
-        {entry.body && (
-          <div className={`details${long && !open ? ' clamped' : ''}`} onClick={() => long && setOpen(true)}>
-            {entry.body}
-          </div>
-        )}
-        {long && !open && (
-          <button type="button" className="link-btn small" style={{ justifySelf: 'start' }} onClick={() => setOpen(true)}>
-            Read more
+        {mine && (
+          <button type="button" onClick={onRemove}>
+            Remove
           </button>
         )}
-        <div className="foot">
-          <span className="who">
-            <span className="avatar sm">{initials(entry.posterName)}</span> {entry.posterName}
-          </span>
-          <span>{relativeDate(entry.createdAt)}</span>
-          {entry.link && (
-            <a href={entry.link} target="_blank" rel="noreferrer">
-              <IconLink /> Open link
-            </a>
-          )}
-          {mine && (
-            <button type="button" style={{ color: 'var(--text-3)' }} onClick={onRemove}>
-              <IconTrash /> Remove
-            </button>
-          )}
-        </div>
       </div>
     </article>
   );
@@ -325,57 +259,57 @@ function Compose({ onDone, onCancel }: { onDone(announcement: Announcement): voi
       });
       onDone(result.announcement);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not post that.');
+      setError(err instanceof Error ? err.message : 'Could not post the notice.');
     } finally {
       setBusy(false);
     }
   };
 
-  const current = KINDS.find((entry) => entry.id === kind)!;
   return (
-    <div className="stack" style={{ gap: 16 }}>
-      <div className="field">
-        <label>Kind</label>
-        <div className="chips" role="radiogroup" aria-label="Kind">
-          {KINDS.map((entry) => (
-            <button key={entry.id} type="button" role="radio" aria-checked={kind === entry.id} className={`chip kind kind-${entry.id}${kind === entry.id ? ' on' : ''}`} onClick={() => setKind(entry.id)}>
-              <i /> {entry.label}
-            </button>
-          ))}
+    <div className="stack" style={{ gap: 12 }}>
+      <div className="form-grid">
+        <div className="field">
+          <label htmlFor="an-kind">Kind</label>
+          <select id="an-kind" className="input" value={kind} onChange={(event) => setKind(event.target.value as AnnouncementKind)}>
+            {KINDS.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.label}
+              </option>
+            ))}
+          </select>
         </div>
-        <span className="hint">{current.hint}</span>
+        <div className="field">
+          <label htmlFor="an-when">When{kind === 'notice' || kind === 'opportunity' ? ' (optional)' : ''}</label>
+          <input id="an-when" className="input" type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} />
+        </div>
       </div>
       <div className="field">
         <label htmlFor="an-title">Title</label>
-        <input id="an-title" className="input" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={120} placeholder="What is happening" />
+        <input id="an-title" className="input" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={120} />
       </div>
       <div className="form-grid">
         <div className="field">
-          <label htmlFor="an-when">When {kind === 'notice' || kind === 'opportunity' ? '(optional)' : ''}</label>
-          <input id="an-when" className="input" type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} />
-          <span className="hint">Dated posts drop off the day after.</span>
+          <label htmlFor="an-where">Location (optional)</label>
+          <input id="an-where" className="input" value={location} onChange={(event) => setLocation(event.target.value)} maxLength={80} />
         </div>
         <div className="field">
-          <label htmlFor="an-where">Where (optional)</label>
-          <input id="an-where" className="input" value={location} onChange={(event) => setLocation(event.target.value)} maxLength={80} placeholder="A6 lobby, Arts Center, online" />
+          <label htmlFor="an-link">Link (optional)</label>
+          <input id="an-link" className="input" value={link} onChange={(event) => setLink(event.target.value)} placeholder="https://" inputMode="url" />
         </div>
-      </div>
-      <div className="field">
-        <label htmlFor="an-link">Link (optional)</label>
-        <input id="an-link" className="input" value={link} onChange={(event) => setLink(event.target.value)} placeholder="https://" inputMode="url" />
       </div>
       <div className="field">
         <label htmlFor="an-body">Details (optional)</label>
-        <textarea id="an-body" className="input" value={body} onChange={(event) => setBody(event.target.value)} rows={4} maxLength={1500} placeholder="Who it is for, what to bring, how to sign up." />
+        <textarea id="an-body" className="input" value={body} onChange={(event) => setBody(event.target.value)} rows={4} maxLength={1500} />
+        <span className="hint">Dated notices drop off the day after, undated ones after two weeks.</span>
       </div>
-      {error && <div className="alert">{error}</div>}
-      <div className="modal-actions" style={{ marginTop: 0 }}>
+      {error && <div className="alert error">{error}</div>}
+      <div className="modal-actions" style={{ marginTop: 4 }}>
         <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
         <span className="spacer" />
         <button type="button" className="btn primary" onClick={() => void submit()} disabled={busy || title.trim().length < 4}>
-          {busy ? 'Posting' : 'Post announcement'}
+          {busy ? 'Posting' : 'Post'}
         </button>
       </div>
     </div>
