@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api, type PostDetail, type PostSummary } from '../api';
-import { PostRow } from '../components/PostRow';
+import { PostCard } from '../components/PostCard';
 import { useApp } from '../context';
 import { formatDate, plural, topicLabel } from '../format';
-import { IconBack, IconExternal } from '../icons';
+import { IconAsk, IconBack, IconExternal } from '../icons';
 import { navigate } from '../router';
 
 interface Props {
@@ -39,7 +39,7 @@ export function PostPage({ id }: Props) {
   const askAbout = () => {
     if (!post) return;
     const lead = post.text.split(/(?<=[.?!])\s/)[0]?.slice(0, 140) ?? '';
-    setAskPrefill({ question: `What did students say about "${lead}"?`, autoSend: false });
+    setAskPrefill({ question: `What did students say about this: "${lead}"`, autoSend: false });
     navigate({ name: 'ask' });
   };
 
@@ -48,9 +48,9 @@ export function PostPage({ id }: Props) {
       <button type="button" className="btn ghost sm back" onClick={() => (window.history.length > 1 ? window.history.back() : navigate({ name: 'guide' }))}>
         <IconBack /> Back
       </button>
-      {error && <div className="alert error">{error}</div>}
+      {error && <div className="alert">{error}</div>}
       {!post && !error && (
-        <div className="stack" aria-busy="true">
+        <div className="card" style={{ display: 'grid', gap: 10 }} aria-busy="true">
           <div className="skeleton" style={{ width: '40%' }} />
           <div className="skeleton" style={{ height: 60 }} />
           <div className="skeleton" style={{ height: 40 }} />
@@ -58,28 +58,32 @@ export function PostPage({ id }: Props) {
       )}
       {post && (
         <>
-          <article className="stack" style={{ gap: 12 }}>
-            <div className="meta">
+          <article className="card">
+            <div className="meta" style={{ marginBottom: 12 }}>
               <b>{post.author || 'Unknown'}</b>
               <span>{formatDate(post.date)}</span>
               {post.reactions > 0 && <span>{plural(post.reactions, 'reaction')}</span>}
-              {post.courses.map((code) => (
-                <span key={code} className="tag mono">
-                  {code}
-                </span>
-              ))}
-              {post.topics
-                .filter((topic) => topic !== 'general')
-                .map((topic) => (
-                  <span key={topic} className="tag">
-                    {topicLabel(topic)}
-                  </span>
-                ))}
             </div>
             <div className="post-full">{post.text}</div>
-            <div className="row wrap">
+            {(post.courses.length > 0 || post.topics.some((topic) => topic !== 'general')) && (
+              <div className="chips" style={{ marginTop: 16 }}>
+                {post.courses.map((code) => (
+                  <button key={code} type="button" className="chip mono" onClick={() => navigate({ name: 'guide', section: 'courses', id: code })}>
+                    {code}
+                  </button>
+                ))}
+                {post.topics
+                  .filter((topic) => topic !== 'general')
+                  .map((topic) => (
+                    <span key={topic} className="chip">
+                      {topicLabel(topic)}
+                    </span>
+                  ))}
+              </div>
+            )}
+            <div className="row wrap" style={{ marginTop: 18 }}>
               <button type="button" className="btn primary sm" onClick={askAbout}>
-                Ask about this
+                <IconAsk /> Ask about this
               </button>
               {post.url && (
                 <a className="btn sm" href={post.url} target="_blank" rel="noreferrer">
@@ -91,15 +95,15 @@ export function PostPage({ id }: Props) {
 
           <h2 className="section-title">{plural(post.comments.length, 'comment')}</h2>
           {post.comments.length === 0 ? (
-            <p className="muted">No comments.</p>
+            <p className="muted">No comments worth reading were saved for this thread.</p>
           ) : (
-            <div className="list">
+            <div className="comments">
               {post.comments.map((comment, index) => (
                 <div key={index} className="comment">
-                  <span className="meta">
-                    <b>{comment.author || 'Unknown'}</b>
+                  <div className="who">
+                    <b>{comment.author || 'Someone'}</b>
                     <span>{formatDate(comment.date)}</span>
-                  </span>
+                  </div>
                   <div className="what">{comment.text}</div>
                 </div>
               ))}
@@ -109,9 +113,9 @@ export function PostPage({ id }: Props) {
           {related.length > 0 && (
             <>
               <h2 className="section-title">Related threads</h2>
-              <div className="list">
+              <div className="post-list">
                 {related.map((entry) => (
-                  <PostRow key={entry.id} post={entry} />
+                  <PostCard key={entry.id} post={entry} showSnippet={false} />
                 ))}
               </div>
             </>

@@ -25,7 +25,7 @@ export interface PostDetail extends PostSummary {
   comments: Comment[];
 }
 
-type SourceKind = 'archive' | 'board' | 'announcement' | 'official';
+export type SourceKind = 'archive' | 'board' | 'announcement' | 'official';
 
 export interface SourceCard {
   n: number;
@@ -56,28 +56,54 @@ export interface Redirect {
   link: { url: string; label: string };
 }
 
-/** The parts of /api/home the client reads. */
 export interface HomePayload {
-  stats: { posts: number; comments: number; newestPost: string };
+  stats: { posts: number; comments: number; chunks: number; newestPost: string; oldestPost: string; builtAt: string; semantic: boolean };
   suggestions: Array<{ topic: string; question: string }>;
+  trending: PostSummary[];
+  latest: PostSummary[];
+  topics: Array<{ id: string; label: string; emoji: string; count: number }>;
+  courses: Array<{ code: string; count: number }>;
 }
 
-/** The parts of /api/health the client reads. */
 export interface Health {
   ok: boolean;
-  gemini: { configured: boolean };
-  embeddings?: { semanticSearch: boolean };
-  official?: { pages: number };
+  gemini: { configured: boolean; chatModel?: string };
+  embeddings?: { semanticSearch: boolean; provider?: string | null };
+  archive?: { posts: number; comments: number; newestPost: string };
+  official?: { pages: number; courses?: number; fetchedAt?: string; hint?: string };
   /** `ok` comes from a real probe of the database; `problem` says what is wrong when it is not. */
-  board: { configured: boolean; ok?: boolean; problem?: string };
+  board: { configured: boolean; persistent?: boolean; ok?: boolean; code?: string; problem?: string; hint?: string };
 }
 
 /** Why the board cannot be used right now, in a sentence for the screen, or null when it is fine. */
 export function boardProblem(health: Health | null): string | null {
   if (!health) return null;
-  if (!health.board.configured) return 'The board is not set up on this server.';
+  if (!health.board.configured) return 'The board is not set up on this server yet, so questions and announcements are switched off. ' + (health.board.hint ?? '');
   if (health.board.ok === false) return health.board.problem ?? 'The board database is not answering.';
   return null;
+}
+
+export interface SearchParams {
+  q?: string;
+  topic?: string;
+  course?: string;
+  author?: string;
+  from?: string;
+  to?: string;
+  sort?: 'relevance' | 'newest' | 'oldest' | 'discussed';
+  page?: number;
+  pageSize?: number;
+}
+
+export interface SearchResult {
+  total: number;
+  page: number;
+  pageSize: number;
+  sort: string;
+  dense: boolean;
+  terms: string[];
+  redirect: Redirect | null;
+  results: PostSummary[];
 }
 
 export interface ChatTurn {
@@ -206,7 +232,7 @@ export interface GuideCourse {
   official: boolean;
 }
 
-interface GuideSummary {
+export interface GuideSummary {
   overview: string;
   facts: string[];
   students: string[];
@@ -241,10 +267,12 @@ export class ApiError extends Error {
   }
 }
 
+const BASE_KEY = 'room.apiBase';
+
 /** Lets a developer point the web app at another API origin from the browser console (localStorage "room.apiBase"). */
-function apiBase(): string {
+export function apiBase(): string {
   try {
-    return localStorage.getItem('room.apiBase') ?? '';
+    return localStorage.getItem(BASE_KEY) ?? '';
   } catch {
     return '';
   }
@@ -276,7 +304,14 @@ function post<T>(path: string, body: unknown): Promise<T> {
 export const api = {
   health: () => request<Health>('/api/health'),
   home: () => request<HomePayload>('/api/home'),
+  search: (params: SearchParams) => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== '' && value !== null) query.set(key, String(value));
+    return request<SearchResult>(`/api/search?${query.toString()}`);
+  },
   post: (id: string) => request<{ post: PostDetail; related: PostSummary[] }>(`/api/post?id=${encodeURIComponent(id)}`),
+  courses: (q = '') => request<{ total: number; courses: Array<{ code: string; department: string; count: number; latest: string }> }>(`/api/courses?q=${encodeURIComponent(q)}&limit=300`),
+  course: (code: string, page = 1) => request<{ code: string; total: number; page: number; pageSize: number; posts: PostSummary[] }>(`/api/courses?code=${encodeURIComponent(code)}&page=${page}&pageSize=30`),
   board: {
     stats: () => request<{ open: number; answered: number; answers: number; helpers: number }>('/api/board?op=stats'),
     question: (id: string) => request<{ question: Question; answers: Answer[] }>(`/api/board?op=question&id=${encodeURIComponent(id)}`),
@@ -304,7 +339,7 @@ export const api = {
   },
 };
 
-interface AskHandlers {
+export interface AskHandlers {
   onStatus?(message: string): void;
   onRedirect?(redirect: Redirect): void;
   onSources?(sources: SourceCard[]): void;

@@ -6,7 +6,7 @@ level: threads from the Room of Requirement Facebook group, official NYUAD pages
 - **Ask.** Hybrid keyword and vector search over the archive and the official pages, reranked and written up by Gemini.
 - **Questions.** When the archive falls short, a question goes to students. Helpers give a name, NetID, major and class
   year once, then get questions one at a time, matched by major and year. Answered questions are cited by Ask.
-- **Notices.** Events, deadlines and opportunities posted by students. Dated ones drop off the day after, undated ones
+- **What's on.** Events, deadlines and opportunities posted by students. Dated ones drop off the day after, undated ones
   after two weeks.
 - **Falcons.** Offers to buy or sell campus dirhams, with a contact method revealed on tap. Offers expire after five days.
 - **Guide.** Official pages by section and every course with a code, each with a cached summary written from the
