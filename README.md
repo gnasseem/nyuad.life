@@ -1,196 +1,107 @@
 # nyuad.life
 
-What NYUAD students already figured out, in one place. The name, the tagline and the version live in
-`web/src/brand.ts`; the mark (two rounded squares turned into the eight-point star from the campus mashrabiya, with the
-dot from the domain name in the middle) lives in `web/src/components/Logo.tsx` and `web/public/favicon.svg`.
+Answers for NYU Abu Dhabi students. A question is answered from three sources, with citations and a confidence
+level: threads from the Room of Requirement Facebook group, official NYUAD pages, and answers other students wrote here.
 
-Five things happen here:
+- **Ask.** Hybrid keyword and vector search over the archive and the official pages, reranked and written up by Gemini.
+- **Questions.** When the archive falls short, a question goes to students. Helpers give a name, NetID, major and class
+  year once, then get questions one at a time, matched by major and year. Answered questions are cited by Ask.
+- **Notices.** Events, deadlines and opportunities posted by students. Dated ones drop off the day after, undated ones
+  after two weeks.
+- **Falcons.** Offers to buy or sell campus dirhams, with a contact method revealed on tap. Offers expire after five days.
+- **Guide.** Official pages by section and every course with a code, each with a cached summary written from the
+  official text and the group's threads.
 
-- **Ask.** A question goes to the archive of the Room of Requirement Facebook group (hybrid keyword + vector search,
-  reranked by Gemini) and comes back as a short, plain answer that cites the threads it used, says how sure it is, and
-  flags advice that is old or disputed. Answers students wrote on the board and current announcements are cited too.
-- **Questions.** When the archive falls short, the question goes to people. Students who want to help give their name,
-  NetID, major and class year once, then get questions one at a time, flashcard style: answer or skip. Questions are
-  tagged by the lite model for the majors and years best placed to answer, and handed out least-seen first, with views,
-  skips and answers tracked. Answered questions feed straight back into Ask.
-- **What's on.** Events, deadlines, opportunities, club notices, grouped by day with a countdown for today's. Dated
-  ones drop off the day after; undated ones after two weeks.
-- **Falcons.** The campus-dirham exchange: post what you are selling or buying, at your rate, with a contact method
-  people reveal by tapping; best ask, best bid and volume on top; offers drop off after five days. Trade questions on
-  Ask are sent here instead of to an outside site.
-- **Guide.** Official NYUAD pages (the university site, the student portal, the NYU bulletin for Abu Dhabi) crawled
-  into sections (majors, minors, core, study away, housing, visa, money, careers...), plus every course with a code.
-  Opening an entry slides in a panel with a summary written by the lite model from the official text and the group's
-  threads (facts, what students said, keep in mind, confidence), cached in Supabase for a month. The archive of
-  threads is no longer browsed directly; it feeds Ask and these summaries.
+Everything is TypeScript in one repository: `api/` and `lib/` are Vercel serverless functions, `web/` is a Vite and
+React app, `scripts/` holds the scraper, the crawler and the indexer, and `supabase/schema.sql` is the board schema.
 
-The first time someone opens the site a welcome sheet explains the three things above and asks for name, NetID, major
-and class year (skippable; also available under Settings). That profile is what routes questions to the right people
-and what goes next to an answer or an announcement. Settings also holds the theme (system, light or dark), the saved
-conversations and a "forget this device" button.
+## Deploy
 
-Small things that know what time of year it is: the starter questions on Ask lead with what is in season (registration,
-housing, internships, finals); on 1 May everyone's class year rolls over, the app says so with confetti the next
-time they open it, and the board starts routing questions to them as the sophomore, junior, senior or alumni they now
-are; a helper's first, tenth, twenty-fifth, fiftieth and hundredth answers get the same treatment.
+1. Import the repository into Vercel. `vercel.json` sets the build and output.
+2. Add environment variables:
 
-What the archive refuses to be: a marketplace. Feed ads, Falcon-dirham trades and bare listings are filtered out of
-the archive, and so are the "bump", tag-a-friend and emoji comments. A question that is really a trade goes to the
-Falcons page; a listing, a ride or a lost-and-found request is sent to the group itself.
+   | Variable | Needed for |
+   | --- | --- |
+   | `GEMINI_API_KEY` | Answers, reranking, question tagging, follow-ups, guide summaries. |
+   | `VOYAGE_API_KEY` | Semantic search. Must be the provider that built the index. |
+   | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | The board: questions, notices, offers, guide summaries. |
+   | `CRON_SECRET`, `RESEND_API_KEY`, `DIGEST_FROM` | The weekly email of open questions. |
+   | `ROR_GROUP_URL` | Where listings and rides are sent. Defaults to the group. |
 
-Helpers who opt in get a Monday email (`api/digest.ts`, Resend) with the open questions their major and year fit best,
-and the Questions page shows a leaderboard with weekly streaks.
+3. Deploy. `GET /api/health` reports what is active. `board.ok` comes from a real probe of the database and
+   `board.problem` says what is wrong when it is false.
 
-Everything is TypeScript in one repository:
+Routes: `GET /api/health`, `/api/home`, `/api/search`, `/api/post?id=`, `/api/courses`, `/api/guide`
+(`section=`, `item=`, `course=`), `/api/digest`; `POST /api/ask` (server-sent events); `GET|POST /api/board`
+(`op=stats|question|mine|announcements|offers|leaderboard` on GET, `profile|digest|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer`
+on POST). Every route is rate-limited per IP.
 
-| Piece | Where | What it is |
-| --- | --- | --- |
-| API | `api/`, `lib/` | Vercel serverless functions. Holds the keys, the archive and the board. |
-| Web app | `web/` | Vite + React. Sidebar shell on desktop, tab bar on phones, light and dark themes. |
-| Scraper | `scripts/scrape.ts` | Pulls posts and comments out of the Facebook group with your own login (runs on your laptop). |
-| Indexer | `scripts/index.ts`, `.github/workflows/index.yml` | Cleans and embeds posts, locally or in GitHub Actions. |
-| Official crawler | `scripts/scrape-official.ts`, `scripts/index-official.ts`, `.github/workflows/official.yml` | Crawls nyuad.nyu.edu, the student portal and the bulletin into `data/official.jsonl` and embeds it into `data/official-index/`. |
-| Board schema | `supabase/schema.sql` | Tables and functions for questions, answers, profiles, announcements, Falcons offers and guide summaries. |
+## Scrape the group
 
-## 1. Deploy on Vercel
-
-1. Import this repository into Vercel (Add New → Project). `vercel.json` already sets the build and output.
-2. Add environment variables under Settings → Environment Variables:
-
-   | Variable | Required | Meaning |
-   | --- | --- | --- |
-   | `GEMINI_API_KEY` | yes | Google AI Studio key. Writes answers, reranks threads, tags board questions, suggests follow-ups. |
-   | `VOYAGE_API_KEY` | for semantic search | Embeds each question the way the index was embedded (section 3). |
-   | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | for the board | Section 4. Without them the Questions and Announcements pages say the board is not set up. |
-   | `ROR_GROUP_URL` | no | Where listings, rides and lost-and-found requests are sent. Defaults to the group. |
-   | `CRON_SECRET`, `RESEND_API_KEY`, `DIGEST_FROM` | for the weekly roundup | Vercel's cron calls `/api/digest` every Monday with the secret; Resend sends the mails. Without the key the route only composes them. |
-   | `GEMINI_CHAT_MODEL`, `GEMINI_CHAT_FALLBACK_MODELS`, `GEMINI_LITE_MODEL` | no | Defaults: `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-flash-lite`. |
-
-3. Deploy. `GET /api/health` shows what is active: `embeddings.semanticSearch`, `gemini.configured`,
-   `board.configured` and `board.ok`. The last one comes from a real probe of the database, and when it is false
-   `board.problem` says what to do (run the schema, swap the anon key for the service key, restore a paused project).
-   The same sentence is shown on the Questions and Announcements pages and under Settings → About.
-
-Routes: `GET /api/health`, `GET /api/home`, `GET /api/search`, `GET /api/post?id=`, `GET /api/courses`,
-`GET /api/guide` (`section=`, `item=`, `course=`), `GET /api/digest`, `POST /api/ask` (server-sent events: `status`,
-`redirect`, `sources`, `delta`, `followups`, `done`, `error`), and `GET|POST /api/board`
-(`op=stats|question|mine|announcements|offers|leaderboard` on GET;
-`profile|digest|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer` on POST). Every route is
-rate-limited per IP and per purpose.
-
-## 2. Scrape the group (runs on your laptop)
-
-The scraper drives a real Chromium window where you are logged in as yourself. It reads the JSON Facebook's own web
-client loads, so it does not depend on fragile page selectors, and it is incremental and resumable.
+The scraper drives a Chromium window where you are logged in as yourself and reads the JSON Facebook's own client loads.
+It runs on your laptop, never on the server.
 
 ```bash
 npm install
 npx playwright install chromium
-npm run scrape -- --login       # optional: just open the window, log in once, and exit
-npm run scrape -- --all-time    # first time: the whole group, every year, month by month (hours; leave it running)
+npm run scrape -- --login       # open the window, log in once, exit
+npm run scrape -- --all-time    # first time: every month of the group through search (hours)
 npm run scrape                  # later: only new posts and threads whose comment counts changed
 ```
 
-Log in in the window that opens; the login is kept in `.scraper-profile/` (git-ignored). Progress is saved every few
-minutes and on Ctrl+C, and an interrupted run continues where it stopped.
+The login is kept in `.scraper-profile/`. Progress is saved every few minutes and on Ctrl+C, and the next run resumes.
+`--all-time` searches a few common words per month back to `--from` (default `2010-01`); months already done are
+skipped, `--restart-feed` forgets them. Other options: `--max-posts N`, `--no-comments`, `--only-comments`,
+`--delay 2`, `--chrome`, `--debug`. Commit `data/posts.jsonl` when a run finishes.
 
-Facebook's group feed stops paging after a year or two of posts and then claims there are no more, so `--full`
-(walk the feed by cursor) never reaches an old group's first post. `--all-time` uses the group's search page instead,
-whose "date posted" filter reaches any month: for every month back to `--from` (default `2010-01`) it searches a
-handful of very common words (`--terms a,the,...` to change them) and pages through all the results. Every post found
-is saved or refreshed whether or not it was already on disk; months that are finished are skipped by the next
-`--all-time` run, and `--restart-feed` forgets them. Other options: `--max-posts 200`, `--no-comments`, `--delay 2`,
-`--chrome`, `--debug`, `--only-comments` (also retries threads that still looked incomplete after two visits).
-This is your personal export of a group you belong to; don't share the raw file outside the community. When a run
-finishes, commit and push `data/posts.jsonl`.
+## Index
 
-## 3. Index (cleaning and semantic search)
+Indexing drops feed ads, Falcon trades, bare listings and noise comments (`lib/filters.ts`), then embeds what is left.
 
-Indexing applies the noise filters (`lib/filters.ts`) and embeds what is left. The same filters run again whenever an
-older index is loaded, so the site is clean even before the next build. Keyword search finds posts that contain your
-words; embeddings let "who is chill for calc" find "Dania is very relaxed about deadlines".
+| Provider | Keys |
+| --- | --- |
+| Voyage AI (default) | `VOYAGE_API_KEY` |
+| Cloudflare Workers AI | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
+| Gemini | `GEMINI_API_KEY` |
 
-| Provider | Key(s) | Free allowance |
-| --- | --- | --- |
-| Voyage AI (default) | `VOYAGE_API_KEY` | 200M tokens per account. `voyage-3.5`, 1024 dims. |
-| Cloudflare Workers AI | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | 10,000 neurons a day. |
-| Gemini | `GEMINI_API_KEY` | Small; kept for compatibility. |
+Automatic: add the key as a repository secret. Every push to `main` that changes `data/posts.jsonl` or `lib/` runs
+`.github/workflows/index.yml`, which embeds only the chunks that changed and commits `data/index/`. The same key must
+be set on Vercel so questions can be embedded.
 
-**Automatic:** add the provider's key as a repository secret (Settings → Secrets and variables → Actions). Every push
-to `main` that changes `data/posts.jsonl` or `lib/` runs `.github/workflows/index.yml`, which embeds only the chunks
-that changed and commits `data/index/`. The same key must be set on Vercel so questions can be embedded.
+Manual: `cp .env.example .env`, add the key, `npm run index`, commit `data/index/`. Options: `--provider`, `--fresh`,
+`--limit 300`, `--no-embed`.
 
-**Manual:** `cp .env.example .env`, put the key in it, `npm run index`, then commit `data/index/`. Options:
-`--provider`, `--fresh`, `--limit 300`, `--batch 64 --concurrency 2`, `--no-embed` (keyword-only).
+## The board
 
-## 3b. Official NYUAD pages
+1. Create a Supabase project and run the whole of `supabase/schema.sql` in its SQL editor. It is safe to run again.
+   Row level security is on with no policies, so only the service role, which the API holds, can read or write.
+2. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on Vercel and in `.env`, then redeploy.
 
-`npm run scrape:official` crawls from a list of seeds (academics, majors and minors, core curriculum, study away,
-campus life, admissions, the student portal, the bulletin) and follows links on the same hosts under the allowed
-paths, skipping news, events, media and people pages. The bulletin's course listings are split into one document per
-course (code, title, credits, description). Pages already on disk are refreshed; ones that fail keep their last copy.
-`npm run index:official` embeds the result with the same provider as the archive. The workflow
-`.github/workflows/official.yml` does both every Sunday and on demand (Actions → Crawl official NYUAD pages → Run),
-and commits `data/official.jsonl` and `data/official-index/`, which the next Vercel deploy picks up.
+If the pages say the board tables are missing, the schema was not run in the project `SUPABASE_URL` points at. If they
+say the key was rejected, the anon key was pasted instead of the service role key. Locally, with nothing set, the board
+runs in memory.
 
-Official pages become numbered sources in Ask ahead of the threads, and the prompt tells the model they are the
-authority on rules and requirements while threads are the authority on experience. `/api/health` reports
-`official.pages`.
+How questions are handed out (`lib/board.ts`): a helper never sees their own question or one they answered or skipped,
+or one that already has three answers. Unanswered questions come first, then the least seen; a question tagged for the
+helper's major or year gets a lift, and one many people skipped sinks.
 
-## 4. The board (Supabase)
+## Official pages
 
-1. Create a Supabase project. In the dashboard open **SQL Editor → New query**.
-2. Paste the whole of `supabase/schema.sql` (copy it from the raw file, not from a diff view) and press **Run**. It
-   creates `board_profiles`, `board_questions`, `board_answers`, `board_events` and `board_announcements`, with row
-   level security on and no public policies: only the service role, which the API holds, can read or write, so every
-   request passes through the app's validation and rate limits. The file is safe to run more than once, and the test
-   suite applies it to a real Postgres (PGlite) on every run.
-3. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (Project → Settings → API) on Vercel and in `.env`, then
-   redeploy. `GET /api/health` reports `board.configured: true` once both are in place and `board.ok: true` once the
-   database answers.
+`npm run scrape:official` crawls nyuad.nyu.edu, the student portal and the bulletin into `data/official.jsonl`; the
+bulletin's course listings become one document per course. `npm run index:official` embeds them into
+`data/official-index/`. `.github/workflows/official.yml` does both every Sunday and on demand. Official pages become
+numbered sources ahead of the threads, and the prompt makes them the authority on rules while threads are the
+authority on experience.
 
-If the pages say the board tables are missing, the schema was not run in the project `SUPABASE_URL` points at (each
-Supabase project is its own database). If they say the key was rejected, the anon or publishable key was pasted
-instead of the `service_role` secret: with row level security on and no policies, the anon key can read nothing and
-write nothing, which is by design. The URL can be pasted as the project URL, the dashboard URL or the bare project
-ref; all three are normalised. Every failed database call is logged on the server with Supabase's own status and
-message, and returned to the client as a specific error code (`board_schema_missing`, `board_key_rejected`,
-`board_url_wrong`, `board_unreachable`) rather than a generic one.
-
-Locally, with nothing set, the board runs in memory so `npm run dev` works without a database (nothing survives a
-restart). In production it is switched off until the two variables exist, rather than silently losing questions.
-
-How questions are handed out (`lib/board.ts`): a helper never sees their own question, or one they answered or
-skipped, or one that already has three answers. Among the rest, unanswered questions rank first, then the ones fewest
-people have seen; a question tagged for the helper's major or year gets a lift, a question many people skipped sinks,
-and a little randomness keeps two helpers from getting the same card at the same moment.
-
-## 5. Run everything locally
+## Run locally
 
 ```bash
 npm install
 cp .env.example .env            # GEMINI_API_KEY at least
-npm run dev                     # API on http://localhost:8787 (serves dist/ too, if built)
-npx vite                        # web app with hot reload on http://localhost:5173, proxying /api
-npm run check                   # typecheck + tests + production build
+npm run dev                     # API on http://localhost:8787, serving dist/ when built
+npx vite                        # web app with hot reload on http://localhost:5173
+npm run check                   # typecheck, tests, production build
 ```
 
-Without a Gemini key the API still serves browsing and keyword search; asking needs the key. The tests run the whole
-API against a fake Gemini, including the board and the scraper (the scraper test needs Playwright's Chromium and skips
-itself otherwise).
-
-## How answers are produced
-
-1. Off-platform requests are caught first (`lib/domains.ts`): Falcon trades go to the Falcons page; listings, rides,
-   lost-and-found and "does anyone have X right now" go to the group.
-2. Follow-ups are rewritten into standalone queries; NYUAD shorthand (D2, A5, core, J-Term) is expanded for search.
-3. Retrieval fuses BM25 over chunks with cosine similarity over the embeddings (reciprocal-rank fusion, small recency
-   prior). The lite model scores the 30 best threads for usefulness, preferring recent and well-discussed ones; the
-   strongest 5–14 become numbered sources. Each source carries its age and how much discussion it had.
-4. Answered board questions (keyword match plus stored embeddings) and current announcements that fit the question are
-   added as further numbered sources.
-5. `gemini-2.5-flash` streams the answer: one or two plain sentences first, then specifics with a `[n]` after every
-   claim, a "keep in mind" line when advice is old or disputed, and a final confidence line (high, medium, low with a
-   reason) that the client shows as a badge. When its daily quota is used up the fallback model answers instead.
-6. Three follow-up questions are suggested in parallel. A medium or low answer offers "Ask students", which carries the
-   question to the board.
+Without a Gemini key the API still serves the guide and keyword search. The tests run the whole API against a fake
+Gemini, the board schema against PGlite, and the scraper against a fake Facebook (skipped without Playwright's Chromium).
