@@ -35,7 +35,9 @@ describe('standingFor', () => {
     expect(standingFor(2027, now)).toBe('senior');
     expect(standingFor(2026, now)).toBe('alumni');
     expect(standingFor(2027, new Date('2027-05-01T00:00:00Z'))).toBe('senior');
-    expect(standingFor(2027, new Date('2027-09-01T00:00:00Z'))).toBe('alumni');
+    expect(standingFor(2027, new Date('2027-08-30T23:00:00Z'))).toBe('senior');
+    expect(standingFor(2027, new Date('2027-08-31T00:00:00Z'))).toBe('alumni');
+    expect(standingFor(2028, new Date('2027-08-31T00:00:00Z'))).toBe('senior');
   });
 });
 

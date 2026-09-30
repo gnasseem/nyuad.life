@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type Health, type HomePayload, type Profile } from './api';
 import { APP_NAME } from './brand';
+import { Celebration } from './components/Celebration';
 import { AppContext, type Prefill } from './context';
 import { initials, standingLabel } from './format';
 import { Door, IconArchive, IconAsk, IconAuto, IconClose, IconMegaphone, IconMenu, IconMoon, IconQuestions, IconSun, IconTrash } from './icons';
@@ -12,6 +13,7 @@ import { PostPage } from './pages/Post';
 import { QuestionPage, QuestionsPage } from './pages/Questions';
 import { navigate, onLinkClick, routePath, useRoute, type Route } from './router';
 import { applyTheme, clearConversations, deleteConversation, loadConversations, loadProfile, loadTheme, onConversationsChange, saveProfile, type Conversation, type Theme } from './store';
+import { promotionMessage, standingFor } from './year';
 
 const NAV: Array<{ route: Route; label: string; icon: typeof IconAsk; matches: Route['name'][] }> = [
   { route: { name: 'ask' }, label: 'Ask', icon: IconAsk, matches: ['ask'] },
@@ -38,7 +40,21 @@ export function App() {
   const [askPrefill, setAskPrefillState] = useState<(Prefill & { token: number }) | null>(null);
   const [boardPrefill, setBoardPrefill] = useState('');
   const [drawer, setDrawer] = useState(false);
+  const [moment, setMoment] = useState<{ title: string; message: string; action?: string } | null>(null);
   const conversations = useConversations();
+
+  // Every 31 August the class years roll over: say so once, and keep the stored standing current for the board.
+  useEffect(() => {
+    if (!profile) return;
+    const current = standingFor(profile.classOf);
+    if (current === profile.year) return;
+    const promotion = promotionMessage(profile.year, current);
+    const next = { ...profile, year: current };
+    saveProfile(next);
+    setProfileState(next);
+    if (promotion) setMoment(promotion);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     api
@@ -73,9 +89,11 @@ export function App() {
     setProfileState(next);
   }, []);
 
+  const celebrate = useCallback((next: { title: string; message: string; action?: string }) => setMoment(next), []);
+
   const context = useMemo(
-    () => ({ home, health, profile, setProfile, toast, askPrefill, setAskPrefill, boardPrefill, setBoardPrefill }),
-    [home, health, profile, setProfile, toast, askPrefill, setAskPrefill, boardPrefill],
+    () => ({ home, health, profile, setProfile, toast, askPrefill, setAskPrefill, boardPrefill, setBoardPrefill, celebrate }),
+    [home, health, profile, setProfile, toast, askPrefill, setAskPrefill, boardPrefill, celebrate],
   );
 
   const cycleTheme = () => setTheme(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');
@@ -201,6 +219,7 @@ export function App() {
           {toastMessage}
         </div>
       )}
+      {moment && <Celebration title={moment.title} message={moment.message} action={moment.action} onClose={() => setMoment(null)} />}
     </AppContext.Provider>
   );
 }

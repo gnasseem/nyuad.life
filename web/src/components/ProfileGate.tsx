@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { api } from '../api';
 import { useApp } from '../context';
+import { classYears } from '../year';
 
 export const MAJORS = [
   'Arab Crossroads Studies', 'Art and Art History', 'Bioengineering', 'Biology', 'Business, Organizations and Society', 'Chemistry', 'Civil Engineering',
@@ -8,17 +9,6 @@ export const MAJORS = [
   'Interactive Media', 'Legal Studies', 'Literature and Creative Writing', 'Mathematics', 'Mechanical Engineering', 'Music', 'Philosophy', 'Physics',
   'Political Science', 'Psychology', 'Social Research and Public Policy', 'Theater', 'Undecided', 'Other',
 ];
-
-function classYears(now = new Date()): Array<{ value: number; label: string }> {
-  const academicYear = now.getUTCMonth() >= 7 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
-  return [
-    { value: academicYear + 3, label: `Class of ${academicYear + 3} · first year` },
-    { value: academicYear + 2, label: `Class of ${academicYear + 2} · sophomore` },
-    { value: academicYear + 1, label: `Class of ${academicYear + 1} · junior` },
-    { value: academicYear, label: `Class of ${academicYear} · senior` },
-    { value: academicYear - 1, label: 'Graduated' },
-  ];
-}
 
 interface Props {
   title: string;

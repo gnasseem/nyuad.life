@@ -2,7 +2,7 @@
   "name": "ror-answers",
   "version": "2.0.0",
   "private": true,
-  "description": "The Room: answers for NYU Abu Dhabi students from the Room of Requirement archive, a student question board and an announcements feed.",
+  "description": "Hall of Requirement: answers for NYU Abu Dhabi students from the Room of Requirement archive, a student question board and an announcements feed.",
   "type": "module",
   "engines": {
     "node": "22.x"
@@ -23,6 +23,7 @@
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@types/node": "^22.19.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",

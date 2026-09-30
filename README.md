@@ -1,7 +1,7 @@
-# The Room
+# Hall of Requirement
 
-Answers for NYU Abu Dhabi students. The name is a nod to the Room of Requirement group and lives in one constant
-(`web/src/brand.ts`), so it is easy to change.
+Answers for NYU Abu Dhabi students. The name is a nod to the Room of Requirement group, one size up, and lives in one
+constant (`web/src/brand.ts`) so it is easy to change.
 
 Three things happen here:
 
@@ -14,6 +14,11 @@ Three things happen here:
   skips and answers tracked. Answered questions feed straight back into Ask.
 - **Announcements.** Events, deadlines, opportunities, club notices. Dated ones drop off the day after; undated ones
   after two weeks.
+
+Small things that know what time of year it is: the starter questions on Ask lead with what is in season (registration,
+housing, internships, finals); on 31 August everyone's class year rolls over, the app says so with confetti the next
+time they open it, and the board starts routing questions to them as the sophomore, junior, senior or alumni they now
+are; a helper's first, tenth, twenty-fifth, fiftieth and hundredth answers get the same treatment.
 
 What the site refuses to be: a marketplace. Feed ads, Falcon-dirham trades and bare listings are filtered out of the
 archive, and so are the "bump", tag-a-friend and emoji comments. A question that is really a trade, a listing, a ride
@@ -90,11 +95,14 @@ that changed and commits `data/index/`. The same key must be set on Vercel so qu
 
 ## 4. The board (Supabase)
 
-1. Create a Supabase project and open the SQL editor.
-2. Paste `supabase/schema.sql` and run it. It creates `board_profiles`, `board_questions`, `board_answers`,
-   `board_events` and `board_announcements`, with row level security on and no public policies: only the service role,
-   which the API holds, can read or write, so every request passes through the app's validation and rate limits.
-3. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (Project → Settings → API) on Vercel and in `.env`.
+1. Create a Supabase project. In the dashboard open **SQL Editor → New query**.
+2. Paste the whole of `supabase/schema.sql` (copy it from the raw file, not from a diff view) and press **Run**. It
+   creates `board_profiles`, `board_questions`, `board_answers`, `board_events` and `board_announcements`, with row
+   level security on and no public policies: only the service role, which the API holds, can read or write, so every
+   request passes through the app's validation and rate limits. The file is safe to run more than once, and the test
+   suite applies it to a real Postgres (PGlite) on every run.
+3. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (Project → Settings → API) on Vercel and in `.env`, then
+   redeploy. `GET /api/health` reports `board.configured: true` once both are in place.
 
 Locally, with nothing set, the board runs in memory so `npm run dev` works without a database (nothing survives a
 restart). In production it is switched off until the two variables exist, rather than silently losing questions.

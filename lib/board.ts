@@ -80,9 +80,15 @@ export const ANSWER_MAX = 1200;
 /** Questions stop being handed out once this many people have answered. */
 export const ENOUGH_ANSWERS = 3;
 
-/** The academic year turns over in late August: class of 2030 is a first-year from September 2026. */
+/** The academic year turns over on 31 August: class of 2030 is a first-year from 31 August 2026. */
+export function academicYearOf(now = new Date()): number {
+  const month = now.getUTCMonth();
+  const rolledOver = month > 7 || (month === 7 && now.getUTCDate() >= 31);
+  return rolledOver ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
+}
+
 export function standingFor(classOf: number, now = new Date()): Standing {
-  const academicYear = now.getUTCMonth() >= 7 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
+  const academicYear = academicYearOf(now);
   const yearsLeft = classOf - academicYear;
   if (yearsLeft >= 3) return 'first-year';
   if (yearsLeft === 2) return 'sophomore';
