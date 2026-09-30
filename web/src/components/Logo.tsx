@@ -2,7 +2,7 @@ import type { SVGProps } from 'react';
 import { APP_NAME } from '../brand';
 
 /** Two rounded squares, one turned 45°: the eight-point star from the campus mashrabiya, with the dot from the domain name. */
-export function Mark(props: SVGProps<SVGSVGElement>) {
+function Mark(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="5" strokeLinejoin="round" aria-hidden="true" {...props}>
       <rect x="14" y="14" width="36" height="36" rx="9" />
