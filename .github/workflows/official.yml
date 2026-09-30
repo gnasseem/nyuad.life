@@ -51,4 +51,11 @@ jobs:
           git config user.name "ror-indexer"
           git config user.email "ror-indexer@users.noreply.github.com"
           git add data/official.jsonl data/official-index
-          if git diff --cached --quiet; then echo "Nothing changed."; else git commit -m "Update official pages [skip ci]" && git push; fi
+          if git diff --cached --quiet; then echo "Nothing changed."; exit 0; fi
+          git commit -m "Update official pages [skip ci]"
+          # The crawl runs for a long time and the index job commits to main meanwhile, so replay onto the latest main.
+          for i in 1 2 3 4 5; do
+            git pull --rebase && git push && exit 0
+            sleep $((i * 10))
+          done
+          exit 1
