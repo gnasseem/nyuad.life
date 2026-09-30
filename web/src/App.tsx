@@ -131,7 +131,7 @@ export function App() {
       case 'falcons':
         return <FalconsPage />;
       case 'guide':
-        return <GuidePage section={route.section} id={route.id} search={search} />;
+        return <GuidePage section={route.section} id={route.id} />;
       case 'post':
         return <PostPage id={route.id} />;
       case 'settings':

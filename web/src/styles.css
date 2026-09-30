@@ -182,6 +182,8 @@ b, strong { font-weight: 600; }
   .composer textarea { padding: 10px 0; }
   .send { width: 40px; }
   .icon-btn { width: 40px; }
+  .chip { min-width: 40px; justify-content: center; }
+  .list-row { min-height: 40px; }
   .foot-btn, .link-btn, .starters button, .source-links a, .source-links button, .ann .foot a, .ann .foot button { min-height: 40px; display: inline-flex; align-items: center; }
   .starters { gap: 0; }
 }
