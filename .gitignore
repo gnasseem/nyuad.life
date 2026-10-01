@@ -10,3 +10,5 @@ data/index/cache-*
 data/posts.jsonl.tmp
 data/scrape-state.json
 .vercel/
+.gradle/
+build/
