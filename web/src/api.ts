@@ -25,7 +25,7 @@ export interface PostDetail extends PostSummary {
   comments: Comment[];
 }
 
-export type SourceKind = 'archive' | 'board' | 'announcement' | 'official';
+type SourceKind = 'archive' | 'board' | 'announcement' | 'official';
 
 export interface SourceCard {
   n: number;
@@ -56,15 +56,12 @@ export interface Redirect {
   link: { url: string; label: string };
 }
 
+/** The parts of /api/home the client reads. */
 export interface HomePayload {
-  stats: { posts: number; comments: number; chunks: number; newestPost: string; oldestPost: string; builtAt: string; semantic: boolean };
   suggestions: Array<{ topic: string; question: string }>;
-  trending: PostSummary[];
-  latest: PostSummary[];
-  topics: Array<{ id: string; label: string; emoji: string; count: number }>;
-  courses: Array<{ code: string; count: number }>;
 }
 
+/** The parts of /api/health the client reads. */
 export interface Health {
   ok: boolean;
   gemini: { configured: boolean; chatModel?: string };
@@ -78,32 +75,9 @@ export interface Health {
 /** Why the board cannot be used right now, in a sentence for the screen, or null when it is fine. */
 export function boardProblem(health: Health | null): string | null {
   if (!health) return null;
-  if (!health.board.configured) return 'The board is not set up on this server yet, so questions and announcements are switched off. ' + (health.board.hint ?? '');
+  if (!health.board.configured) return 'The board is not set up on this server.';
   if (health.board.ok === false) return health.board.problem ?? 'The board database is not answering.';
   return null;
-}
-
-export interface SearchParams {
-  q?: string;
-  topic?: string;
-  course?: string;
-  author?: string;
-  from?: string;
-  to?: string;
-  sort?: 'relevance' | 'newest' | 'oldest' | 'discussed';
-  page?: number;
-  pageSize?: number;
-}
-
-export interface SearchResult {
-  total: number;
-  page: number;
-  pageSize: number;
-  sort: string;
-  dense: boolean;
-  terms: string[];
-  redirect: Redirect | null;
-  results: PostSummary[];
 }
 
 export interface ChatTurn {
@@ -210,7 +184,6 @@ export interface LeaderboardEntry {
 export interface GuideSection {
   id: string;
   label: string;
-  blurb: string;
   count: number;
 }
 
@@ -218,9 +191,8 @@ export interface GuideItem {
   id: string;
   title: string;
   url: string;
-  blurb: string;
-  breadcrumbs: string[];
-  code?: string;
+  /** The page this one sits under, set when its title alone is ambiguous ("Courses"). */
+  parent: string;
 }
 
 export interface GuideCourse {
@@ -232,7 +204,7 @@ export interface GuideCourse {
   official: boolean;
 }
 
-export interface GuideSummary {
+interface GuideSummary {
   overview: string;
   facts: string[];
   students: string[];
@@ -267,12 +239,10 @@ export class ApiError extends Error {
   }
 }
 
-const BASE_KEY = 'room.apiBase';
-
 /** Lets a developer point the web app at another API origin from the browser console (localStorage "room.apiBase"). */
-export function apiBase(): string {
+function apiBase(): string {
   try {
-    return localStorage.getItem(BASE_KEY) ?? '';
+    return localStorage.getItem('room.apiBase') ?? '';
   } catch {
     return '';
   }
@@ -304,14 +274,7 @@ function post<T>(path: string, body: unknown): Promise<T> {
 export const api = {
   health: () => request<Health>('/api/health'),
   home: () => request<HomePayload>('/api/home'),
-  search: (params: SearchParams) => {
-    const query = new URLSearchParams();
-    for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== '' && value !== null) query.set(key, String(value));
-    return request<SearchResult>(`/api/search?${query.toString()}`);
-  },
   post: (id: string) => request<{ post: PostDetail; related: PostSummary[] }>(`/api/post?id=${encodeURIComponent(id)}`),
-  courses: (q = '') => request<{ total: number; courses: Array<{ code: string; department: string; count: number; latest: string }> }>(`/api/courses?q=${encodeURIComponent(q)}&limit=300`),
-  course: (code: string, page = 1) => request<{ code: string; total: number; page: number; pageSize: number; posts: PostSummary[] }>(`/api/courses?code=${encodeURIComponent(code)}&page=${page}&pageSize=30`),
   board: {
     stats: () => request<{ open: number; answered: number; answers: number; helpers: number }>('/api/board?op=stats'),
     question: (id: string) => request<{ question: Question; answers: Answer[] }>(`/api/board?op=question&id=${encodeURIComponent(id)}`),
@@ -339,7 +302,7 @@ export const api = {
   },
 };
 
-export interface AskHandlers {
+interface AskHandlers {
   onStatus?(message: string): void;
   onRedirect?(redirect: Redirect): void;
   onSources?(sources: SourceCard[]): void;

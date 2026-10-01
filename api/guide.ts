@@ -19,24 +19,8 @@ import { collapseWhitespace, truncate } from '../lib/text.ts';
 
 export const config = { maxDuration: 60 };
 
-/** Sections shown in the guide, in order; the rest of OFFICIAL_SECTIONS fold into "other". */
-const GUIDE_SECTIONS: Array<{ id: OfficialSection; blurb: string }> = [
-  { id: 'courses', blurb: 'Every course with a code, with what the bulletin says and what students said.' },
-  { id: 'majors', blurb: 'Programme pages: requirements, tracks, capstone.' },
-  { id: 'minors', blurb: 'What each minor asks for.' },
-  { id: 'core', blurb: 'The Core Curriculum and colloquia.' },
-  { id: 'study-away', blurb: 'Sites, J-Term, how to apply, what counts.' },
-  { id: 'academics', blurb: 'Registration, advising, the registrar, academic resources.' },
-  { id: 'housing', blurb: 'Residential buildings, dining, moving in and out.' },
-  { id: 'money', blurb: 'Tuition, financial support, stipends, banking.' },
-  { id: 'visa', blurb: 'Residence visas, Emirates ID, travel.' },
-  { id: 'health', blurb: 'The health center, insurance, counselling.' },
-  { id: 'careers', blurb: 'Career Development Center, internships, research assistantships.' },
-  { id: 'research', blurb: 'Undergraduate research, capstone, labs.' },
-  { id: 'campus', blurb: 'Student life, clubs, athletics, the arts.' },
-  { id: 'admissions', blurb: 'For prospective students and their questions.' },
-  { id: 'policies', blurb: 'Rules and handbooks.' },
-];
+/** Sections shown in the guide, in order. Faculty profiles and "other" stay out of the lists but still feed answers. */
+const GUIDE_SECTIONS: OfficialSection[] = ['courses', 'majors', 'minors', 'core', 'study-away', 'academics', 'housing', 'money', 'visa', 'health', 'careers', 'research', 'campus', 'admissions', 'policies'];
 
 export default route(['GET'], async (req, res) => {
   rateLimit(req, 60, 40, 'guide');
@@ -61,16 +45,24 @@ export default route(['GET'], async (req, res) => {
   }
   if (section) {
     if (!OFFICIAL_SECTIONS.includes(section)) throw new ApiError(404, 'No such section.', 'not_found');
-    const items = (official.bySection.get(section) ?? []).map((position) => official.docs[position]!).sort((a, b) => a.title.localeCompare(b.title));
-    sendJson(res, 200, { section, label: SECTION_LABELS[section], items: items.map(listItem) }, 300);
+    const docs = (official.bySection.get(section) ?? []).map((position) => official.docs[position]!);
+    sendJson(res, 200, { section, label: SECTION_LABELS[section], items: listItems(docs) }, 300);
     return;
   }
-  const sections = GUIDE_SECTIONS.map(({ id, blurb }) => ({ id, label: SECTION_LABELS[id], blurb, count: id === 'courses' ? courseList(archive, official, '').length : (official.bySection.get(id) ?? []).length }));
+  const sections = GUIDE_SECTIONS.map((id) => ({ id, label: SECTION_LABELS[id], count: id === 'courses' ? courseList(archive, official, '').length : (official.bySection.get(id) ?? []).length }));
   sendJson(res, 200, { official: { available: official.docs.length > 0, pages: official.docs.length, fetchedAt: official.meta.newestPost }, sections }, 300);
 });
 
-function listItem(doc: OfficialDoc) {
-  return { id: doc.id, title: doc.title, url: doc.url, blurb: truncate(collapseWhitespace(doc.text.replace(/^-\s*/gm, '')), 150), breadcrumbs: doc.breadcrumbs, code: doc.code };
+/**
+ * A section's pages for the list. Many programme pages share a title ("Courses", "Learning Outcomes"), so those carry
+ * the page they sit under, and the list is ordered so each programme's pages follow it.
+ */
+function listItems(docs: OfficialDoc[]) {
+  const titles = new Map<string, number>();
+  for (const doc of docs) titles.set(doc.title, (titles.get(doc.title) ?? 0) + 1);
+  return docs
+    .map((doc) => ({ id: doc.id, title: doc.title, url: doc.url, parent: titles.get(doc.title)! > 1 ? doc.breadcrumbs.filter((crumb) => crumb !== doc.title && crumb !== 'Home').at(-1) ?? '' : '' }))
+    .sort((a, b) => (a.parent || a.title).localeCompare(b.parent || b.title) || Number(Boolean(a.parent)) - Number(Boolean(b.parent)) || a.title.localeCompare(b.title));
 }
 
 interface CourseItem {

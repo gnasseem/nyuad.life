@@ -81,8 +81,13 @@ describe('html extraction', () => {
     expect(coursesOf('<main><p>CS-UH 2010 Algorithms (4 Credits)</p><p>Sorting and searching.</p><p>MATH-UH 1012: Calculus with Applications</p><p>Limits and derivatives.</p></main>').map((c) => c.code)).toEqual(['CS-UH 2010', 'MATH-UH 1012']);
   });
   it('classifies pages into guide sections', () => {
-    expect(classifySection('https://nyuad.nyu.edu/en/academics/undergraduate/majors-and-minors.html', 'Majors and Minors')).toBe('minors');
+    expect(classifySection('https://nyuad.nyu.edu/en/academics/undergraduate/majors-and-minors.html', 'Majors and Minors')).toBe('majors');
     expect(classifySection('https://nyuad.nyu.edu/en/academics/undergraduate/majors/computer-science.html', 'Computer Science')).toBe('majors');
+    expect(classifySection('https://nyuad.nyu.edu/en/academics/undergraduate/majors-and-minors/computer-science-major/courses.html', 'Courses')).toBe('majors');
+    expect(classifySection('https://nyuad.nyu.edu/en/academics/undergraduate/majors-and-minors/african-studies-minor.html', 'African Studies Minor')).toBe('minors');
+    expect(classifySection('https://bulletins.nyu.edu/undergraduate/abu-dhabi/programs/art-history-ba/', 'Art and Art History (BA)')).toBe('majors');
+    expect(classifySection('https://bulletins.nyu.edu/undergraduate/abu-dhabi/programs/arabic-minor/', 'Arabic (Minor)')).toBe('minors');
+    expect(classifySection('https://nyuad.nyu.edu/en/academics/divisions/science/faculty/jane-doe/publications.html', 'Publications')).toBe('faculty');
     expect(classifySection('https://nyuad.nyu.edu/en/academics/global-education/study-away.html')).toBe('study-away');
     expect(classifySection('https://nyuad.nyu.edu/en/campus-life/housing-and-dining.html')).toBe('housing');
     expect(classifySection('https://bulletins.nyu.edu/undergraduate/abu-dhabi/courses/')).toBe('courses');

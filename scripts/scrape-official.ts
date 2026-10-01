@@ -99,6 +99,8 @@ async function main(): Promise<void> {
     try {
       const url = new URL(raw);
       url.hash = '';
+      // The sitemaps list http URLs for pages the site serves over https; fetching both stored every page twice.
+      if (url.protocol === 'http:' && url.host in ALLOWED) url.protocol = 'https:';
       const key = url.toString().replace(/\/$/, '');
       if (seen.has(key) || !allowed(url)) return;
       seen.add(key);

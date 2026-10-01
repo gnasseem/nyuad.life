@@ -1,24 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type GuideCourse, type GuideDetail, type GuideItem, type GuideSection } from '../api';
-import { Mark } from '../components/Logo';
-import { PostCard } from '../components/PostCard';
+import { PostRow } from '../components/PostRow';
 import { useApp } from '../context';
 import { formatDate, plural } from '../format';
-import { IconAsk, IconBack, IconChevronRight, IconClose, IconExternal, IconInfo, IconSearch, IconShield } from '../icons';
+import { IconBack, IconChevronRight, IconClose, IconExternal } from '../icons';
 import { navigate, onLinkClick } from '../router';
 
 interface Props {
   section?: string;
   id?: string;
-  search: URLSearchParams;
 }
 
-/**
- * The guide: official NYUAD pages by section and every course with a code. A section lists its entries; opening one
- * slides in a panel with the summary written from the official text and what students said, so nobody leaves the list.
- */
+const CONFIDENCE_LABEL = { high: 'High confidence', medium: 'Medium confidence', low: 'Low confidence' };
+
+/** Official NYUAD pages by section and every course with a code; opening an entry slides in a panel with the summary. */
 export function GuidePage({ section, id }: Props) {
-  const [index, setIndex] = useState<{ official: { available: boolean; pages: number; fetchedAt: string }; sections: GuideSection[] } | null>(null);
+  const [index, setIndex] = useState<{ official: { available: boolean }; sections: GuideSection[] } | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -29,49 +26,40 @@ export function GuidePage({ section, id }: Props) {
   }, []);
 
   const closeDetail = () => navigate({ name: 'guide', section }, { keepScroll: true });
+  const current = section ? index?.sections.find((entry) => entry.id === section) : undefined;
 
   return (
     <div className="page">
-      {section ? (
+      {section && (
         <button type="button" className="btn ghost sm back" onClick={() => navigate({ name: 'guide' })}>
           <IconBack /> Guide
         </button>
-      ) : null}
+      )}
       <div className="page-head">
-        <div>
-          <h1>{section ? index?.sections.find((entry) => entry.id === section)?.label ?? 'Guide' : 'Guide'}</h1>
-          <p>{section ? index?.sections.find((entry) => entry.id === section)?.blurb ?? '' : 'What the university says, section by section, next to what students said. Open anything for a summary of both.'}</p>
-        </div>
+        <h1>{current?.label ?? (section === 'courses' ? 'Courses' : 'Guide')}</h1>
       </div>
-      {error && <div className="alert">{error}</div>}
+      {error && <div className="alert error">{error}</div>}
       {index && !index.official.available && (
-        <div className="alert note" style={{ marginBottom: 16 }}>
-          <IconInfo />
-          <span>
-            Official pages have not been crawled on this server yet, so only courses students mentioned are listed. Run the <b>Crawl official NYUAD pages</b> workflow on GitHub (or <code>npm run scrape:official</code> then <code>npm run index:official</code>) to fill the guide.
-          </span>
+        <div className="alert" style={{ marginBottom: 16 }}>
+          Official pages have not been crawled on this server yet, so only courses mentioned in threads are listed.
         </div>
       )}
       {!section && index && (
-        <div className="guide-grid">
+        <div className="list">
           {index.sections
             .filter((entry) => entry.count > 0 || entry.id === 'courses')
             .map((entry) => (
-              <a key={entry.id} href={`/guide/${entry.id}`} className="guide-tile" onClick={onLinkClick}>
-                <b>{entry.label}</b>
-                <span>{entry.blurb}</span>
-                <span className="n">{entry.id === 'courses' ? plural(entry.count, 'course') : plural(entry.count, 'page')}</span>
+              <a key={entry.id} href={`/guide/${entry.id}`} className="list-row" onClick={onLinkClick}>
+                <span className="grow">
+                  <span className="title">{entry.label}</span>
+                </span>
+                <span className="count">{entry.id === 'courses' ? plural(entry.count, 'course') : plural(entry.count, 'page')}</span>
+                <IconChevronRight className="chev" />
               </a>
             ))}
         </div>
       )}
-      {!section && !index && !error && (
-        <div className="guide-grid" aria-busy="true">
-          {Array.from({ length: 6 }, (_, i) => (
-            <div key={i} className="skeleton" style={{ height: 96, borderRadius: 10 }} />
-          ))}
-        </div>
-      )}
+      {!section && !index && !error && <div className="skeleton" style={{ height: 240 }} aria-busy="true" />}
       {section === 'courses' && <CourseList selected={id} />}
       {section && section !== 'courses' && <SectionList section={section} selected={id} />}
       {section && id && <Detail section={section} id={id} onClose={closeDetail} />}
@@ -98,13 +86,8 @@ function CourseList({ selected }: { selected?: string }) {
   const shown = (items ?? []).filter((item) => (!dept || item.department === dept) && (!needle || item.code.toLowerCase().includes(needle) || item.title.toLowerCase().includes(needle)));
   return (
     <>
-      <label className="input-group guide-search" style={{ maxWidth: 420 }}>
-        <span className="suffix" style={{ borderRadius: '6px 0 0 6px', borderLeft: '1px solid var(--border-strong)', borderRight: 0 }}>
-          <IconSearch style={{ width: 14, height: 14 }} />
-        </span>
-        <input className="input" style={{ borderRadius: '0 6px 6px 0' }} value={q} onChange={(event) => setQ(event.target.value)} placeholder="Course code or title" aria-label="Filter courses" />
-      </label>
-      <div className="chips" style={{ marginBottom: 14 }}>
+      <input className="input filter" value={q} onChange={(event) => setQ(event.target.value)} placeholder="Course code or title" aria-label="Filter courses" />
+      <div className="chips" style={{ marginBottom: 18 }}>
         <button type="button" className={`chip${dept ? '' : ' on'}`} onClick={() => setDept('')}>
           All
         </button>
@@ -114,8 +97,8 @@ function CourseList({ selected }: { selected?: string }) {
           </button>
         ))}
       </div>
-      {!items && <div className="skeleton" style={{ height: 200, borderRadius: 10 }} />}
-      {items && shown.length === 0 && <div className="empty">No course matches that.</div>}
+      {!items && <div className="skeleton" style={{ height: 240 }} aria-busy="true" />}
+      {items && shown.length === 0 && <div className="empty">No matching courses.</div>}
       {items && shown.length > 0 && (
         <div className="list">
           {shown.slice(0, 400).map((item) => (
@@ -124,17 +107,17 @@ function CourseList({ selected }: { selected?: string }) {
               <span className="grow">
                 <span className="title">{item.title || 'Mentioned in the group'}</span>
               </span>
-              <span className="n">
-                {item.official ? 'bulletin' : ''}
-                {item.official && item.threads ? ' · ' : ''}
-                {item.threads ? plural(item.threads, 'thread') : ''}
-              </span>
+              <span className="count">{[item.official ? 'Bulletin' : '', item.threads ? plural(item.threads, 'thread') : ''].filter(Boolean).join(', ')}</span>
               <IconChevronRight className="chev" />
             </a>
           ))}
         </div>
       )}
-      {items && shown.length > 400 && <p className="faint xs" style={{ marginTop: 8 }}>Showing the first 400; narrow it down with the search box.</p>}
+      {items && shown.length > 400 && (
+        <p className="faint small" style={{ marginTop: 10 }}>
+          Showing 400 of {shown.length}. Filter to see the rest.
+        </p>
+      )}
     </>
   );
 }
@@ -151,27 +134,20 @@ function SectionList({ section, selected }: { section: string; selected?: string
       .catch((err) => setError(err instanceof Error ? err.message : 'Could not load this section.'));
   }, [section]);
   const needle = q.trim().toLowerCase();
-  const shown = (items ?? []).filter((item) => !needle || item.title.toLowerCase().includes(needle) || item.blurb.toLowerCase().includes(needle));
+  const shown = (items ?? []).filter((item) => !needle || item.title.toLowerCase().includes(needle) || item.parent.toLowerCase().includes(needle));
   return (
     <>
-      {error && <div className="alert">{error}</div>}
-      {items && items.length > 8 && (
-        <label className="input-group guide-search" style={{ maxWidth: 420 }}>
-          <span className="suffix" style={{ borderRadius: '6px 0 0 6px', borderLeft: '1px solid var(--border-strong)', borderRight: 0 }}>
-            <IconSearch style={{ width: 14, height: 14 }} />
-          </span>
-          <input className="input" style={{ borderRadius: '0 6px 6px 0' }} value={q} onChange={(event) => setQ(event.target.value)} placeholder="Filter" aria-label="Filter pages" />
-        </label>
-      )}
-      {!items && !error && <div className="skeleton" style={{ height: 200, borderRadius: 10 }} />}
-      {items && shown.length === 0 && <div className="empty">Nothing here yet.</div>}
+      {error && <div className="alert error">{error}</div>}
+      {items && items.length > 8 && <input className="input filter" value={q} onChange={(event) => setQ(event.target.value)} placeholder="Filter" aria-label="Filter pages" />}
+      {!items && !error && <div className="skeleton" style={{ height: 240 }} aria-busy="true" />}
+      {items && shown.length === 0 && <div className="empty">No pages.</div>}
       {items && shown.length > 0 && (
         <div className="list">
           {shown.map((item) => (
             <a key={item.id} href={`/guide/${section}/${item.id}`} className={`list-row${selected === item.id ? ' on' : ''}`} onClick={onLinkClick}>
               <span className="grow">
                 <span className="title">{item.title}</span>
-                <span className="sub">{item.blurb}</span>
+                {item.parent && <span className="sub">{item.parent}</span>}
               </span>
               <IconChevronRight className="chev" />
             </a>
@@ -181,8 +157,6 @@ function SectionList({ section, selected }: { section: string; selected?: string
     </>
   );
 }
-
-/* ---------- The panel ---------- */
 
 function Detail({ section, id, onClose }: { section: string; id: string; onClose(): void }) {
   const { setAskPrefill } = useApp();
@@ -212,18 +186,20 @@ function Detail({ section, id, onClose }: { section: string; id: string; onClose
 
   const ask = () => {
     if (!detail) return;
-    setAskPrefill({ question: detail.kind === 'course' ? `What do students say about ${detail.code}? Workload, grading, professors, and whether it is worth taking.` : `Tell me about ${detail.title} at NYUAD: the rules and what students actually experienced.`, autoSend: true });
+    setAskPrefill({ question: detail.kind === 'course' ? `What do students say about ${detail.code}?` : `What should I know about ${detail.title}?`, autoSend: true });
     navigate({ name: 'ask' });
   };
 
   const title = detail?.title ?? (section === 'courses' ? id : 'Loading');
+  const crumbs = (detail?.breadcrumbs ?? []).filter((crumb) => crumb !== 'Home' && crumb !== title).slice(-2);
+  const eyebrow = crumbs.length ? crumbs.join(' / ') : section === 'courses' ? 'Course' : 'Official page';
   return (
     <>
       <div className="drawer-scrim" onClick={onClose} aria-hidden="true" />
       <aside className="drawer" role="dialog" aria-modal="true" aria-label={title}>
         <div className="drawer-head">
           <div className="grow">
-            <div className="eyebrow">{detail?.breadcrumbs?.length ? detail.breadcrumbs.join(' › ') : section === 'courses' ? 'Course' : 'Official page'}</div>
+            <div className="eyebrow">{eyebrow}</div>
             <h2>{title}</h2>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
@@ -231,62 +207,58 @@ function Detail({ section, id, onClose }: { section: string; id: string; onClose
           </button>
         </div>
         <div className="drawer-body">
-          {error && <div className="alert">{error}</div>}
+          {error && <div className="alert error">{error}</div>}
           {!detail && !error && (
             <div className="stack" aria-busy="true">
-              <div className="skeleton" style={{ height: 18, width: '60%' }} />
+              <div className="skeleton" style={{ height: 16, width: '60%' }} />
               <div className="skeleton" style={{ height: 80 }} />
               <div className="skeleton" style={{ height: 120 }} />
             </div>
           )}
           {detail && (
             <>
-              <div className="row wrap" style={{ marginBottom: 14 }}>
+              <div className="row wrap" style={{ marginBottom: 20 }}>
                 <button type="button" className="btn sm primary" onClick={ask}>
-                  <IconAsk /> Ask about this
+                  Ask about this
                 </button>
                 {detail.official && (
                   <a className="btn sm" href={detail.official.url} target="_blank" rel="noreferrer">
-                    <IconExternal /> Official page
+                    <IconExternal /> Open page
                   </a>
                 )}
                 {detail.official?.credits && <span className="tag">{detail.official.credits} credits</span>}
-                {detail.threadCount > 0 && <span className="tag">{plural(detail.threadCount, 'thread')} in the group</span>}
+                {detail.threadCount > 0 && <span className="tag">{plural(detail.threadCount, 'thread')}</span>}
               </div>
               {detail.summary ? (
                 <Summary summary={detail.summary} sources={detail.sources} />
               ) : (
-                <div className="alert note">
-                  <IconInfo />
-                  <span>{detail.official || detail.threads.length ? 'No summary yet: the model key is not set on this server, so only the raw sources are shown.' : 'Nothing is known about this entry yet.'}</span>
-                </div>
+                <div className="alert">{detail.official || detail.threads.length ? 'No summary: no model key is set on this server.' : 'No information for this entry.'}</div>
               )}
               {detail.official && (
                 <>
-                  <h3>
-                    <IconShield style={{ width: 13, height: 13, verticalAlign: -2, marginRight: 4 }} />
-                    From the official page · fetched {formatDate(detail.official.fetchedAt)}
+                  <h3 className="section-title">
+                    Official page <span>fetched {formatDate(detail.official.fetchedAt)}</span>
                   </h3>
                   <div className="official-text">{detail.official.text}</div>
                 </>
               )}
               {detail.threads.length > 0 && (
                 <>
-                  <h3>What students said</h3>
-                  <div className="post-list">
+                  <h3 className="section-title">Threads</h3>
+                  <div className="list">
                     {detail.threads.map((post) => (
-                      <PostCard key={post.id} post={post} showSnippet={false} />
+                      <PostRow key={post.id} post={post} />
                     ))}
                   </div>
                 </>
               )}
               {detail.related && detail.related.length > 0 && (
                 <>
-                  <h3>Related pages</h3>
+                  <h3 className="section-title">Related pages</h3>
                   <div className="sources-list">
                     {detail.related.map((entry) => (
                       <a key={entry.id} href={`/guide/${detail.section}/${entry.id}`} onClick={onLinkClick}>
-                        <IconChevronRight style={{ width: 13, height: 13, flex: 'none' }} />
+                        <IconChevronRight style={{ width: 14, height: 14, flex: 'none' }} />
                         <span className="t">{entry.title}</span>
                       </a>
                     ))}
@@ -311,45 +283,33 @@ function Summary({ summary, sources }: { summary: NonNullable<GuideDetail['summa
         </span>
       ));
     });
-  const level = summary.confidence;
+  const sections: Array<[string, string[]]> = [
+    ['From the official page', summary.facts],
+    ['From students', summary.students],
+    ['Keep in mind', summary.keepInMind],
+  ];
   return (
     <div className="summary">
       <p className="overview">{cite(summary.overview)}</p>
-      {summary.facts.length > 0 && (
-        <div>
-          <h3 style={{ marginTop: 0 }}>Facts</h3>
-          <ul>
-            {summary.facts.map((fact, i) => (
-              <li key={i}>{cite(fact)}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {summary.students.length > 0 && (
-        <div>
-          <h3 style={{ marginTop: 0 }}>What students said</h3>
-          <ul>
-            {summary.students.map((line, i) => (
-              <li key={i}>{cite(line)}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {summary.keepInMind.length > 0 && (
-        <div>
-          <h3 style={{ marginTop: 0 }}>Keep in mind</h3>
-          <ul>
-            {summary.keepInMind.map((line, i) => (
-              <li key={i}>{cite(line)}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      <div className="row wrap" style={{ gap: '4px 12px' }}>
-        <span className={`pill confidence ${level}`}>
-          <span className="dot" /> {level === 'high' ? 'High' : level === 'medium' ? 'Medium' : 'Low'} confidence
+      {sections
+        .filter(([, lines]) => lines.length > 0)
+        .map(([heading, lines]) => (
+          <div key={heading}>
+            <h3 className="section-title" style={{ marginTop: 0 }}>
+              {heading}
+            </h3>
+            <ul>
+              {lines.map((line, i) => (
+                <li key={i}>{cite(line)}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      <div className="meta">
+        <span className={`pill confidence ${summary.confidence}`}>
+          <span className="dot" /> {CONFIDENCE_LABEL[summary.confidence]}
         </span>
-        <span className="faint xs">Written by the model from the sources below · {formatDate(summary.createdAt.slice(0, 10))}</span>
+        <span>Written from the sources below, {formatDate(summary.createdAt.slice(0, 10))}</span>
       </div>
       {sources.length > 0 && (
         <div className="sources-list">
@@ -358,16 +318,23 @@ function Summary({ summary, sources }: { summary: NonNullable<GuideDetail['summa
               <>
                 <span className="source-n">{source.n}</span>
                 <span className="t">{source.title}</span>
-                <span className="faint xs">{source.kind === 'official' ? 'official' : source.kind === 'board' ? 'student answer' : 'thread'}</span>
+                <span className="kind">{source.kind === 'official' ? 'Official' : source.kind === 'board' ? 'Student answer' : 'Thread'}</span>
               </>
             );
-            if (source.kind === 'official') return <a key={source.n} href={source.url} target="_blank" rel="noreferrer">{inner}</a>;
-            if (source.kind === 'board') return <a key={source.n} href={`/questions/${source.postId}`} onClick={onLinkClick}>{inner}</a>;
-            return <a key={source.n} href={`/post/${source.postId}`} onClick={onLinkClick}>{inner}</a>;
+            if (source.kind === 'official')
+              return (
+                <a key={source.n} href={source.url} target="_blank" rel="noreferrer">
+                  {inner}
+                </a>
+              );
+            return (
+              <a key={source.n} href={source.kind === 'board' ? `/questions/${source.postId}` : `/post/${source.postId}`} onClick={onLinkClick}>
+                {inner}
+              </a>
+            );
           })}
         </div>
       )}
-      <Mark className="faint" style={{ width: 14, height: 14, display: 'none' }} />
     </div>
   );
 }

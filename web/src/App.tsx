@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, boardProblem as describeBoardProblem, type Health, type HomePayload, type Profile } from './api';
-import { Celebration } from './components/Celebration';
 import { Wordmark } from './components/Logo';
 import { ProfileModal } from './components/ProfileForm';
-import { Welcome } from './components/Welcome';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
 import { initials, standingLabel } from './format';
 import { IconAsk, IconAuto, IconBook, IconClose, IconCoins, IconMegaphone, IconMenu, IconMoon, IconQuestions, IconSettings, IconSun, IconTrash, IconUser } from './icons';
@@ -15,19 +13,19 @@ import { PostPage } from './pages/Post';
 import { QuestionPage, QuestionsPage } from './pages/Questions';
 import { SettingsPage } from './pages/Settings';
 import { navigate, onLinkClick, routePath, useRoute, type Route } from './router';
-import { applyTheme, clearConversations, deleteConversation, hasBeenWelcomed, loadConversations, loadProfile, loadTheme, markWelcomed, onConversationsChange, saveProfile, type Conversation, type Theme } from './store';
-import { promotionMessage, standingFor } from './year';
+import { applyTheme, clearConversations, deleteConversation, loadConversations, loadProfile, loadTheme, onConversationsChange, saveProfile, type Conversation, type Theme } from './store';
+import { standingFor } from './year';
 
-const NAV: Array<{ route: Route; label: string; short: string; icon: typeof IconAsk; matches: Route['name'][] }> = [
-  { route: { name: 'ask' }, label: 'Ask', short: 'Ask', icon: IconAsk, matches: ['ask'] },
-  { route: { name: 'questions' }, label: 'Questions', short: 'Questions', icon: IconQuestions, matches: ['questions', 'question'] },
-  { route: { name: 'announcements' }, label: 'What’s on', short: 'What’s on', icon: IconMegaphone, matches: ['announcements'] },
-  { route: { name: 'falcons' }, label: 'Falcons', short: 'Falcons', icon: IconCoins, matches: ['falcons'] },
-  { route: { name: 'guide' }, label: 'Guide', short: 'Guide', icon: IconBook, matches: ['guide', 'post', 'browse', 'courses'] },
+const NAV: Array<{ route: Route; label: string; icon: typeof IconAsk; matches: Route['name'][] }> = [
+  { route: { name: 'ask' }, label: 'Ask', icon: IconAsk, matches: ['ask'] },
+  { route: { name: 'questions' }, label: 'Questions', icon: IconQuestions, matches: ['questions', 'question'] },
+  { route: { name: 'announcements' }, label: 'Notices', icon: IconMegaphone, matches: ['announcements'] },
+  { route: { name: 'falcons' }, label: 'Falcons', icon: IconCoins, matches: ['falcons'] },
+  { route: { name: 'guide' }, label: 'Guide', icon: IconBook, matches: ['guide', 'post'] },
 ];
 
-const THEME_LABEL: Record<Theme, string> = { system: 'Theme follows your system', light: 'Light theme', dark: 'Dark theme' };
-const DEFAULT_PROFILE_REQUEST = { title: 'Who are you?', reason: 'Your major and year route the right questions to you, and your name goes next to what you write. One time only.' };
+const THEME_LABEL: Record<Theme, string> = { system: 'System theme', light: 'Light theme', dark: 'Dark theme' };
+const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: 'Your major and year decide which questions reach you. Your name appears next to what you write.' };
 
 function useConversations(): Conversation[] {
   const [items, setItems] = useState(loadConversations);
@@ -45,22 +43,18 @@ export function App() {
   const [askPrefill, setAskPrefillState] = useState<(Prefill & { token: number }) | null>(null);
   const [boardPrefill, setBoardPrefill] = useState('');
   const [drawer, setDrawer] = useState(false);
-  const [moment, setMoment] = useState<{ title: string; message: string; action?: string } | null>(null);
   const [profileAsk, setProfileAsk] = useState<{ title: string; reason: string } | null>(null);
-  const [welcome, setWelcome] = useState(false);
   const profileRequest = useRef<((saved: boolean) => void) | null>(null);
   const conversations = useConversations();
 
-  // Every 1 May the class years roll over: say so once, and keep the stored standing current for the board.
+  // Class years roll over on 1 May; the stored standing is brought up to date so the board routes correctly.
   useEffect(() => {
     if (!profile) return;
     const current = standingFor(profile.classOf);
     if (current === profile.year) return;
-    const promotion = promotionMessage(profile.year, current);
     const next = { ...profile, year: current };
     saveProfile(next);
     setProfileState(next);
-    if (promotion) setMoment(promotion);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -74,12 +68,6 @@ export function App() {
       .then(setHealth)
       .catch(() => setHealth({ ok: false, gemini: { configured: false }, board: { configured: false } }));
   }, []);
-
-  useEffect(() => {
-    if (profile || hasBeenWelcomed()) return;
-    const timer = window.setTimeout(() => setWelcome(true), 700);
-    return () => window.clearTimeout(timer);
-  }, [profile]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -121,18 +109,11 @@ export function App() {
     profileRequest.current = null;
   };
 
-  const finishWelcome = (saved: boolean) => {
-    markWelcomed();
-    setWelcome(false);
-    if (saved) toast('Welcome aboard');
-  };
-
-  const celebrate = useCallback((next: { title: string; message: string; action?: string }) => setMoment(next), []);
   const boardProblem = useMemo(() => describeBoardProblem(health), [health]);
 
   const context = useMemo(
-    () => ({ home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, setBoardPrefill, celebrate }),
-    [home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, celebrate],
+    () => ({ home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, setBoardPrefill }),
+    [home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill],
   );
 
   const cycleTheme = () => setThemeState(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');
@@ -150,21 +131,18 @@ export function App() {
       case 'falcons':
         return <FalconsPage />;
       case 'guide':
-        return <GuidePage section={route.section} id={route.id} search={search} />;
+        return <GuidePage section={route.section} id={route.id} />;
       case 'post':
         return <PostPage id={route.id} />;
       case 'settings':
         return <SettingsPage />;
-      case 'browse':
-      case 'courses':
-        return <GuidePage section={route.name === 'courses' ? 'courses' : undefined} id={route.name === 'courses' ? route.code : undefined} search={search} />;
       default:
         return <AskPage resumeId={currentConversation ?? undefined} />;
     }
   })();
 
   const clearAll = () => {
-    if (!window.confirm('Delete every saved conversation on this device?')) return;
+    if (!window.confirm('Delete all saved conversations?')) return;
     clearConversations();
     if (currentConversation) navigate({ name: 'ask' });
   };
@@ -175,22 +153,21 @@ export function App() {
   };
 
   const settingsActive = route.name === 'settings';
-  const navLinks = (short: boolean) =>
-    NAV.map((item) => {
-      const active = item.matches.includes(route.name);
-      return (
-        <a key={item.label} href={routePath(item.route)} className={active ? 'active' : undefined} aria-current={active ? 'page' : undefined} onClick={onLinkClick}>
-          <item.icon /> {short ? item.short : item.label}
-        </a>
-      );
-    });
+  const navLinks = NAV.map((item) => {
+    const active = item.matches.includes(route.name);
+    return (
+      <a key={item.label} href={routePath(item.route)} className={active ? 'active' : undefined} aria-current={active ? 'page' : undefined} onClick={onLinkClick}>
+        <item.icon /> {item.label}
+      </a>
+    );
+  });
 
   return (
     <AppContext.Provider value={context}>
       <div className="shell">
         <div className={`scrim${drawer ? ' open' : ''}`} onClick={() => setDrawer(false)} aria-hidden="true" />
         <aside className={`sidebar${drawer ? ' open' : ''}`} aria-label="Navigation">
-          <div className="row between">
+          <div className="sidebar-top">
             <a href="/" className="wordmark" onClick={onLinkClick}>
               <Wordmark />
             </a>
@@ -198,10 +175,10 @@ export function App() {
               <IconClose />
             </button>
           </div>
-          <nav className="nav">{navLinks(false)}</nav>
+          <nav className="nav">{navLinks}</nav>
           <div className="recent">
             <div className="recent-head">
-              <span>Recent</span>
+              <span className="eyebrow">Recent</span>
               {conversations.length > 0 && (
                 <button type="button" onClick={clearAll}>
                   Clear
@@ -209,7 +186,7 @@ export function App() {
               )}
             </div>
             {conversations.length === 0 ? (
-              <div className="recent-empty">Questions you ask are kept here.</div>
+              <div className="recent-empty">No conversations yet.</div>
             ) : (
               <div className="recent-list">
                 {conversations.slice(0, 40).map((conversation) => (
@@ -227,7 +204,7 @@ export function App() {
           </div>
           <div className="sidebar-foot">
             {profile ? (
-              <a href="/settings" className="me" onClick={onLinkClick} title="Your details">
+              <a href="/settings" className="me" onClick={onLinkClick}>
                 <span className="avatar">{initials(profile.name)}</span>
                 <span className="who">
                   <b>{profile.name}</b>
@@ -238,12 +215,12 @@ export function App() {
               </a>
             ) : (
               <button type="button" className="me" onClick={() => void requestProfile()}>
-                <span className="avatar">
+                <span className="avatar plain">
                   <IconUser style={{ width: 14, height: 14 }} />
                 </span>
                 <span className="who">
-                  <b>Introduce yourself</b>
-                  <span>To answer and post</span>
+                  <b>Add details</b>
+                  <span>To answer or post</span>
                 </span>
               </button>
             )}
@@ -270,7 +247,7 @@ export function App() {
           </header>
           <main>{page}</main>
           <nav className="tabbar" aria-label="Sections">
-            {navLinks(true)}
+            {navLinks}
           </nav>
         </div>
       </div>
@@ -280,8 +257,6 @@ export function App() {
         </div>
       )}
       <ProfileModal open={profileAsk !== null} title={profileAsk?.title ?? ''} reason={profileAsk?.reason ?? ''} onClose={() => finishProfile(false)} onDone={() => finishProfile(true)} />
-      <Welcome open={welcome && profileAsk === null && !moment} onDone={finishWelcome} />
-      {moment && <Celebration title={moment.title} message={moment.message} action={moment.action} onClose={() => setMoment(null)} />}
     </AppContext.Provider>
   );
 }

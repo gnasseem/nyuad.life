@@ -16,7 +16,7 @@ import type { Chunk, IndexMeta, SourceCard } from './types.ts';
 import { concatTables, decodeTable, emptyTable, encodeTable, quantize, selectRows, type VectorTable } from './vectors.ts';
 
 export const OFFICIAL_SECTIONS = [
-  'majors', 'minors', 'core', 'courses', 'study-away', 'academics', 'admissions', 'housing', 'campus', 'health', 'money', 'visa', 'careers', 'research', 'policies', 'other',
+  'majors', 'minors', 'core', 'courses', 'study-away', 'academics', 'admissions', 'housing', 'campus', 'health', 'money', 'visa', 'careers', 'research', 'policies', 'faculty', 'other',
 ] as const;
 export type OfficialSection = (typeof OFFICIAL_SECTIONS)[number];
 
@@ -36,6 +36,7 @@ export const SECTION_LABELS: Record<OfficialSection, string> = {
   careers: 'Careers & internships',
   research: 'Research',
   policies: 'Policies',
+  faculty: 'Faculty',
   other: 'Other',
 };
 
@@ -63,8 +64,11 @@ export function classifySection(url: string, title = ''): OfficialSection {
   const haystack = `${url.toLowerCase()} ${title.toLowerCase()}`;
   const rules: Array<[OfficialSection, RegExp]> = [
     ['courses', /bulletins\.nyu\.edu\/.*\/courses|\/courses\/|course-list|course-catalog|course-descriptions/],
-    ['minors', /minor/],
-    ['majors', /major|programs?-of-study|degree-program/],
+    // Faculty profiles and their publication lists: kept for answers about professors, left out of the guide.
+    ['faculty', /\/(?:faculty|instructors|adjunct-faculty|affiliated-faculty|visiting-faculty|postdoctoral-associates)\/|faculty-directory/],
+    // "majors-and-minors" sits in the path of every programme page, so minors are told apart by their own slug or title.
+    ['minors', /-minor(?:\/|\.html|\s|$)|\bminor\b/],
+    ['majors', /-major(?:\/|\.html|\s|$)|-(?:ba|bs)\/|\((?:ba|bs)\)|\bmajors?\b|abu-dhabi\/programs\/(?:\s|$)|programs?-of-study|degree-program/],
     ['core', /core-curriculum|\/core\b|colloqui/],
     ['study-away', /study-away|global-education|j-?term|global-network|studyaway/],
     ['admissions', /admission|apply|financial-aid-and-admission|candidate-weekend/],
@@ -99,12 +103,32 @@ export function readOfficialJsonl(file: string): OfficialDoc[] {
     if (!line.trim()) continue;
     try {
       const doc = JSON.parse(line) as OfficialDoc;
-      if (doc.url && doc.text) out.push({ ...doc, id: doc.id || officialId(doc.url), section: OFFICIAL_SECTIONS.includes(doc.section) ? doc.section : classifySection(doc.url, doc.title) });
+      if (doc.url && doc.text) out.push({ ...doc, id: doc.id || officialId(doc.url) });
     } catch {
       // skip a broken line rather than lose the whole file
     }
   }
-  return out;
+  return tidyDocs(out);
+}
+
+/** Bulletin course entries are always courses; every other page is filed by the current rules, not the ones it was crawled under. */
+function sectionOf(doc: OfficialDoc): OfficialSection {
+  return doc.code ? 'courses' : classifySection(doc.url, doc.title);
+}
+
+/**
+ * One copy per page and up-to-date sections. Older crawls stored many pages twice, once over http and once over
+ * https; the https copy wins. Course entries share their listing page's URL, so the code is part of the key.
+ */
+function tidyDocs(docs: OfficialDoc[]): OfficialDoc[] {
+  const best = new Map<string, OfficialDoc>();
+  for (const doc of docs) {
+    const key = `${doc.url.replace(/^https?:\/\//, '').replace(/\/$/, '')}|${doc.code ?? ''}`;
+    const current = best.get(key);
+    if (!current || (doc.url.startsWith('https:') && !current.url.startsWith('https:'))) best.set(key, doc);
+  }
+  const kept = new Set([...best.values()].map((doc) => doc.id));
+  return docs.filter((doc) => kept.has(doc.id)).map((doc) => ({ ...doc, section: sectionOf(doc) }));
 }
 
 export function writeOfficialJsonl(file: string, docs: OfficialDoc[]): void {
@@ -162,7 +186,14 @@ function load(): OfficialCorpus {
       vectors = decodeTable(readFileSync(vectorFile));
       if (vectors.count !== chunks.length) vectors = emptyTable(meta.dimensions);
     }
-    return assemble(meta, docs, chunks, vectors, 'index');
+    // An index built before the duplicate and section fixes is cleaned here, so it serves well without re-embedding.
+    const tidy = tidyDocs(docs);
+    if (tidy.length === docs.length) return assemble(meta, tidy, chunks, vectors, 'index');
+    const kept = new Set(tidy.map((doc) => doc.id));
+    const rows: number[] = [];
+    chunks.forEach((chunk, row) => kept.has(chunk.postId) && rows.push(row));
+    const keptVectors = vectors.count === chunks.length && vectors.count > 0 ? selectRows(vectors, rows) : vectors;
+    return assemble(meta, tidy, rows.map((row) => chunks[row]!), keptVectors, 'index');
   }
   const docs = readOfficialJsonl(officialFile());
   const chunks = chunkOfficial(docs, { model: 'none', dimensions: 0 });

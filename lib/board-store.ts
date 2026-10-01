@@ -587,8 +587,9 @@ let shared: BoardStore | null | undefined;
 export function boardStore(env: NodeJS.ProcessEnv = process.env): BoardStore | null {
   if (shared !== undefined) return shared;
   const cfg = supabaseConfig(env);
-  if (cfg) shared = new SupabaseBoardStore(cfg);
-  else if (env.ROR_BOARD_STORE === 'memory' || (env.NODE_ENV !== 'production' && env.VERCEL !== '1')) shared = new MemoryBoardStore();
+  if (env.ROR_BOARD_STORE === 'memory') shared = new MemoryBoardStore();
+  else if (cfg) shared = new SupabaseBoardStore(cfg);
+  else if (env.NODE_ENV !== 'production' && env.VERCEL !== '1') shared = new MemoryBoardStore();
   else shared = null;
   return shared;
 }

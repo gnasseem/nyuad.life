@@ -64,7 +64,10 @@ export function normalizeDate(value: string): string {
   if (iso) return iso[1]!;
   if (/^\d{9,10}$/.test(trimmed)) return new Date(Number(trimmed) * 1000).toISOString().slice(0, 10);
   const parsed = Date.parse(trimmed);
-  return Number.isNaN(parsed) ? '' : new Date(parsed).toISOString().slice(0, 10);
+  if (Number.isNaN(parsed)) return '';
+  // Date-only strings like "March 3, 2025" parse as local midnight, so read the local calendar day back out.
+  const local = new Date(parsed);
+  return `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`;
 }
 
 /** Merges a new batch into an existing archive: newer scrapes win, comments are unioned. */

@@ -1,7 +1,7 @@
 /** A small Markdown renderer for model answers: paragraphs, headings, lists, bold/italic/code, links and [n] citations. */
 import type { ReactNode } from 'react';
 
-export interface MarkdownProps {
+interface MarkdownProps {
   text: string;
   onCitation?(n: number): void;
   /** Hover with the pill's position, so a preview can be anchored to it. */
@@ -153,9 +153,3 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
 }
 
 /** Wraps matching terms in <mark> for search snippets. */
-export function highlight(text: string, terms: string[]): ReactNode[] {
-  const clean = terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).filter((term) => term.length > 1);
-  if (clean.length === 0) return [text];
-  const pattern = new RegExp(`(${clean.join('|')})`, 'gi');
-  return text.split(pattern).map((part, index) => (index % 2 === 1 ? <mark key={index}>{part}</mark> : part));
-}

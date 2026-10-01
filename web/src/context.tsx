@@ -19,7 +19,7 @@ export interface AppState {
   boardProblem: string | null;
   profile: Profile | null;
   setProfile(profile: Profile | null): void;
-  /** Opens the "who are you" sheet; resolves true once a profile is saved, false if it was dismissed. */
+  /** Opens the details sheet; resolves true once a profile is saved, false if it was dismissed. */
   requestProfile(request?: ProfileRequest): Promise<boolean>;
   theme: Theme;
   setTheme(theme: Theme): void;
@@ -29,8 +29,6 @@ export interface AppState {
   /** A question carried from Ask to the board's "ask students" form. */
   boardPrefill: string;
   setBoardPrefill(text: string): void;
-  /** Shows confetti and a short card; the profile milestone and class-year moments use it. */
-  celebrate(moment: { title: string; message: string; action?: string }): void;
 }
 
 export const AppContext = createContext<AppState>({
@@ -47,7 +45,6 @@ export const AppContext = createContext<AppState>({
   setAskPrefill: () => {},
   boardPrefill: '',
   setBoardPrefill: () => {},
-  celebrate: () => {},
 });
 
 export function useApp(): AppState {

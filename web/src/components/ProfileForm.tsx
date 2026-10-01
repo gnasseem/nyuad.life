@@ -4,23 +4,15 @@ import { useApp } from '../context';
 import { Modal } from './Modal';
 import { classYears, standingFor } from '../year';
 
-export const MAJORS = [
+// Mirrors MAJORS in lib/board.ts; the web bundle cannot import server code.
+const MAJORS = [
   'Arab Crossroads Studies', 'Art and Art History', 'Bioengineering', 'Biology', 'Business, Organizations and Society', 'Chemistry', 'Civil Engineering',
   'Computer Engineering', 'Computer Science', 'Economics', 'Electrical Engineering', 'Film and New Media', 'General Engineering', 'History',
   'Interactive Media', 'Legal Studies', 'Literature and Creative Writing', 'Mathematics', 'Mechanical Engineering', 'Music', 'Philosophy', 'Physics',
   'Political Science', 'Psychology', 'Social Research and Public Policy', 'Theater', 'Undecided', 'Other',
 ];
 
-interface FormProps {
-  submitLabel?: string;
-  onDone?(profile: Profile): void;
-  /** When given, a secondary button lets the person leave without saving. */
-  onSkip?(): void;
-  skipLabel?: string;
-}
-
-/** Name, NetID, major and class year: the four fields everything else on the board hangs off. */
-export function ProfileForm({ submitLabel = 'Continue', onDone, onSkip, skipLabel = 'Skip for now' }: FormProps) {
+function ProfileForm({ onDone }: { onDone(profile: Profile): void }) {
   const { profile, setProfile } = useApp();
   const years = classYears();
   const [name, setName] = useState(profile?.name ?? '');
@@ -38,25 +30,25 @@ export function ProfileForm({ submitLabel = 'Continue', onDone, onSkip, skipLabe
     try {
       const result = await api.board.profile(draft);
       setProfile(result.profile);
-      onDone?.(result.profile);
+      onDone(result.profile);
     } catch (err) {
       // A server without a working board must not stop anyone using the rest of the site: keep the profile on the device.
       if (err instanceof ApiError && err.status === 503 && /^[a-z]{1,8}\d{1,6}$/.test(draft.netId) && draft.name.length >= 2 && draft.major) {
         const local: Profile = { ...draft, year: standingFor(classOf), answers: profile?.answers ?? 0 };
         setProfile(local);
-        onDone?.(local);
-      } else setError(err instanceof Error ? err.message : 'Could not save that.');
+        onDone(local);
+      } else setError(err instanceof Error ? err.message : 'Could not save the details.');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <form className="stack" style={{ gap: 16 }} onSubmit={(event) => void submit(event)}>
+    <form className="stack" style={{ gap: 14 }} onSubmit={(event) => void submit(event)}>
       <div className="form-grid">
         <div className="field">
           <label htmlFor="pf-name">Name</label>
-          <input id="pf-name" className="input" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" maxLength={60} placeholder="What people call you" required />
+          <input id="pf-name" className="input" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" maxLength={60} required />
         </div>
         <div className="field">
           <label htmlFor="pf-netid">NetID</label>
@@ -66,7 +58,7 @@ export function ProfileForm({ submitLabel = 'Continue', onDone, onSkip, skipLabe
           <label htmlFor="pf-major">Major</label>
           <select id="pf-major" className="input" value={major} onChange={(event) => setMajor(event.target.value)} required>
             <option value="" disabled>
-              Choose
+              Select
             </option>
             {MAJORS.map((entry) => (
               <option key={entry} value={entry}>
@@ -86,16 +78,10 @@ export function ProfileForm({ submitLabel = 'Continue', onDone, onSkip, skipLabe
           </select>
         </div>
       </div>
-      {error && <div className="alert">{error}</div>}
-      <div className="modal-actions" style={{ marginTop: 2 }}>
-        {onSkip && (
-          <button type="button" className="btn ghost" onClick={onSkip} disabled={saving}>
-            {skipLabel}
-          </button>
-        )}
-        <span className="spacer" />
+      {error && <div className="alert error">{error}</div>}
+      <div className="modal-actions" style={{ marginTop: 4 }}>
         <button type="submit" className="btn primary" disabled={saving}>
-          {saving ? 'Saving' : submitLabel}
+          {saving ? 'Saving' : 'Save'}
         </button>
       </div>
     </form>
@@ -110,10 +96,10 @@ interface ModalProps {
   onDone(profile: Profile): void;
 }
 
-/** The one-time "who are you" step, as a sheet over whatever page asked for it. */
+/** The details sheet, opened by whichever page needs a name, NetID, major and year. */
 export function ProfileModal({ open, title, reason, onClose, onDone }: ModalProps) {
   return (
-    <Modal open={open} onClose={onClose} title={title} subtitle={reason} width={540}>
+    <Modal open={open} onClose={onClose} title={title} subtitle={reason || undefined} width={520}>
       <ProfileForm onDone={onDone} />
     </Modal>
   );

@@ -26,7 +26,6 @@ const CONVERSATIONS_KEY = 'room.conversations';
 const THEME_KEY = 'room.theme';
 const PROFILE_KEY = 'room.profile';
 const KEY_KEY = 'room.key';
-const WELCOME_KEY = 'life.welcomed';
 const ANNOUNCED_KEY = 'room.announced';
 const MAX_CONVERSATIONS = 60;
 
@@ -111,7 +110,7 @@ export function saveProfile(profile: Profile | null): void {
   }
 }
 
-/** A random key that ties questions and announcements to this browser without asking who you are. */
+/** A random key that ties questions and notices to this browser without asking who you are. */
 export function askerKey(): string {
   let key = '';
   try {
@@ -130,26 +129,18 @@ export function askerKey(): string {
   return key;
 }
 
-/** Whether the welcome sheet has been shown on this device (it is shown once, whether or not a profile was saved). */
-export function hasBeenWelcomed(): boolean {
-  try {
-    return localStorage.getItem(WELCOME_KEY) === '1';
-  } catch {
-    return true;
-  }
+/** Ids of the notices posted from this browser, so they show a Remove button. */
+export function loadAnnounced(): string[] {
+  return read<string[]>(ANNOUNCED_KEY, []);
 }
 
-export function markWelcomed(): void {
-  try {
-    localStorage.setItem(WELCOME_KEY, '1');
-  } catch {
-    // ignore
-  }
+export function saveAnnounced(ids: string[]): void {
+  write(ANNOUNCED_KEY, ids.slice(-50));
 }
 
 /** Removes everything this site keeps in the browser: profile, conversations, the anonymous key and the theme. */
 export function forgetDevice(): void {
-  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, KEY_KEY, WELCOME_KEY, ANNOUNCED_KEY]) {
+  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, KEY_KEY, ANNOUNCED_KEY]) {
     try {
       localStorage.removeItem(key);
     } catch {
