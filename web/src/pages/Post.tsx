@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, type PostDetail, type PostSummary } from '../api';
 import { PostRow } from '../components/PostRow';
 import { useApp } from '../context';
-import { formatDate, initials, plural, topicLabel } from '../format';
+import { formatDate, initials, topicLabel } from '../format';
 import { IconBack, IconExternal } from '../icons';
 import { navigate } from '../router';
 
@@ -67,20 +67,15 @@ export function PostPage({ id }: Props) {
                 <span className="avatar">{initials(post.author || 'Unknown') || '?'}</span>
                 <div>
                   <b>{post.author || 'Unknown'}</b>
-                  <span>
-                    {formatDate(post.date)}
-                    {post.reactions > 0 ? `, ${plural(post.reactions, 'reaction')}` : ''}
-                  </span>
+                  <span>{formatDate(post.date)}</span>
                 </div>
               </div>
               <div className="post-full">{post.text}</div>
             </article>
 
-            <h2 className="section-title">
-              Comments <span>{post.comments.length ? plural(post.comments.length, 'comment') : 'none yet'}</span>
-            </h2>
+            <h2 className="section-title">Comments</h2>
             {post.comments.length === 0 ? (
-              <p className="muted">Nobody replied in the group.</p>
+              <p className="muted">No comments.</p>
             ) : (
               <div className="comments">
                 <div className="stations">
@@ -100,21 +95,20 @@ export function PostPage({ id }: Props) {
 
           <aside className="rail">
             <div className="rail-block">
-              <h2>From this thread</h2>
               <div className="stack" style={{ gap: 8 }}>
                 <button type="button" className="btn primary" onClick={askAbout}>
                   Ask about this
                 </button>
                 {post.url && (
                   <a className="btn" href={post.url} target="_blank" rel="noreferrer">
-                    <IconExternal /> Open on Facebook
+                    <IconExternal /> Facebook
                   </a>
                 )}
               </div>
             </div>
             {(post.courses.length > 0 || topics.length > 0) && (
               <div className="rail-block">
-                <h2>Filed under</h2>
+                <h2>Tags</h2>
                 <div className="chips">
                   {post.courses.map((code) => (
                     <button key={code} type="button" className="chip mono" onClick={() => navigate({ name: 'guide', section: 'courses', id: code })}>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { createPortal } from 'react-dom';
 import { api, type GuideCourse, type GuideSection, type PostSummary } from '../api';
 import { useApp } from '../context';
-import { formatDate, plural, relativeDate } from '../format';
+import { formatDate, relativeDate } from '../format';
 import { IconAsk, IconChat, IconClock, IconMoon, IconSearch, IconSun } from '../icons';
 import { navigate, type Route } from '../router';
 import { loadConversations } from '../store';
@@ -94,7 +94,7 @@ export function useSearchItems(query: string, done: () => void, options: { threa
         setAskPrefill({ question, autoSend: true });
         navigate({ name: 'ask' });
       } });
-      items.push({ id: 'threads', group: 'Ask', title: <>Search the group for <q>{question}</q></>, hint: 'Threads', line: 'guide', icon: <IconSearch />, run: go({ name: 'guide', section: 'threads' }, `q=${encodeURIComponent(question)}`) });
+      items.push({ id: 'threads', group: 'Ask', title: <>Search threads for <q>{question}</q></>, hint: 'Threads', line: 'guide', icon: <IconSearch />, run: go({ name: 'guide', section: 'threads' }, `q=${encodeURIComponent(question)}`) });
     }
 
     const places = PLACES.map((place) => ({ place, s: Math.max(score(place.title, needle), score(place.words, needle) ? 1 : 0) }))
@@ -105,7 +105,7 @@ export function useSearchItems(query: string, done: () => void, options: { threa
 
     if (needle) {
       const sectionHits = sections.filter((section) => section.count > 0 && score(section.label, needle) > 0).slice(0, 4);
-      for (const section of sectionHits) items.push({ id: `section-${section.id}`, group: 'Guide', title: section.label, hint: plural(section.count, section.id === 'courses' ? 'course' : 'page'), line: 'guide', run: go({ name: 'guide', section: section.id }) });
+      for (const section of sectionHits) items.push({ id: `section-${section.id}`, group: 'Guide', title: section.label, line: 'guide', run: go({ name: 'guide', section: section.id }) });
 
       const squashed = squash(needle);
       const courseHits = courses
@@ -113,7 +113,7 @@ export function useSearchItems(query: string, done: () => void, options: { threa
         .filter((entry) => entry.s > 0)
         .sort((a, b) => b.s - a.s || b.course.threads - a.course.threads)
         .slice(0, 6);
-      for (const { course } of courseHits) items.push({ id: `course-${course.code}`, group: 'Courses', title: course.title || 'Mentioned in the group', code: course.code, hint: course.threads ? plural(course.threads, 'thread') : undefined, line: 'guide', run: go({ name: 'guide', section: 'courses', id: course.code }) });
+      for (const { course } of courseHits) items.push({ id: `course-${course.code}`, group: 'Courses', title: course.title || course.code, code: course.code, line: 'guide', run: go({ name: 'guide', section: 'courses', id: course.code }) });
 
       for (const post of threads) items.push({ id: `post-${post.id}`, group: 'From the group', title: post.preview.replace(/\s+/g, ' ').slice(0, 110), hint: formatDate(post.date), line: 'guide', icon: <IconChat />, run: go({ name: 'post', id: post.id }) });
     }
@@ -125,7 +125,7 @@ export function useSearchItems(query: string, done: () => void, options: { threa
 
     if (!needle || score('night day theme dark light service', needle) > 0) {
       const next = theme === 'dark' ? 'light' : 'dark';
-      items.push({ id: 'theme', group: 'Settings', title: next === 'dark' ? 'Switch to night service' : 'Switch to day service', line: 'ask', icon: next === 'dark' ? <IconMoon /> : <IconSun />, run: () => {
+      items.push({ id: 'theme', group: 'Settings', title: next === 'dark' ? 'Switch to dark' : 'Switch to light', line: 'ask', icon: next === 'dark' ? <IconMoon /> : <IconSun />, run: () => {
         setTheme(next);
         done();
       } });
@@ -210,29 +210,13 @@ function PaletteBody({ onClose }: { onClose(): void }) {
 
   return (
     <div className="palette-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()} role="presentation">
-      <div className="palette" role="dialog" aria-modal="true" aria-label="Where to?">
+      <div className="palette" role="dialog" aria-modal="true" aria-label="Search">
         <div className="palette-input">
           <IconSearch />
-          <input ref={inputRef} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={onKeyDown} placeholder="Where to? Ask, or find a course, a page, a ride" aria-label="Where to?" role="combobox" aria-expanded="true" />
+          <input ref={inputRef} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={onKeyDown} placeholder="Search or ask" aria-label="Search" role="combobox" aria-expanded="true" />
           <kbd>esc</kbd>
         </div>
         {items.length ? <SearchList items={items} active={active} setActive={setActive} /> : <div className="palette-empty">Nothing matches.</div>}
-        <div className="palette-foot">
-          <span>
-            <kbd>↑</kbd>
-            <kbd>↓</kbd> move
-          </span>
-          <span>
-            <kbd>↵</kbd> go
-          </span>
-          <span>
-            <kbd>G</kbd> then <kbd>A</kbd>
-            <kbd>Q</kbd>
-            <kbd>N</kbd>
-            <kbd>M</kbd>
-            <kbd>G</kbd> jumps to a line
-          </span>
-        </div>
       </div>
     </div>
   );

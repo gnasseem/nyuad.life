@@ -4,7 +4,7 @@ import { EmptyState } from '../components/EmptyState';
 import { Modal } from '../components/Modal';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
-import { formatWhen, groupByDay, relativeDate, startsIn } from '../format';
+import { groupByDay, startsIn } from '../format';
 import { IconCalendar, IconExternal, IconMegaphone, IconPlus } from '../icons';
 import { useNow } from '../motion';
 import { askerKey, loadAnnounced, saveAnnounced } from '../store';
@@ -86,7 +86,7 @@ export function AnnouncementsPage() {
   useEffect(load, [load]);
 
   const startPosting = async () => {
-    if (!profile && !(await requestProfile({ title: 'Your details', reason: 'Your name appears on the notice.' }))) return;
+    if (!profile && !(await requestProfile())) return;
     setComposing(true);
   };
 
@@ -144,7 +144,6 @@ export function AnnouncementsPage() {
               <span className="dn">{diff === 0 ? 'Today' : date.toLocaleDateString('en-GB', { weekday: 'short' })}</span>
               <span className="ds" />
               <span className="dd">{date.getDate()}</span>
-              <span className="dc">{count ? `${count} on` : ''}</span>
             </button>
           ))}
         </div>
@@ -152,12 +151,11 @@ export function AnnouncementsPage() {
       {items && items.length > 0 && (
         <div className="chips scroll-x kinds-mobile" role="radiogroup" aria-label="Kind">
           <button type="button" role="radio" aria-checked={!filter} className={`chip${filter ? '' : ' on'}`} onClick={() => setFilter('')}>
-            Everything <span className="n">{items.length}</span>
+            All
           </button>
           {KINDS.filter((kind) => counts.has(kind.id)).map((kind) => (
             <button key={kind.id} type="button" role="radio" aria-checked={filter === kind.id} className={`chip${filter === kind.id ? ' on' : ''}`} onClick={() => setFilter(filter === kind.id ? '' : kind.id)}>
               <span className="glyph" data-kind={kind.id} style={{ width: 10, height: 10, color: filter === kind.id ? 'currentColor' : undefined }} /> {kind.label}
-              <span className="n">{counts.get(kind.id)}</span>
             </button>
           ))}
         </div>
@@ -170,7 +168,7 @@ export function AnnouncementsPage() {
         </div>
       )}
       {items && items.length === 0 && !error && (
-        <EmptyState icon={<IconMegaphone />} title="Nothing on right now" text="Events, deadlines, openings and club news from students show up here, soonest first.">
+        <EmptyState icon={<IconMegaphone />} title="Nothing yet">
           <button type="button" className="btn primary" onClick={() => void startPosting()}>
             Post a notice
           </button>
@@ -196,7 +194,6 @@ export function AnnouncementsPage() {
               <section className="agenda-day" id="agenda-open">
                 <div className="agenda-head">
                   <h2>Any time</h2>
-                  <span>Openings and news without a date</span>
                 </div>
                 <div className="agenda-items">
                   {undated.map((entry) => (
@@ -212,19 +209,14 @@ export function AnnouncementsPage() {
               <h2>Show</h2>
               <div className="kind-filter" role="radiogroup" aria-label="Kind">
                 <button type="button" role="radio" aria-checked={!filter} className={filter ? undefined : 'on'} onClick={() => setFilter('')}>
-                  <span className="glyph" data-kind="event" style={{ color: 'var(--ink-3)' }} /> Everything <span className="n">{items.length}</span>
+                  <span className="glyph" data-kind="event" style={{ color: 'var(--ink-3)' }} /> All
                 </button>
                 {KINDS.filter((kind) => counts.has(kind.id)).map((kind) => (
                   <button key={kind.id} type="button" role="radio" aria-checked={filter === kind.id} className={filter === kind.id ? 'on' : undefined} onClick={() => setFilter(filter === kind.id ? '' : kind.id)}>
                     <span className="glyph" data-kind={kind.id} /> {kind.label}
-                    <span className="n">{counts.get(kind.id)}</span>
                   </button>
                 ))}
               </div>
-            </div>
-            <div className="rail-block">
-              <h2>How long notices stay</h2>
-              <p className="rail-note">Dated notices come down the day after they happen. Undated ones stay for two weeks. Add any dated notice to your calendar in one tap.</p>
             </div>
           </aside>
         </div>
@@ -249,7 +241,6 @@ export function AnnouncementsPage() {
 function Item({ entry, now, mine, onRemove }: { entry: Announcement; now: Date; mine: boolean; onRemove(): void }) {
   const [open, setOpen] = useState(false);
   const when = entry.startsAt ? new Date(entry.startsAt) : null;
-  const label = KINDS.find((kind) => kind.id === entry.kind)?.label ?? entry.kind;
   const long = entry.body.length > 220 || entry.body.split('\n').length > 3;
   const soon = when ? startsIn(when, now) : null;
   const hasTime = when ? when.getHours() !== 0 || when.getMinutes() !== 0 : false;
@@ -261,24 +252,19 @@ function Item({ entry, now, mine, onRemove }: { entry: Announcement; now: Date; 
       {when && (
         <div className="when">
           <b>{hasTime ? when.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : 'All day'}</b>
-          <span>{when.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
         </div>
       )}
       <div className="ann-title">
         <h3>{entry.title}</h3>
-        <span className="pill tone-slate">
-          <span className="glyph" data-kind={entry.kind} style={{ width: 9, height: 9, color: 'currentColor' }} /> {label}
-        </span>
-        {soon && (
-          <span className={`pill soon${soon.live ? ' now live' : ''}`}>
+        {soon?.live && (
+          <span className="pill soon now live">
             <span className="dot" /> {soon.text}
           </span>
         )}
       </div>
-      {(when || entry.location) && (
+      {entry.location && (
         <div className="meta">
-          {when && <span>{formatWhen(entry.startsAt!)}</span>}
-          {entry.location && <span>{entry.location}</span>}
+          <span>{entry.location}</span>
         </div>
       )}
       {entry.body && <div className={`details${long && !open ? ' clamped' : ''}`}>{entry.body}</div>}
@@ -288,9 +274,7 @@ function Item({ entry, now, mine, onRemove }: { entry: Announcement; now: Date; 
         </button>
       )}
       <div className="foot">
-        <span>
-          {entry.posterName}, {relativeDate(entry.createdAt)}
-        </span>
+        <span>{entry.posterName}</span>
         {entry.link && (
           <a href={entry.link} target="_blank" rel="noreferrer">
             <IconExternal /> Link
@@ -298,7 +282,7 @@ function Item({ entry, now, mine, onRemove }: { entry: Announcement; now: Date; 
         )}
         {when && (
           <button type="button" onClick={() => addToCalendar(entry)}>
-            <IconCalendar /> Add to calendar
+            <IconCalendar /> Calendar
           </button>
         )}
         {mine && (
@@ -363,22 +347,21 @@ function Compose({ onDone, onCancel }: { onDone(announcement: Announcement): voi
       </div>
       <div className="form-grid">
         <div className="field">
-          <label htmlFor="an-when">When{kind === 'notice' || kind === 'opportunity' ? ' (optional)' : ''}</label>
+          <label htmlFor="an-when">When</label>
           <input id="an-when" className="input" type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} />
         </div>
         <div className="field">
-          <label htmlFor="an-where">Location (optional)</label>
-          <input id="an-where" className="input" value={location} onChange={(event) => setLocation(event.target.value)} maxLength={80} placeholder="C2, Arts Center" />
+          <label htmlFor="an-where">Location</label>
+          <input id="an-where" className="input" value={location} onChange={(event) => setLocation(event.target.value)} maxLength={80} placeholder="e.g. Arts Center" />
         </div>
       </div>
       <div className="field">
-        <label htmlFor="an-link">Link (optional)</label>
+        <label htmlFor="an-link">Link</label>
         <input id="an-link" className="input" value={link} onChange={(event) => setLink(event.target.value)} placeholder="https://" inputMode="url" />
       </div>
       <div className="field">
-        <label htmlFor="an-body">Details (optional)</label>
+        <label htmlFor="an-body">Details</label>
         <textarea id="an-body" className="input" value={body} onChange={(event) => setBody(event.target.value)} rows={4} maxLength={1500} />
-        <span className="hint">Dated notices drop off the day after, undated ones after two weeks.</span>
       </div>
       {error && <div className="alert error">{error}</div>}
       <div className="modal-actions" style={{ marginTop: 4 }}>

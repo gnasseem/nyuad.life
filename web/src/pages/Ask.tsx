@@ -3,13 +3,13 @@ import { createPortal } from 'react-dom';
 import { api, askStream, type Announcement, type GuideCourse, type Listing, type MarketSummary, type QuestionWithAnswers, type SourceCard } from '../api';
 import { Flap } from '../components/Flap';
 import { RedirectCard } from '../components/RedirectCard';
-import { KIND_LABEL, SourceRow } from '../components/SourceRow';
+import { SourceRow } from '../components/SourceRow';
 import { useApp } from '../context';
-import { formatTime, plural, relativeDate, startsIn, topicLabel } from '../format';
+import { formatTime, plural, relativeDate, startsIn } from '../format';
 import { IconArrow, IconCheck, IconChevron, IconCopy, IconPlus, IconStop } from '../icons';
 import { Mark } from '../components/Logo';
 import { Markdown } from '../markdown';
-import { useAbuDhabiTime, useNow } from '../motion';
+import { useNow } from '../motion';
 import { navigate, onLinkClick } from '../router';
 import { askerKey, loadConversations, onConversationsChange, saveConversation, toHistory, uid, type Conversation, type Message } from '../store';
 
@@ -23,7 +23,7 @@ interface Hot {
   rect?: DOMRect;
 }
 
-const CONFIDENCE_LABEL = { medium: 'Partly covered', low: 'Thinly sourced' };
+const CONFIDENCE_LABEL = { medium: 'Partly sourced', low: 'Weakly sourced' };
 const STAGES: Array<{ label: string; match: RegExp }> = [
   { label: 'Reading', match: /^reading/i },
   { label: 'Searching', match: /^search/i },
@@ -332,7 +332,7 @@ export function AskPage({ resumeId }: Props) {
                       </span>
                     )}
                     {message.sources && message.sources.length > 0 && (
-                      <button type="button" className={`foot-btn${expanded.has(message.id) ? ' open' : ''}`} onClick={() => toggleSources(message.id)} aria-expanded={expanded.has(message.id)}>
+                      <button type="button" className={`foot-btn sources-toggle${expanded.has(message.id) ? ' open' : ''}`} onClick={() => toggleSources(message.id)} aria-expanded={expanded.has(message.id)}>
                         {plural(message.sources.length, 'source')} <IconChevron className="chev" />
                       </button>
                     )}
@@ -384,7 +384,7 @@ export function AskPage({ resumeId }: Props) {
       </div>
       <aside className="conv-rail" aria-label="Sources">
         <h2>
-          Sources {railSources.length > 0 && <span>{plural(railSources.length, 'stop')}</span>}
+          Sources
         </h2>
         {railSources.length > 0 ? (
           <div className="rail-sources">
@@ -399,15 +399,8 @@ export function AskPage({ resumeId }: Props) {
             ))}
           </div>
         ) : (
-          <p className="rail-empty">{railMessage?.pending ? 'Looking through the group, the official pages and student answers.' : 'This answer did not cite anything.'}</p>
+          <p className="rail-empty">{railMessage?.pending ? 'Searching…' : 'No sources.'}</p>
         )}
-        <div className="kind-key">
-          {(['official', 'archive', 'board', 'announcement'] as const).map((kind) => (
-            <span key={kind} data-kind={kind}>
-              <i /> {KIND_LABEL[kind]}
-            </span>
-          ))}
-        </div>
       </aside>
       {popover}
     </div>
@@ -493,11 +486,10 @@ function useHomeData(): HomeData {
 function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: ReactNode; suggestions: Array<{ topic: string; question: string }>; onSuggestion(question: string): void; answersOff: boolean }) {
   const { boardProblem } = useApp();
   const data = useHomeData();
-  const clock = useAbuDhabiTime();
-  const [recent, setRecent] = useState(() => loadConversations().slice(0, 4));
+  const [recent, setRecent] = useState(() => loadConversations().slice(0, 3));
   const [hotLine, setHotLine] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  useEffect(() => onConversationsChange(() => setRecent(loadConversations().slice(0, 4))), []);
+  useEffect(() => onConversationsChange(() => setRecent(loadConversations().slice(0, 3))), []);
   useEffect(() => {
     document.documentElement.setAttribute('data-home', '');
     return () => document.documentElement.removeAttribute('data-home');
@@ -505,7 +497,7 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
 
   const now = useNow();
   const upcoming = (data.notices ?? []).filter((entry) => !entry.startsAt || Date.parse(entry.startsAt) > now.getTime() - 3 * 3_600_000).slice(0, 4);
-  const offline = boardProblem ? <p className="stops-note">The board is not running right now.</p> : null;
+  const offline = boardProblem ? <p className="stops-note">Unavailable right now.</p> : null;
 
   return (
     <div className="home" ref={rootRef}>
@@ -519,30 +511,15 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
             <span className="central-ar" lang="ar" dir="rtl">
               المركز
             </span>
-            <span className="central-clock" title="Time in Abu Dhabi">
-              <Flap text={clock} />
-              <small>Abu Dhabi</small>
-            </span>
           </div>
-          <p className="central-line">Every line meets here. Ask about NYUAD and the answer comes from the group's threads, the official pages and other students, with each source shown.</p>
           {composer}
-          <div className="composer-hints">
-            <span>
-              <kbd>↵</kbd> to ask, <kbd>⇧</kbd>
-              <kbd>↵</kbd> for a new line
-            </span>
-            <span>
-              <kbd>⌘K</kbd> to go anywhere
-            </span>
-          </div>
         </div>
-        {answersOff && <p className="ask-note">Answers are paused right now. The guide, the board and the market still work.</p>}
+        {answersOff && <p className="ask-note">Answers are paused right now.</p>}
         {suggestions.length > 0 && (
           <div className="journeys">
-            <h2>Asked a lot this time of year</h2>
+            <h2>Try asking</h2>
             {suggestions.slice(0, 3).map((suggestion) => (
               <button key={suggestion.question} type="button" className="journey" onClick={() => onSuggestion(suggestion.question)}>
-                <span className="tag">{topicLabel(suggestion.topic)}</span>
                 {suggestion.question}
                 <IconArrow />
               </button>
@@ -551,7 +528,7 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
         )}
         {recent.length > 0 && (
           <div className="home-recent">
-            <h2>Pick up where you left off</h2>
+            <h2>Recent</h2>
             {recent.map((conversation) => (
               <a key={conversation.id} href={`/?c=${conversation.id}`} onClick={onLinkClick}>
                 <span>{conversation.title}</span>
@@ -563,12 +540,12 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
       </section>
 
       <aside className="home-rail left" aria-label="On campus">
-        <RailSection line="notices" title="On campus" href="/notices" more="All notices" onHot={setHotLine}>
+        <RailSection line="notices" title="On campus" href="/notices" onHot={setHotLine}>
           {offline ??
             (data.notices === null ? (
               <Loading />
             ) : upcoming.length === 0 ? (
-              <p className="stops-note">Nothing posted yet. Events, deadlines and openings show up here.</p>
+              <p className="stops-note">Nothing yet.</p>
             ) : (
               upcoming.map((entry, index) => (
                 <a key={entry.id} className="stn" href="/notices" onClick={onLinkClick} style={{ '--i': index } as React.CSSProperties}>
@@ -579,25 +556,21 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
               ))
             ))}
         </RailSection>
-        <RailSection line="market" title="Leaving soon" href="/market/rides" more="Rides" onHot={setHotLine}>
+        <RailSection line="market" title="Market" href="/market/rides" onHot={setHotLine}>
           {offline ??
             (data.rides === null ? (
               <Loading />
             ) : (
               <>
                 {data.rides.length === 0 ? (
-                  <p className="stops-note">No rides posted. Heading out? Post one and split the fare.</p>
+                  <p className="stops-note">No rides yet.</p>
                 ) : (
                   data.rides.slice(0, 3).map((ride, index) => {
                     const soon = startsIn(new Date(ride.happensAt!), now, 60);
                     return (
                       <a key={ride.id} className="stn" href="/market/rides" onClick={onLinkClick} style={{ '--i': index } as React.CSSProperties}>
-                        <span className="when">
-                          {formatTime(ride.happensAt!)}
-                          {soon ? ` · ${soon.live ? 'leaving now' : soon.text.toLowerCase()}` : ''}
-                        </span>
+                        <span className="when">{soon?.live ? 'Leaving now' : formatTime(ride.happensAt!)}</span>
                         <span className="what">To {ride.destination}</span>
-                        <span className="where">{[ride.place && `From ${ride.place}`, ride.seats ? plural(ride.seats, 'seat') : ''].filter(Boolean).join(', ')}</span>
                       </a>
                     );
                   })
@@ -609,13 +582,13 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
                         <b>
                           <Flap text={data.market.bestAsk === null ? '–' : data.market.bestAsk.toFixed(2)} />
                         </b>
-                        <span>Falcons from</span>
+                        <span>Falcons · sell</span>
                       </div>
                       <div>
                         <b>
                           <Flap text={data.market.bestBid === null ? '–' : data.market.bestBid.toFixed(2)} />
                         </b>
-                        <span>Buyers pay</span>
+                        <span>Falcons · buy</span>
                       </div>
                     </div>
                   </a>
@@ -626,33 +599,31 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
       </aside>
 
       <aside className="home-rail right" aria-label="Students and the guide">
-        <RailSection line="questions" title="Students asking" href="/questions?tab=help" more={data.open ? `${data.open} waiting` : 'Answer'} onHot={setHotLine}>
+        <RailSection line="questions" title="Students asking" href="/questions?tab=help" onHot={setHotLine}>
           {offline ??
             (data.answered === null ? (
               <Loading />
             ) : data.answered.length === 0 ? (
-              <p className="stops-note">{data.open ? `${plural(data.open, 'question')} waiting for someone who knows.` : 'When the archive falls short, questions go to students here.'}</p>
+              <p className="stops-note">{data.open ? `${plural(data.open, 'question')} waiting` : 'Nothing yet.'}</p>
             ) : (
               data.answered.slice(0, 3).map((question, index) => (
                 <a key={question.id} className="stn" href={`/questions/${question.id}`} onClick={onLinkClick} style={{ '--i': index } as React.CSSProperties}>
                   <span className="when">{plural(question.answers.length, 'answer')}</span>
                   <span className="what">{question.text}</span>
-                  <span className="where">{relativeDate(question.createdAt)}</span>
                 </a>
               ))
             ))}
         </RailSection>
-        <RailSection line="guide" title="Most discussed" href="/guide/courses" more="All courses" onHot={setHotLine}>
+        <RailSection line="guide" title="Popular courses" href="/guide/courses" onHot={setHotLine}>
           {data.courses === null ? (
             <Loading />
           ) : data.courses.length === 0 ? (
-            <p className="stops-note">Every course in the bulletin, with what students say about it.</p>
+            <p className="stops-note">Nothing yet.</p>
           ) : (
             data.courses.map((course, index) => (
               <a key={course.code} className="stn" href={`/guide/courses/${encodeURIComponent(course.code)}`} onClick={onLinkClick} style={{ '--i': index } as React.CSSProperties}>
                 <span className="when">{course.code}</span>
-                <span className="what">{course.title || 'Mentioned in the group'}</span>
-                <span className="where">{plural(course.threads, 'thread')}</span>
+                <span className="what">{course.title || course.code}</span>
               </a>
             ))
           )}
@@ -682,15 +653,16 @@ function noticeWhen(entry: Announcement, now: Date): string {
   return allDay ? day : `${day} ${formatTime(entry.startsAt)}`;
 }
 
-function RailSection({ line, title, href, more, onHot, children }: { line: string; title: string; href: string; more: string; onHot(line: string | null): void; children: ReactNode }) {
+function RailSection({ line, title, href, onHot, children }: { line: string; title: string; href: string; onHot(line: string | null): void; children: ReactNode }) {
   return (
     <section className="rail-sec" data-line={line} onMouseEnter={() => onHot(line)} onMouseLeave={() => onHot(null)}>
       <div className="rail-head">
         <span className="rail-ring" data-ring={line} />
-        <h2>{title}</h2>
-        <a href={href} onClick={onLinkClick}>
-          {more}
-        </a>
+        <h2>
+          <a href={href} onClick={onLinkClick}>
+            {title}
+          </a>
+        </h2>
       </div>
       <div className="stations in-plate grow">{children}</div>
     </section>

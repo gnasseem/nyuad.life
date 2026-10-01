@@ -7,17 +7,17 @@ import { Modal } from '../components/Modal';
 import { Segmented } from '../components/Segmented';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
-import { formatTime, groupByDay, plural, relativeDate, shortDate, startsIn } from '../format';
+import { formatTime, groupByDay, plural, shortDate, startsIn } from '../format';
 import { IconArrow, IconBag, IconPin, IconPlus, IconQuestions, IconSearch } from '../icons';
 import { useNow } from '../motion';
 import { navigate, type MarketTab } from '../router';
 import { askerKey, loadContact, saveContact } from '../store';
-import { FalconCompose, FalconsTab, expiresIn, type OffersData } from './Falcons';
+import { FalconCompose, FalconsTab, type OffersData } from './Falcons';
 
 type Composer = { kind: ListingKind } | { side: OfferSide };
 
 const TABS: Array<{ id: MarketTab; label: string }> = [
-  { id: 'items', label: 'For sale' },
+  { id: 'items', label: 'Items' },
   { id: 'falcons', label: 'Falcons' },
   { id: 'rides', label: 'Rides' },
   { id: 'lost', label: 'Lost & found' },
@@ -77,7 +77,7 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
   }, [loadListings, loadOffers]);
 
   const startPosting = async (next: Composer) => {
-    if (!profile && !(await requestProfile({ title: 'Your details', reason: 'Your name appears on what you post.' }))) return;
+    if (!profile && !(await requestProfile())) return;
     setComposer(next);
   };
 
@@ -107,12 +107,6 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
 
   const all = listings?.listings ?? [];
   const mineIds = useMemo(() => new Set((listings?.mine ?? []).map((listing) => listing.id)), [listings]);
-  const counts: Record<MarketTab, number> = {
-    items: all.filter((listing) => tabOf(listing.kind) === 'items').length,
-    falcons: offers?.offers.length ?? 0,
-    rides: all.filter((listing) => listing.kind === 'ride').length,
-    lost: all.filter((listing) => tabOf(listing.kind) === 'lost').length,
-  };
   const defaultKind: ListingKind = tab === 'rides' ? 'ride' : tab === 'lost' ? 'lost' : 'sell';
   const notReady = listingError instanceof ApiError && listingError.code === 'board_schema_missing';
 
@@ -122,7 +116,7 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
       if (!offers) return <Loading />;
       return <FalconsTab data={offers} onClose={(offer, remove) => void closeOffer(offer, remove)} onPost={(side) => void startPosting({ side })} />;
     }
-    if (notReady) return <EmptyState icon={<IconBag />} title="Not open yet" text="This part of the market is still being set up. Falcons already work." />;
+    if (notReady) return <EmptyState icon={<IconBag />} title="Not open yet" />;
     if (listingError) return <div className="alert error">{listingError.message}</div>;
     if (!listings) return <Loading />;
     const props = { listings: all, mineIds, onClose: (listing: Listing, remove: boolean) => void closeListing(listing, remove), onPost: (kind: ListingKind) => void startPosting({ kind }) };
@@ -158,7 +152,7 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
           label="Market"
           value={tab}
           onChange={(next) => navigate({ name: 'market', tab: next }, { replace: true, keepScroll: true })}
-          options={TABS.map((entry) => ({ ...entry, count: counts[entry.id] }))}
+          options={TABS}
         />
       </div>
       {boardProblem ? (
@@ -238,17 +232,18 @@ interface TabProps {
   onPost(kind: ListingKind): void;
 }
 
+/** Only kinds that have posts get a chip, and with a single kind there is nothing to filter. */
 function KindFilter({ kinds, value, counts, onChange }: { kinds: Array<{ id: ListingKind; label: string }>; value: ListingKind | ''; counts: Map<string, number>; onChange(value: ListingKind | ''): void }) {
-  const total = [...counts.values()].reduce((sum, n) => sum + n, 0);
+  const present = kinds.filter((kind) => counts.has(kind.id));
+  if (present.length < 2) return null;
   return (
     <div className="chips">
       <button type="button" className={`chip${value ? '' : ' on'}`} onClick={() => onChange('')}>
-        All <span className="n">{total}</span>
+        All
       </button>
-      {kinds.map((kind) => (
+      {present.map((kind) => (
         <button key={kind.id} type="button" className={`chip${value === kind.id ? ' on' : ''}`} onClick={() => onChange(value === kind.id ? '' : kind.id)}>
           {kind.label}
-          <span className="n">{counts.get(kind.id) ?? 0}</span>
         </button>
       ))}
     </div>
@@ -270,7 +265,7 @@ function ItemsTab({ listings, mineIds, onClose, onPost }: TabProps) {
 
   if (items.length === 0) {
     return (
-      <EmptyState icon={<IconBag />} title="Nothing listed yet" text="Moving out, upgrading, or after something second-hand? List it here and people reach you directly.">
+      <EmptyState icon={<IconBag />} title="Nothing listed yet">
         <button type="button" className="btn" onClick={() => onPost('want')}>
           Ask for something
         </button>
@@ -300,7 +295,6 @@ function ItemsTab({ listings, mineIds, onClose, onPost }: TabProps) {
           ))}
         </div>
       )}
-      <p className="market-note">Listings come down after three weeks. Meet somewhere public on campus to hand things over.</p>
     </>
   );
 }
@@ -331,9 +325,7 @@ function ItemRow({ listing, mine, onClose }: { listing: Listing; mine: boolean; 
           <span className="dot" /> {label}
         </span>
         {listing.place && <Place place={listing.place} />}
-        <span>
-          {listing.posterName}, {relativeDate(listing.createdAt)}
-        </span>
+        <span>{listing.posterName}</span>
       </div>
       {listing.body ? <Details text={listing.body} /> : <span />}
       <ListingActions listing={listing} mine={mine} onClose={onClose} />
@@ -347,7 +339,7 @@ function ListingActions({ listing, mine, onClose }: { listing: Listing; mine: bo
       {mine ? (
         <>
           <span className="pill tone-line">
-            <span className="dot" /> Yours, {expiresIn(listing.expiresAt)}
+            <span className="dot" /> Yours
           </span>
           <button type="button" className="btn sm" onClick={() => onClose(listing, false)}>
             {listing.kind === 'lost' || listing.kind === 'found' ? 'Mark returned' : listing.kind === 'ride' ? 'Mark full' : 'Mark done'}
@@ -383,7 +375,7 @@ function RidesTab({ listings, mineIds, onClose, onPost }: TabProps) {
   const rides = listings.filter((listing) => listing.kind === 'ride' && listing.happensAt).sort((a, b) => a.happensAt!.localeCompare(b.happensAt!));
   if (rides.length === 0) {
     return (
-      <EmptyState icon={<IconArrow />} title="No rides posted" text="Heading to Dubai, the airport or the city? Post when you leave and split the fare.">
+      <EmptyState icon={<IconArrow />} title="No rides yet">
         <button type="button" className="btn primary" onClick={() => onPost('ride')}>
           Post a ride
         </button>
@@ -397,11 +389,9 @@ function RidesTab({ listings, mineIds, onClose, onPost }: TabProps) {
           <div className="board-head">
             <h2>{group.label}</h2>
             {group.sub && <span>{group.sub}</span>}
-            <span style={{ marginLeft: 'auto' }}>{plural(group.items.length, 'ride')}</span>
           </div>
           {group.items.map((ride) => {
-            const soon = startsIn(new Date(ride.happensAt!), now, 60);
-            const status = !soon ? 'On time' : soon.live ? 'Boarding' : soon.text;
+            const boarding = startsIn(new Date(ride.happensAt!), now, 60)?.live;
             return (
               <article key={ride.id} className="board-row">
                 <div className="board-time">
@@ -411,15 +401,15 @@ function RidesTab({ listings, mineIds, onClose, onPost }: TabProps) {
                   <b>
                     {ride.place} <IconArrow /> {ride.destination}
                   </b>
-                  <span>
-                    {[ride.seats !== null ? (ride.seats === 1 ? '1 seat' : `${ride.seats} seats`) : '', ride.posterName, relativeDate(ride.createdAt)].filter(Boolean).join(' · ')}
-                  </span>
+                  <span>{[ride.seats !== null ? plural(ride.seats, 'seat') : '', ride.posterName].filter(Boolean).join(' · ')}</span>
                   {ride.body && <Details text={ride.body} />}
                 </div>
                 <div className="board-side">
-                  <span className={`board-status${soon ? (soon.live ? ' now' : ' soon') : ''}`}>
-                    <Flap text={status} />
-                  </span>
+                  {boarding && (
+                    <span className="board-status now">
+                      <Flap text="Boarding" />
+                    </span>
+                  )}
                   <ListingActions listing={ride} mine={mineIds.has(ride.id)} onClose={onClose} />
                 </div>
               </article>
@@ -427,7 +417,6 @@ function RidesTab({ listings, mineIds, onClose, onPost }: TabProps) {
           })}
         </section>
       ))}
-      <p className="market-note">Rides come down three hours after they leave. Agree the split before you get in.</p>
     </>
   );
 }
@@ -438,7 +427,7 @@ function LostTab({ listings, mineIds, onClose, onPost }: TabProps) {
   const shown = items.filter((listing) => !kind || listing.kind === kind);
   if (items.length === 0) {
     return (
-      <EmptyState icon={<IconQuestions />} title="Nothing lost or found" text="Lost something, or picked something up? Say what it is and where.">
+      <EmptyState icon={<IconQuestions />} title="Nothing lost or found">
         <button type="button" className="btn" onClick={() => onPost('found')}>
           I found something
         </button>
@@ -465,16 +454,13 @@ function LostTab({ listings, mineIds, onClose, onPost }: TabProps) {
                 {listing.happensAt ? ` ${shortDate(listing.happensAt)}` : ''}
               </span>
               {listing.place && <Place place={listing.place} />}
-              <span>
-                {listing.posterName}, {relativeDate(listing.createdAt)}
-              </span>
+              <span>{listing.posterName}</span>
             </div>
             {listing.body ? <Details text={listing.body} /> : <span />}
             <ListingActions listing={listing} mine={mineIds.has(listing.id)} onClose={onClose} />
           </article>
         ))}
       </div>
-      <p className="market-note">Things handed to a security guard on campus end up at Lost and Found, so check there too.</p>
     </>
   );
 }
@@ -565,7 +551,7 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
               <input id="ls-when" className="input" type="datetime-local" value={when} min={localInput(now, true)} onChange={(event) => setWhen(event.target.value)} />
             </div>
             <div className="field">
-              <label htmlFor="ls-seats">Seats (optional)</label>
+              <label htmlFor="ls-seats">Seats</label>
               <input id="ls-seats" className="input" inputMode="numeric" value={seats} onChange={(event) => setSeats(event.target.value.replace(/[^\d]/g, '').slice(0, 2))} placeholder="3" />
             </div>
           </div>
@@ -586,7 +572,7 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
           <div className="form-grid">
             {kind === 'sell' || kind === 'want' ? (
               <div className="field">
-                <label htmlFor="ls-price">{kind === 'want' ? 'Budget (optional)' : 'Price (optional)'}</label>
+                <label htmlFor="ls-price">{kind === 'want' ? 'Budget' : 'Price'}</label>
                 <div className="input-group">
                   <input id="ls-price" className="input" inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value.replace(/[^\d.]/g, ''))} placeholder="150" />
                   <span className="suffix">AED</span>
@@ -594,19 +580,19 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
               </div>
             ) : group === 'lost' ? (
               <div className="field">
-                <label htmlFor="ls-date">When (optional)</label>
+                <label htmlFor="ls-date">When</label>
                 <input id="ls-date" className="input" type="date" value={when} max={localInput(now, false)} onChange={(event) => setWhen(event.target.value)} />
               </div>
             ) : null}
             <div className="field">
-              <label htmlFor="ls-place">{group === 'lost' ? 'Where' : 'Pickup (optional)'}</label>
+              <label htmlFor="ls-place">{group === 'lost' ? 'Where' : 'Pickup'}</label>
               <input id="ls-place" className="input" value={place} onChange={(event) => setPlace(event.target.value)} maxLength={80} placeholder={group === 'lost' ? 'Library, 2nd floor' : 'A2, or any building code'} />
             </div>
           </div>
         </>
       )}
       <div className="field">
-        <label htmlFor="ls-body">Details (optional)</label>
+        <label htmlFor="ls-body">Details</label>
         <textarea
           id="ls-body"
           className="input"

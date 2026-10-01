@@ -5,7 +5,7 @@ import { SearchList, useListKeys, useSearchItems } from '../components/Palette';
 import { PostRow } from '../components/PostRow';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
-import { formatDate, plural, topicLabel } from '../format';
+import { topicLabel } from '../format';
 import { IconBack, IconChevronRight, IconClose, IconExternal, IconSearch } from '../icons';
 import { useLatest, useMedia, usePresence } from '../motion';
 import { navigate, onLinkClick } from '../router';
@@ -16,7 +16,7 @@ interface Props {
   id?: string;
 }
 
-const CONFIDENCE_LABEL = { medium: 'Partly covered', low: 'Thinly sourced' };
+const CONFIDENCE_LABEL = { medium: 'Partly sourced', low: 'Weakly sourced' };
 const WIDE = '(min-width: 1240px)';
 const PAGE_ROWS = 60;
 
@@ -95,11 +95,6 @@ function GuideHome({ index, error }: { index: { official: { available: boolean }
         <GuideSearch />
       </div>
       {error && <div className="alert error">{error}</div>}
-      {index && !index.official.available && (
-        <div className="alert" style={{ marginBottom: 16 }}>
-          Official pages have not been crawled on this server yet, so only courses mentioned in threads are listed.
-        </div>
-      )}
       {index ? (
         <>
           <GuideMap counts={counts} />
@@ -110,22 +105,19 @@ function GuideHome({ index, error }: { index: { official: { available: boolean }
       )}
       <div className="guide-cols">
         <section>
-          <h2 className="section-title">
-            Most discussed courses <span>by threads in the group</span>
-          </h2>
+          <h2 className="section-title">Popular courses</h2>
           {!courses ? (
             <div className="skeleton" style={{ height: 240 }} />
           ) : discussed.length === 0 ? (
-            <div className="empty">No course has come up in the group yet.</div>
+            <div className="empty">Nothing yet.</div>
           ) : (
             <div className="list">
               {discussed.map((course) => (
                 <a key={course.code} href={`/guide/courses/${encodeURIComponent(course.code)}`} className="row course-row" onClick={onLinkClick}>
                   <span className="code">{course.code}</span>
                   <span className="grow">
-                    <span className="title">{course.title || 'Mentioned in the group'}</span>
+                    <span className="title">{course.title || course.code}</span>
                   </span>
-                  <span className="count">{plural(course.threads, 'thread')}</span>
                   <IconChevronRight className="chev" />
                 </a>
               ))}
@@ -133,19 +125,17 @@ function GuideHome({ index, error }: { index: { official: { available: boolean }
           )}
         </section>
         <section>
-          <h2 className="section-title">
-            Browse the group <span>{health?.archive ? plural(health.archive.posts, 'thread') : 'by topic'}</span>
-          </h2>
+          <h2 className="section-title">Browse the group</h2>
           <div className="chips">
-            {TOPICS.map((topic) => (
+            {TOPICS.slice(0, 8).map((topic) => (
               <a key={topic} className="chip" href={`/guide/threads?topic=${encodeURIComponent(topic)}`} onClick={onLinkClick}>
                 {topicLabel(topic)}
               </a>
             ))}
+            <a className="chip ghost" href="/guide/threads" onClick={onLinkClick}>
+              All threads <IconChevronRight />
+            </a>
           </div>
-          <p className="rail-note" style={{ marginTop: 16 }}>
-            The Room of Requirement as it is, searchable by keyword, topic or course, with no model writing anything.
-          </p>
         </section>
       </div>
     </div>
@@ -183,7 +173,7 @@ function GuideSearch() {
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          placeholder="Where to? A course code, a topic, a page, a question"
+          placeholder="Search courses, topics, pages"
           aria-label="Search the guide"
           role="combobox"
           aria-expanded={open && query.trim().length > 0}
@@ -243,9 +233,6 @@ function GuideMap({ counts }: { counts: Map<string, number> }) {
           <text x={642} y={339}>
             Ask
           </text>
-          <text className="n" x={686} y={339}>
-            uses all of it
-          </text>
         </a>
         {Object.entries(STATIONS).map(([id, station], index) => {
           const count = counts.get(id) ?? 0;
@@ -259,21 +246,9 @@ function GuideMap({ counts }: { counts: Map<string, number> }) {
             <a key={id} href={href} className={`gst${station.big ? ' big' : ''}${count === 0 ? ' dim' : ''}`} onClick={(event) => go(event, href)} style={{ '--i': index } as React.CSSProperties} aria-label={`${name}, ${count}`}>
               <circle className="hit" cx={station.x} cy={station.y} r={station.big ? 28 : 20} />
               <circle className="ring" cx={station.x} cy={station.y} r={station.big ? 17 : 9} />
-              {station.big ? (
-                <>
-                  <text x={tx} y={ty - 18} textAnchor={end ? 'end' : 'middle'}>
-                    {name}
-                  </text>
-                  <text className="n" x={tx} y={ty} textAnchor={end ? 'end' : 'middle'}>
-                    {count.toLocaleString()}
-                  </text>
-                </>
-              ) : (
-                <text x={tx} y={ty} textAnchor={end ? 'end' : 'middle'}>
-                  {name}{' '}
-                  <tspan className="n">{count.toLocaleString()}</tspan>
-                </text>
-              )}
+              <text x={tx} y={station.big && above ? ty - 6 : ty} textAnchor={end ? 'end' : 'middle'}>
+                {name}
+              </text>
             </a>
           );
         })}
@@ -303,7 +278,6 @@ function GuideLines({ counts, labels }: { counts: Map<string, number>; labels: M
               .map((id) => (
                 <a key={id} href={`/guide/${id}`} className="stn" onClick={onLinkClick}>
                   <span className="what">{id === 'threads' ? 'Group threads' : (labels.get(id) ?? SHORT[id] ?? id)}</span>
-                  <span className="n">{(counts.get(id) ?? 0).toLocaleString()}</span>
                 </a>
               ))}
           </div>
@@ -334,7 +308,6 @@ function CourseList({ selected }: { selected?: string }) {
   const needle = q.trim().toLowerCase();
   const squashed = needle.replace(/[^a-z0-9]/g, '');
   const shown = (items ?? []).filter((item) => (!dept || item.department === dept) && (!needle || item.code.toLowerCase().replace(/[^a-z0-9]/g, '').includes(squashed) || item.title.toLowerCase().includes(needle)));
-  const discussed = (items ?? []).filter((item) => item.threads > 0).length;
 
   return (
     <div className="md">
@@ -344,15 +317,14 @@ function CourseList({ selected }: { selected?: string }) {
             <IconSearch />
             <input className="input" value={q} onChange={(event) => setQ(event.target.value)} placeholder="Course code or title" aria-label="Filter courses" />
           </div>
-          {items && <span className="faint small">{shown.length === items.length ? plural(items.length, 'course') : `${shown.length.toLocaleString()} of ${items.length.toLocaleString()}`}</span>}
         </div>
         <div className="chips scroll-x dept-strip">
           <button type="button" className={`chip${dept ? '' : ' on'}`} onClick={() => setDept('')}>
             All
           </button>
-          {departments.slice(0, 30).map(([code, count]) => (
+          {departments.slice(0, 30).map(([code]) => (
             <button key={code} type="button" className={`chip mono${dept === code ? ' on' : ''}`} onClick={() => setDept(dept === code ? '' : code)}>
-              {code} <span className="n">{count}</span>
+              {code}
             </button>
           ))}
         </div>
@@ -364,9 +336,8 @@ function CourseList({ selected }: { selected?: string }) {
               <a key={item.code} href={`/guide/courses/${encodeURIComponent(item.code)}`} className={`row course-row${selected === item.code ? ' on' : ''}`} onClick={onLinkClick}>
                 <span className="code">{item.code}</span>
                 <span className="grow">
-                  <span className="title">{item.title || 'Mentioned in the group'}</span>
+                  <span className="title">{item.title || item.code}</span>
                 </span>
-                <span className="count">{[item.official ? 'Bulletin' : '', item.threads ? plural(item.threads, 'thread') : ''].filter(Boolean).join(', ')}</span>
                 <IconChevronRight className="chev" />
               </a>
             ))}
@@ -375,7 +346,7 @@ function CourseList({ selected }: { selected?: string }) {
         {items && shown.length > limit && (
           <div className="load-more">
             <button type="button" className="btn" onClick={() => setLimit((current) => current + PAGE_ROWS * 2)}>
-              Show more <span className="faint">{(shown.length - limit).toLocaleString()} left</span>
+              Show more
             </button>
           </div>
         )}
@@ -383,9 +354,6 @@ function CourseList({ selected }: { selected?: string }) {
       <DetailSlot section="courses" id={selected} wide={wide}>
         <div className="pane-empty">
           <h2>Pick a course</h2>
-          <p>
-            {items ? `${plural(items.length, 'course')} from the bulletin and the group, ${discussed} of them discussed in threads.` : 'Every course with a code.'} Each one opens here with a summary written from the official text and what students said.
-          </p>
         </div>
       </DetailSlot>
     </div>
@@ -417,7 +385,6 @@ function SectionList({ section, label, selected }: { section: string; label: str
               <IconSearch />
               <input className="input" value={q} onChange={(event) => setQ(event.target.value)} placeholder={`Filter ${label.toLowerCase()}`} aria-label="Filter pages" />
             </div>
-            <span className="faint small">{plural(shown.length, 'page')}</span>
           </div>
         )}
         {!items && !error && <div className="skeleton" style={{ height: 320 }} aria-busy="true" />}
@@ -438,12 +405,10 @@ function SectionList({ section, label, selected }: { section: string; label: str
       </div>
       <DetailSlot section={section} id={selected} wide={wide}>
         <div className="pane-empty">
-          <h2>{label}</h2>
-          <p>{items ? `${plural(items.length, 'official page')}.` : ''} Pick one to read a summary of it next to what students said, with the official text underneath.</p>
+          <h2>Pick a page</h2>
           <button
             type="button"
-            className="btn primary"
-            style={{ justifySelf: 'start' }}
+            className="btn"
             onClick={() => {
               setAskPrefill({ question: `What should I know about ${label.toLowerCase()} at NYUAD?`, autoSend: true });
               navigate({ name: 'ask' });
@@ -529,7 +494,7 @@ function Detail({ section, id, onClose }: { section: string; id: string; onClose
         <div className="grow">
           <div className="crumbs">
             {detail?.code ? <span className="code">{detail.code}</span> : null}
-            <span>{crumbs.length ? crumbs.join(' / ') : section === 'courses' ? 'Course' : 'Official page'}</span>
+            {crumbs.length > 0 && <span>{crumbs.join(' / ')}</span>}
           </div>
           <h2>{title}</h2>
         </div>
@@ -558,19 +523,16 @@ function Detail({ section, id, onClose }: { section: string; id: string; onClose
                 </a>
               )}
               {detail.official?.credits && <span className="tag">{detail.official.credits} credits</span>}
-              {detail.threadCount > 0 && <span className="tag">{plural(detail.threadCount, 'thread')}</span>}
             </div>
             {detail.summary ? (
               <Summary summary={detail.summary} sources={detail.sources} />
             ) : (
-              <p className="pane-note">{detail.official || detail.threads.length ? 'No summary right now. The official text and the threads are below.' : 'Nothing is known about this one yet.'}</p>
+              !detail.official && detail.threads.length === 0 && <p className="pane-note">Nothing here yet.</p>
             )}
-            {detail.official && <OfficialText text={detail.official.text} fetchedAt={detail.official.fetchedAt} />}
+            {detail.official && <OfficialText text={detail.official.text} code={detail.code} />}
             {detail.threads.length > 0 && (
               <>
-                <h3 className="section-title">
-                  From the group <span>{plural(detail.threads.length, 'thread')}</span>
-                </h3>
+                <h3 className="section-title">From the group</h3>
                 <div>
                   {detail.threads.map((post) => (
                     <PostRow key={post.id} post={post} />
@@ -599,18 +561,18 @@ function Detail({ section, id, onClose }: { section: string; id: string; onClose
 }
 
 /** The official page's own words, folded to a few lines until asked for. */
-function OfficialText({ text, fetchedAt }: { text: string; fetchedAt: string }) {
+function OfficialText({ text, code }: { text: string; code?: string }) {
   const [open, setOpen] = useState(false);
-  const long = text.length > 700;
+  // Bulletin entries open with "CODE Title (4 credits)", which the pane header already shows.
+  const body = code && text.startsWith(code) ? text.slice(text.indexOf('\n') + 1 || 0).trimStart() : text;
+  const long = body.length > 700;
   return (
     <>
-      <h3 className="section-title">
-        Official text <span>fetched {formatDate(fetchedAt)}</span>
-      </h3>
-      <div className={`official-text${long && !open ? ' folded' : ''}`}>{text}</div>
+      <h3 className="section-title">Official text</h3>
+      <div className={`official-text${long && !open ? ' folded' : ''}`}>{body}</div>
       {long && (
         <button type="button" className="link-btn small" style={{ marginTop: 8 }} onClick={() => setOpen(!open)}>
-          {open ? 'Fold it back' : 'Read the full text'}
+          {open ? 'Show less' : 'Show more'}
         </button>
       )}
     </>
@@ -659,14 +621,13 @@ function Summary({ summary, sources }: { summary: NonNullable<GuideDetail['summa
             </ul>
           </div>
         ))}
-      <div className="meta">
-        {summary.confidence !== 'high' && (
+      {summary.confidence !== 'high' && (
+        <div className="meta">
           <span className={`pill confidence ${summary.confidence}`}>
             <span className="dot" /> {CONFIDENCE_LABEL[summary.confidence]}
           </span>
-        )}
-        <span>Written from the sources below, {formatDate(summary.createdAt.slice(0, 10))}</span>
-      </div>
+        </div>
+      )}
       {sources.length > 0 && (
         <div className="sources-list">
           {sources.map((source) => {

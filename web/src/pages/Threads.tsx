@@ -13,7 +13,7 @@ export const TOPICS = ['courses', 'professors', 'housing', 'study-away', 'visa-t
 
 /** The group's own threads, searched by keyword and meaning, with no model writing anything: the archive as it is. */
 export function ThreadSearch() {
-  const { health, setAskPrefill } = useApp();
+  const { setAskPrefill } = useApp();
   const initial = new URLSearchParams(window.location.search);
   const [q, setQ] = useState(initial.get('q') ?? '');
   const [topic, setTopic] = useState(initial.get('topic') ?? '');
@@ -87,7 +87,7 @@ export function ThreadSearch() {
             type="search"
             value={q}
             onChange={(event) => setQ(event.target.value)}
-            placeholder={health?.archive ? `Search ${health.archive.posts.toLocaleString()} threads` : 'Search threads'}
+            placeholder="Search threads"
             aria-label="Search threads"
             autoFocus={window.matchMedia('(min-width: 900px)').matches}
           />
@@ -106,7 +106,7 @@ export function ThreadSearch() {
           </div>
         </div>
         <div className="results-head">
-          <span className="faint small">{results ? (results.total === 0 ? 'No threads' : plural(results.total, 'thread')) : ' '}</span>
+          <span className="faint small">{results && (query || topic) && results.total > 0 ? plural(results.total, 'result') : ' '}</span>
           <Segmented<Sort> value={effectiveSort} onChange={setSort} label="Sort" options={sorts} />
         </div>
         {error && <div className="alert error">{error}</div>}
@@ -119,7 +119,7 @@ export function ThreadSearch() {
         )}
         {results && results.items.length === 0 && (
           <div className="empty">
-            Nothing in the group matches. Try fewer words, or ask it instead.
+            Nothing matches.
             <br />
             {query && (
               <button
@@ -154,10 +154,6 @@ export function ThreadSearch() {
         <div className="rail-block">
           <h2>Topics</h2>
           <div className="topic-list">{topicButtons}</div>
-        </div>
-        <div className="rail-block">
-          <h2>About the archive</h2>
-          <p className="rail-note">Threads and comments from the Room of Requirement Facebook group, matched by keyword and by meaning. Nothing here is written by a model.</p>
         </div>
       </aside>
     </div>

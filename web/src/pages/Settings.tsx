@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
-import { APP_NAME, APP_VERSION, GROUP_URL } from '../brand';
+import { GROUP_URL } from '../brand';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
 import { plural, standingLabel } from '../format';
 import { IconExternal } from '../icons';
 import { clearConversations, forgetDevice, loadConversations, onConversationsChange, type Theme } from '../store';
 
-const THEMES: Array<{ id: Theme; label: string; mark: string }> = [
-  { id: 'system', label: 'Automatic', mark: 'A' },
-  { id: 'light', label: 'Day service', mark: 'D' },
-  { id: 'dark', label: 'Night service', mark: 'N' },
+const THEMES: Array<{ id: Theme; label: string }> = [
+  { id: 'system', label: 'Auto' },
+  { id: 'light', label: 'Light' },
+  { id: 'dark', label: 'Dark' },
 ];
 
 /** A tiny line map in each theme's own colours, so the choice is seen rather than described. */
@@ -40,7 +40,7 @@ function ThemeArt({ theme }: { theme: Theme }) {
 }
 
 export function SettingsPage() {
-  const { profile, setProfile, requestProfile, theme, setTheme, toast, health, boardProblem } = useApp();
+  const { profile, setProfile, requestProfile, theme, setTheme, toast, boardProblem } = useApp();
   const [count, setCount] = useState(() => loadConversations().length);
 
   useEffect(() => onConversationsChange(() => setCount(loadConversations().length)), []);
@@ -58,19 +58,8 @@ export function SettingsPage() {
     window.location.href = '/';
   };
 
-  const server = health
-    ? [
-        health.gemini.configured ? 'Answers on' : 'Answers paused',
-        health.archive ? plural(health.archive.posts, 'thread') : '',
-        health.official?.pages ? `${health.official.pages.toLocaleString()} official pages` : '',
-        boardProblem ? 'board not running' : '',
-      ]
-        .filter(Boolean)
-        .join(', ')
-    : 'Checking';
-
   return (
-    <div className="page narrow">
+    <div className="page settings">
       <Sign title="Settings" ar="الإعدادات" />
 
       <section className="settings-section">
@@ -81,9 +70,7 @@ export function SettingsPage() {
               <span className="theme-art">
                 <ThemeArt theme={entry.id} />
               </span>
-              <b>
-                <i>{entry.mark}</i> {entry.label}
-              </b>
+              <b>{entry.label}</b>
             </button>
           ))}
         </div>
@@ -97,11 +84,11 @@ export function SettingsPage() {
               <div className="text">
                 <b>{profile.name}</b>
                 <span>
-                  {profile.netId}, {profile.major}, {standingLabel(profile.year)}, {plural(profile.answers, 'answer')}
+                  {profile.major}, {standingLabel(profile.year)}
                 </span>
               </div>
               <div className="actions">
-                <button type="button" className="btn sm" onClick={() => void requestProfile({ title: 'Edit details', reason: '' })}>
+                <button type="button" className="btn sm" onClick={() => void requestProfile({ title: 'Edit details' })}>
                   Edit
                 </button>
                 <button
@@ -120,7 +107,6 @@ export function SettingsPage() {
             <div className="settings-row">
               <div className="text">
                 <b>No details saved</b>
-                <span>Needed to answer questions or post.</span>
               </div>
               <button type="button" className="btn sm primary" onClick={() => void requestProfile()}>
                 Add details
@@ -133,19 +119,20 @@ export function SettingsPage() {
       <section className="settings-section">
         <h2>This browser</h2>
         <div className="list">
-          <div className="settings-row">
-            <div className="text">
-              <b>Conversations</b>
-              <span>{count === 0 ? 'None saved.' : `${plural(count, 'conversation')}, saved in this browser only.`}</span>
+          {count > 0 && (
+            <div className="settings-row">
+              <div className="text">
+                <b>Conversations</b>
+                <span>{plural(count, 'conversation')}</span>
+              </div>
+              <button type="button" className="btn sm" onClick={clear}>
+                Delete
+              </button>
             </div>
-            <button type="button" className="btn sm" onClick={clear} disabled={count === 0}>
-              Delete
-            </button>
-          </div>
+          )}
           <div className="settings-row">
             <div className="text">
               <b>Everything</b>
-              <span>Your details, conversations, theme and the key behind your posts.</span>
             </div>
             <button type="button" className="btn sm danger" onClick={forget}>
               Delete
@@ -155,42 +142,12 @@ export function SettingsPage() {
       </section>
 
       <section className="settings-section">
-        <h2>Shortcuts</h2>
-        <div className="list">
-          <div className="settings-row">
-            <div className="text">
-              <b>Go anywhere</b>
-              <span>Ask, or jump to a section, a course or a past question.</span>
-            </div>
-            <span className="row-flex">
-              <kbd>⌘</kbd>
-              <kbd>K</kbd>
-              <span className="faint small">or</span>
-              <kbd>/</kbd>
-            </span>
-          </div>
-          <div className="settings-row">
-            <div className="text">
-              <b>Jump to a line</b>
-              <span>G, then A for Ask, Q for Questions, N for Notices, M for Market, G for Guide.</span>
-            </div>
-            <span className="row-flex">
-              <kbd>G</kbd>
-              <kbd>A</kbd>
-            </span>
-          </div>
-        </div>
-      </section>
-
-      <section className="settings-section">
         <h2>About</h2>
         <div className="list">
           <div className="settings-row">
             <div className="text">
-              <b>
-                {APP_NAME} {APP_VERSION}
-              </b>
-              <span>{server}</span>
+              <b>Room of Requirement</b>
+              <span>The Facebook group behind the archive</span>
             </div>
             <a className="btn sm" href={GROUP_URL} target="_blank" rel="noreferrer">
               <IconExternal /> Facebook group

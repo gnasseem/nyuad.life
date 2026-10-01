@@ -70,7 +70,6 @@ export function ContactFields({ kind, contact, onKind, onContact }: { kind: Cont
         inputMode={kind === 'email' ? 'email' : kind === 'instagram' ? 'text' : 'tel'}
         autoComplete={kind === 'email' ? 'email' : kind === 'instagram' ? 'off' : 'tel'}
       />
-      <span className="hint">Shown only to people who tap Show.</span>
     </div>
   );
 }

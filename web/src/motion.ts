@@ -47,14 +47,3 @@ export function useNow(ms = 30_000): Date {
   }, [ms]);
   return now;
 }
-
-/** The time on Saadiyat, whatever the reader's own clock says. */
-export function useAbuDhabiTime(): string {
-  const format = () => new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Dubai' });
-  const [time, setTime] = useState(format);
-  useEffect(() => {
-    const timer = window.setInterval(() => setTime(format()), 20_000);
-    return () => window.clearInterval(timer);
-  }, []);
-  return time;
-}

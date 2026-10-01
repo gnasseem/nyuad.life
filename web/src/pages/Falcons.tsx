@@ -4,7 +4,6 @@ import { ContactFields, ContactReveal } from '../components/Contact';
 import { Flap } from '../components/Flap';
 import { EmptyState } from '../components/EmptyState';
 import { useApp } from '../context';
-import { plural, relativeDate } from '../format';
 import { IconCoins } from '../icons';
 import { askerKey, loadContact, saveContact } from '../store';
 
@@ -12,11 +11,6 @@ export interface OffersData {
   offers: Offer[];
   mine: Offer[];
   market: MarketSummary;
-}
-
-export function expiresIn(iso: string): string {
-  const hours = Math.max(0, Math.round((Date.parse(iso) - Date.now()) / 3_600_000));
-  return hours < 24 ? `${hours} h left` : `${Math.round(hours / 24)} d left`;
 }
 
 /** Offers to sell or buy Falcons: the board up top, then the order book, cheapest sell and best buy first, each order with its depth behind it. */
@@ -29,7 +23,7 @@ export function FalconsTab({ data, onClose, onPost }: { data: OffersData; onClos
 
   if (data.offers.length === 0) {
     return (
-      <EmptyState icon={<IconCoins />} title="No open offers" text="Post how many Falcons you have or want, and at what rate. People reach you directly.">
+      <EmptyState icon={<IconCoins />} title="No offers yet">
         <button type="button" className="btn" onClick={() => onPost('buy')}>
           Buy Falcons
         </button>
@@ -43,41 +37,33 @@ export function FalconsTab({ data, onClose, onPost }: { data: OffersData; onClos
   return (
     <>
       <div className="ticker">
-        <div>
+        <div className="sell">
           <b>
             <Flap text={market.bestAsk === null ? '–' : market.bestAsk.toFixed(2)} />
           </b>
-          <span>Cheapest sell, AED per Falcon</span>
+          <span>Lowest sell</span>
         </div>
-        <div>
+        <div className="buy">
           <b>
             <Flap text={market.bestBid === null ? '–' : market.bestBid.toFixed(2)} />
           </b>
-          <span>Best buy, AED per Falcon</span>
+          <span>Highest buy</span>
         </div>
-        <p className="ticker-note">
-          <span>{plural(market.open, 'open offer')}</span>
-          <span>{market.volume.toLocaleString()} Falcons on offer</span>
-        </p>
       </div>
       <div className="book">
-        <OfferColumn side="sell" title="Selling" hint="cheapest first" offers={selling} deepest={deepest} mineIds={mineIds} onClose={onClose} />
-        <OfferColumn side="buy" title="Buying" hint="best rate first" offers={buying} deepest={deepest} mineIds={mineIds} onClose={onClose} />
+        <OfferColumn side="sell" title="Selling" offers={selling} deepest={deepest} mineIds={mineIds} onClose={onClose} />
+        <OfferColumn side="buy" title="Buying" offers={buying} deepest={deepest} mineIds={mineIds} onClose={onClose} />
       </div>
-      <p className="market-note">The trade happens between the two of you, on campus. Offers expire after five days.</p>
     </>
   );
 }
 
-function OfferColumn({ side, title, hint, offers, deepest, mineIds, onClose }: { side: OfferSide; title: string; hint: string; offers: Offer[]; deepest: number; mineIds: Set<string>; onClose(offer: Offer, remove: boolean): void }) {
+function OfferColumn({ side, title, offers, deepest, mineIds, onClose }: { side: OfferSide; title: string; offers: Offer[]; deepest: number; mineIds: Set<string>; onClose(offer: Offer, remove: boolean): void }) {
   return (
     <section className={`book-side ${side}`}>
-      <h2>
-        {title}
-        <span>{offers.length ? `${plural(offers.length, 'offer')}, ${hint}` : ''}</span>
-      </h2>
+      <h2>{title}</h2>
       {offers.length === 0 ? (
-        <div className="empty small">Nothing here yet.</div>
+        <div className="empty small">None yet.</div>
       ) : (
         <div className="list">
           {offers.map((offer) => (
@@ -97,7 +83,7 @@ function OfferRow({ offer, depth, mine, onClose }: { offer: Offer; depth: number
           {offer.rate.toFixed(2)}
           <small>AED</small>
         </span>
-        <span className="total">{Math.round(offer.amount * offer.rate).toLocaleString()} AED in all</span>
+        <span className="total">{Math.round(offer.amount * offer.rate).toLocaleString()} AED total</span>
       </div>
       <div className="qty">
         <i style={{ '--depth': `${depth.toFixed(1)}%` } as React.CSSProperties} aria-hidden="true" />
@@ -106,8 +92,6 @@ function OfferRow({ offer, depth, mine, onClose }: { offer: Offer; depth: number
       {offer.note && <div className="note">{offer.note}</div>}
       <div className="meta">
         <span>{offer.posterName}</span>
-        <span>{relativeDate(offer.createdAt)}</span>
-        <span>{expiresIn(offer.expiresAt)}</span>
         {mine && (
           <span className="pill tone-line">
             <span className="dot" /> Yours
@@ -176,12 +160,12 @@ export function FalconCompose({ side, market, onDone, onCancel }: { side: OfferS
             <input id="of-rate" className="input" inputMode="decimal" value={rate} onChange={(event) => setRate(event.target.value.replace(/[^\d.]/g, ''))} placeholder="0.85" />
             <span className="suffix">AED each</span>
           </div>
-          <span className="hint">{total > 0 ? `${total.toLocaleString()} AED in total.` : ' '}</span>
+          <span className="hint">{total > 0 ? `${total.toLocaleString()} AED total` : ' '}</span>
         </div>
       </div>
       <ContactFields kind={contactKind} contact={contact} onKind={setContactKind} onContact={setContact} />
       <div className="field">
-        <label htmlFor="of-note">Note (optional)</label>
+        <label htmlFor="of-note">Note</label>
         <input id="of-note" className="input" value={note} onChange={(event) => setNote(event.target.value)} maxLength={200} placeholder="Pay by transfer, meet at D2" />
       </div>
       {error && <div className="alert error">{error}</div>}

@@ -1,12 +1,12 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, boardProblem as describeBoardProblem, type Health, type HomePayload, type Profile } from './api';
-import { APP_NAME, GROUP_URL } from './brand';
+import { APP_NAME } from './brand';
 import { Wordmark } from './components/Logo';
 import { Network } from './components/Network';
 import { Palette } from './components/Palette';
 import { ProfileModal } from './components/ProfileForm';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
-import { formatDate, initials, plural, relativeDate } from './format';
+import { initials, relativeDate } from './format';
 import { IconAsk, IconAuto, IconBag, IconClock, IconMap, IconMegaphone, IconMoon, IconQuestions, IconSearch, IconSun, IconTrash, IconUser } from './icons';
 import { AnnouncementsPage } from './pages/Announcements';
 import { AskPage } from './pages/Ask';
@@ -15,7 +15,6 @@ import { MarketPage } from './pages/Market';
 import { PostPage } from './pages/Post';
 import { QuestionPage, QuestionsPage } from './pages/Questions';
 import { SettingsPage } from './pages/Settings';
-import { useAbuDhabiTime } from './motion';
 import { navigate, onLinkClick, routePath, useRoute, type Route } from './router';
 import { applyTheme, clearConversations, deleteConversation, loadConversations, loadProfile, loadTheme, onConversationsChange, saveProfile, type Conversation, type Theme } from './store';
 import { standingFor } from './year';
@@ -30,9 +29,9 @@ const NAV: Array<{ route: Route; label: string; line: Line; icon: typeof IconAsk
   { route: { name: 'guide' }, label: 'Guide', line: 'guide', icon: IconMap, matches: ['guide', 'post'] },
 ];
 
-const THEME_LABEL: Record<Theme, string> = { system: 'Theme: automatic', light: 'Theme: day service', dark: 'Theme: night service' };
+const THEME_LABEL: Record<Theme, string> = { system: 'Theme: auto', light: 'Theme: light', dark: 'Theme: dark' };
 const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Notices', market: 'Market', guide: 'Guide', post: 'Thread', settings: 'Settings' };
-const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: 'Your major and year decide which questions reach you. Your name appears next to what you write.' };
+const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: '' };
 
 function useConversations(): Conversation[] {
   const [items, setItems] = useState(loadConversations);
@@ -54,7 +53,6 @@ export function App() {
   const [profileAsk, setProfileAsk] = useState<{ title: string; reason: string } | null>(null);
   const profileRequest = useRef<((saved: boolean) => void) | null>(null);
   const conversations = useConversations();
-  const clock = useAbuDhabiTime();
 
   // Class years roll over on 1 May; the stored standing is brought up to date so the board routes correctly.
   useEffect(() => {
@@ -220,9 +218,9 @@ export function App() {
           </a>
           <LineNav activeIndex={activeIndex} />
           <div className="bar-tools">
-            <button type="button" className="where-to" onClick={() => setPalette(true)} aria-label="Where to? Search or ask">
+            <button type="button" className="where-to" onClick={() => setPalette(true)} aria-label="Search">
               <IconSearch />
-              <span>Where to?</span>
+              <span>Search</span>
               <kbd>⌘K</kbd>
             </button>
             <HistoryMenu open={history} setOpen={setHistory} conversations={conversations} current={currentConversation} />
@@ -236,32 +234,6 @@ export function App() {
         <main className="main" key={pageKey}>
           <ErrorBoundary>{page}</ErrorBoundary>
         </main>
-
-        <footer className="statusbar">
-          <span className={`svc${health && !health.gemini.configured ? ' paused' : ''}`}>
-            <i /> {health ? (health.gemini.configured ? 'Ask: good service' : 'Ask: answers paused') : 'Checking service'}
-          </span>
-          {health && (
-            <span className={`svc${boardProblem ? ' paused' : ''}`}>
-              <i /> {boardProblem ? 'Board: not running' : 'Board: good service'}
-            </span>
-          )}
-          {health?.archive && (
-            <span>
-              {plural(health.archive.posts, 'thread')} to {formatDate(health.archive.newestPost)}
-            </span>
-          )}
-          {health?.official?.pages ? <span>{health.official.pages.toLocaleString()} official pages</span> : null}
-          <a href={GROUP_URL} target="_blank" rel="noreferrer">
-            Facebook group
-          </a>
-          <a href="/settings" onClick={onLinkClick}>
-            Settings
-          </a>
-          <span className="clock" title="Time in Abu Dhabi">
-            Abu Dhabi {clock}
-          </span>
-        </footer>
 
         <nav className="tabbar" aria-label="Sections">
           {NAV.map((item, index) => (
@@ -372,7 +344,7 @@ function HistoryMenu({ open, setOpen, conversations, current }: { open: boolean;
             )}
           </div>
           {conversations.length === 0 ? (
-            <p className="popover-empty">Questions you ask are kept here, in this browser only.</p>
+            <p className="popover-empty">No questions yet.</p>
           ) : (
             conversations.slice(0, 40).map((conversation) => (
               <div key={conversation.id} className={`hist-item${current === conversation.id ? ' active' : ''}`}>
