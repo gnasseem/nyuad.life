@@ -73,7 +73,8 @@ export function extractStories(root: unknown, options: { groupPath?: string } = 
     if (!isRecord(node) || node.__typename !== 'Story') return;
     const record = storyFromNode(node);
     if (!record) return;
-    if (options.groupPath && record.url && !record.url.includes(options.groupPath) && !record.url.includes('/posts/')) return;
+    // The browser also loads the home feed, ads and other groups; only stories with a link into the group are its posts.
+    if (options.groupPath && !record.url.includes(options.groupPath)) return;
     const existing = byId.get(record.id);
     byId.set(record.id, existing ? mergeStory(existing, record) : record);
   });
@@ -401,4 +402,46 @@ function deepFirst(root: unknown, predicate: (key: string, value: unknown, paren
     }
   }
   return undefined;
+}
+
+/* ---------- Comment threads (used by scripts/scrape.ts to page through a thread's comments itself) ---------- */
+
+/** The id Facebook's comment queries take for a post: "feedback:POSTID", base64-encoded. */
+export function feedbackIdFor(postId: string): string {
+  return Buffer.from(`feedback:${postId}`).toString('base64');
+}
+
+export interface ReplyThread {
+  /** Feedback id of the comment the replies belong to. */
+  feedbackId: string;
+  expansionToken: string;
+  /** Depth of that comment: 0 for a top-level comment, 1 for a reply. */
+  depth: number;
+}
+
+/**
+ * Reads one response of a comment query: the next-page cursor of the connection it loaded (top-level comments for
+ * the root and pagination queries, replies for the depth queries) and every comment in it that has replies.
+ */
+export function extractCommentPage(docs: unknown[]): { pageInfo: PageInfo | null; replies: ReplyThread[] } {
+  let pageInfo: PageInfo | null = null;
+  const replies: ReplyThread[] = [];
+  for (const doc of docs) {
+    const node = isRecord(doc) && isRecord(doc.data) && isRecord(doc.data.node) ? doc.data.node : null;
+    if (!node) continue;
+    const instance = node.comment_rendering_instance_for_feed_location;
+    const connection = isRecord(instance) ? instance.comments : node.replies_connection;
+    if (!pageInfo && isRecord(connection) && isRecord(connection.page_info)) {
+      pageInfo = { endCursor: str(connection.page_info.end_cursor), hasNextPage: connection.page_info.has_next_page === true };
+    }
+    walk(doc, (value) => {
+      if (!isRecord(value) || value.__typename !== 'Comment' || !isRecord(value.feedback)) return;
+      const feedback = value.feedback;
+      const total = isRecord(feedback.replies_fields) ? feedback.replies_fields.total_count : 0;
+      const token = isRecord(feedback.expansion_info) ? str(feedback.expansion_info.expansion_token) : '';
+      if (typeof total !== 'number' || total === 0 || !token || !str(feedback.id)) return;
+      replies.push({ feedbackId: str(feedback.id), expansionToken: token, depth: typeof value.depth === 'number' ? value.depth : 0 });
+    });
+  }
+  return { pageInfo, replies };
 }

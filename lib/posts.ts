@@ -1,7 +1,6 @@
 /** Reading, normalising and enriching the posts file that the scraper writes and the indexer reads. */
-import { createReadStream, existsSync } from 'node:fs';
-import { writeFile, rename } from 'node:fs/promises';
-import { createInterface } from 'node:readline';
+import { existsSync } from 'node:fs';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 import { classifyTopics } from './topics.ts';
 import { collapseWhitespace, dayNumber, extractCourseCodes } from './text.ts';
 import type { IndexedPost, SourceComment, SourcePost } from './types.ts';
@@ -9,24 +8,24 @@ import type { IndexedPost, SourceComment, SourcePost } from './types.ts';
 export async function readPostsJsonl(file: string): Promise<SourcePost[]> {
   if (!existsSync(file)) return [];
   const posts: SourcePost[] = [];
-  const lines = createInterface({ input: createReadStream(file, 'utf8'), crlfDelay: Infinity });
-  let lineNumber = 0;
-  for await (const line of lines) {
-    lineNumber++;
+  // Split on "\n" only: readline also breaks lines at U+2028 and U+2029, which posts contain.
+  const lines = (await readFile(file, 'utf8')).split('\n');
+  for (const [index, line] of lines.entries()) {
     if (!line.trim()) continue;
     try {
       posts.push(normalizePost(JSON.parse(line) as Partial<SourcePost>));
     } catch (error) {
-      throw new Error(`Invalid JSON on ${file} line ${lineNumber}: ${(error as Error).message}`);
+      throw new Error(`Invalid JSON on ${file} line ${index + 1}: ${(error as Error).message}`);
     }
   }
   return posts;
 }
 
-/** Writes atomically so a crash mid-write never leaves a truncated archive behind. */
 export async function writePostsJsonl(file: string, posts: SourcePost[]): Promise<void> {
   const tmp = `${file}.tmp`;
-  await writeFile(tmp, posts.map((post) => JSON.stringify(post)).join('\n') + '\n', 'utf8');
+  // JSON.stringify leaves U+2028 and U+2029 raw; escape them so every line-based reader sees one post per line.
+  const lines = posts.map((post) => JSON.stringify(post).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029'));
+  await writeFile(tmp, lines.join('\n') + '\n', 'utf8');
   await rename(tmp, file);
 }
 

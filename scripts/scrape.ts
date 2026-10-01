@@ -19,8 +19,11 @@
  * How it works: the scraper reads the JSON Facebook's own web client loads, so it does not depend on page
  * selectors. After the first scroll it has seen the exact request the client uses for "more posts", and from
  * then on it asks for the next page itself, cursor by cursor. That is fast and does not degrade as the page
- * grows the way scrolling does; if it ever fails, scrolling is the fallback. Comments are collected by opening
- * each thread and expanding it. Progress is saved regularly and on Ctrl+C, and the next run resumes.
+ * grows the way scrolling does; if it ever fails, scrolling is the fallback. Comments work the same way: the first
+ * thread is opened and expanded by clicking, which shows the scraper the requests the client uses for a thread's
+ * comments and replies, and every later thread is fetched with those requests directly, without opening it. A
+ * thread is opened and clicked through only when that fails. Progress is saved regularly and on Ctrl+C, and the
+ * next run resumes.
  *
  * Facebook's group feed stops paging long before the first post of an old group (it says "no more posts" after a
  * year or two). --all-time gets around that with the group's search page, whose "date posted" filter reaches any
@@ -35,9 +38,11 @@ import { chromium, type BrowserContext, type Page, type Response } from 'playwri
 import { loadDotEnv } from '../lib/env.ts';
 import {
   embeddedJsonFromHtml,
+  extractCommentPage,
   extractComments,
   extractFeedPageInfo,
   extractStories,
+  feedbackIdFor,
   graphqlErrors,
   isFeedPaginationRequest,
   isSearchPaginationRequest,
@@ -48,6 +53,7 @@ import {
   withGraphqlVariables,
   type CommentRecord,
   type PageInfo,
+  type ReplyThread,
   type StoryRecord,
 } from '../lib/facebook.ts';
 import { mergePosts, readPostsJsonl, sortNewestFirst, writePostsJsonl } from '../lib/posts.ts';
@@ -125,8 +131,8 @@ interface State {
   monthsDone?: string[];
 }
 
-/** The request Facebook's client used to load more posts, replayed with new cursors. Lives in memory only (it holds session tokens). */
-interface FeedTemplate {
+/** A request Facebook's client made, replayed with new variables. Lives in memory only (it holds session tokens). */
+interface RequestTemplate {
   url: string;
   body: string;
   headers: Record<string, string>;
@@ -140,7 +146,12 @@ if (!GROUP_SLUG) {
 
 const stories = new Map<string, StoryRecord>();
 const comments = new Map<string, CommentRecord>();
-const feedCapture: { template: FeedTemplate | null; nextCursor: string | null; version: number; mode: 'feed' | 'search' } = { template: null, nextCursor: null, version: 0, mode: 'feed' };
+const feedCapture: { template: RequestTemplate | null; nextCursor: string | null; version: number; mode: 'feed' | 'search' } = { template: null, nextCursor: null, version: 0, mode: 'feed' };
+/** The comment requests the client made on a thread page, by friendly name, replayed for every other thread. */
+const commentTemplates = new Map<string, RequestTemplate>();
+const COMMENT_ROOT = 'CommentListComponentsRootQuery';
+const COMMENT_PAGE = 'CommentsListComponentsPaginationQuery';
+const REPLY_PAGES = ['Depth1CommentsListPaginationQuery', 'Depth2CommentsListPaginationQuery'];
 /** Post ids the current search (one month, one word) returned, known or not. */
 const searchHits = new Set<string>();
 let currentPostId = '';
@@ -228,24 +239,32 @@ async function handleResponse(response: Response): Promise<void> {
   const parsed = request.method() === 'POST' ? parseGraphqlForm(request.postData()) : null;
   ingest(docs, parsed?.friendlyName || 'graphql');
   if (!parsed) return;
+  if (parsed.friendlyName === COMMENT_ROOT || parsed.friendlyName === COMMENT_PAGE || REPLY_PAGES.includes(parsed.friendlyName)) {
+    commentTemplates.set(parsed.friendlyName, templateFrom(response.url(), request.postData() ?? '', requestHeaders, parsed.friendlyName));
+    return;
+  }
   // On the group page the feed's "more posts" request is the one to replay; on a search page it is the results one.
   if (feedCapture.mode === 'search' ? !isSearchPaginationRequest(parsed) : !isFeedPaginationRequest(parsed)) return;
 
   const current = feedCapture.template;
   const better = !current || (/RegularStories/i.test(parsed.friendlyName) && !/RegularStories/i.test(current.friendlyName)) || current.friendlyName === parsed.friendlyName;
   if (!better) return;
-  const headers: Record<string, string> = {};
-  for (const [key, headerValue] of Object.entries(requestHeaders)) {
-    const lower = key.toLowerCase();
-    if (lower === 'content-type' || lower.startsWith('x-fb-') || lower === 'x-asbd-id') headers[lower] = headerValue;
-  }
-  feedCapture.template = { url: response.url(), body: request.postData() ?? '', headers, friendlyName: parsed.friendlyName };
+  feedCapture.template = templateFrom(response.url(), request.postData() ?? '', requestHeaders, parsed.friendlyName);
   feedCapture.version++;
   const info = extractFeedPageInfo(docs);
   // Continue after the page the client just loaded; if that load failed, start from the page it was asking for.
   if (info) feedCapture.nextCursor = info.hasNextPage ? info.endCursor || null : null;
   else if (typeof parsed.variables.cursor === 'string') feedCapture.nextCursor = parsed.variables.cursor;
   if (DEBUG) log(`Captured the feed request (${parsed.friendlyName}).`);
+}
+
+function templateFrom(url: string, body: string, requestHeaders: Record<string, string>, friendlyName: string): RequestTemplate {
+  const headers: Record<string, string> = {};
+  for (const [key, headerValue] of Object.entries(requestHeaders)) {
+    const lower = key.toLowerCase();
+    if (lower === 'content-type' || lower.startsWith('x-fb-') || lower === 'x-asbd-id') headers[lower] = headerValue;
+  }
+  return { url, body, headers, friendlyName };
 }
 
 async function ingestPage(page: Page): Promise<void> {
@@ -501,7 +520,7 @@ async function walkFeed(walk: WalkContext): Promise<void> {
 }
 
 /** Scrolls the feed a little until Facebook's client reveals the request it uses to load more posts. */
-async function captureTemplate(walk: WalkContext, maxScrolls: number): Promise<FeedTemplate | null> {
+async function captureTemplate(walk: WalkContext, maxScrolls: number): Promise<RequestTemplate | null> {
   for (let i = 0; i < maxScrolls && !stopping && !feedCapture.template; i++) {
     await scrollDown(walk.page);
     await polite(1800);
@@ -528,7 +547,7 @@ interface CursorOptions {
   reloadUrl?: string;
 }
 
-async function cursorWalk(walk: WalkContext, template: FeedTemplate, options: CursorOptions): Promise<WalkOutcome> {
+async function cursorWalk(walk: WalkContext, template: RequestTemplate, options: CursorOptions): Promise<WalkOutcome> {
   const { tracker, state } = walk;
   let cursor = options.cursor;
   let failures = 0;
@@ -619,11 +638,21 @@ async function cursorWalk(walk: WalkContext, template: FeedTemplate, options: Cu
 type FeedPage = { ok: true; docs: unknown[]; pageInfo: PageInfo | null } | { ok: false; error: string };
 
 /** Asks Facebook for the next page of the feed with the exact request its own client uses, from inside the page. */
-async function fetchFeedPage(page: Page, template: FeedTemplate, cursor: string, largerPages: boolean): Promise<FeedPage> {
+async function fetchFeedPage(page: Page, template: RequestTemplate, cursor: string, largerPages: boolean): Promise<FeedPage> {
   const parsed = parseGraphqlForm(template.body);
   if (!parsed) return { ok: false, error: 'the captured request is unreadable' };
   const variables: Record<string, unknown> = { ...parsed.variables, cursor };
   if (largerPages && typeof variables.count === 'number' && variables.count < 10) variables.count = 10;
+  const result = await replay(page, template, variables);
+  if (!result.ok) return result;
+  const pageInfo = extractFeedPageInfo(result.docs);
+  const errors = graphqlErrors(result.docs);
+  if (errors.length && !pageInfo) return { ok: false, error: errors[0]! };
+  return { ok: true, docs: result.docs, pageInfo };
+}
+
+/** Sends a captured request again with other variables, from inside the page so it carries the session's cookies. */
+async function replay(page: Page, template: RequestTemplate, variables: Record<string, unknown>): Promise<{ ok: true; docs: unknown[] } | { ok: false; error: string }> {
   const body = withGraphqlVariables(template.body, variables);
   try {
     const result = await page.evaluate(
@@ -636,16 +665,13 @@ async function fetchFeedPage(page: Page, template: FeedTemplate, cursor: string,
     if (result.status >= 400) return { ok: false, error: `HTTP ${result.status}` };
     const docs = parseJsonDocuments(result.text);
     if (docs.length === 0) return { ok: false, error: /login/i.test(result.text.slice(0, 500)) ? 'logged out' : 'empty response' };
-    const pageInfo = extractFeedPageInfo(docs);
-    const errors = graphqlErrors(docs);
-    if (errors.length && !pageInfo) return { ok: false, error: errors[0]! };
-    return { ok: true, docs, pageInfo };
+    return { ok: true, docs };
   } catch (error) {
     return { ok: false, error: (error as Error).message.split('\n')[0] ?? 'unknown error' };
   }
 }
 
-async function recaptureTemplate(walk: WalkContext, url: string): Promise<FeedTemplate | null> {
+async function recaptureTemplate(walk: WalkContext, url: string): Promise<RequestTemplate | null> {
   walk.page = await livePage(walk.context, walk.page);
   if (!(await hasSession(walk.context))) walk.page = await ensureLoggedIn(walk.context, walk.page);
   const version = feedCapture.version;
@@ -860,9 +886,15 @@ async function collectComments(walk: WalkContext, archive: SourcePost[], known: 
       walk.page = await ensureLoggedIn(walk.context, walk.page);
     }
     try {
-      const complete = await fetchComments(walk.page, post);
+      let complete: boolean;
+      const replayed = await replayComments(walk.page, post);
+      if (stopping) break;
+      if (replayed === 'unavailable') complete = await fetchComments(walk.page, post);
+      else complete = replayed === 'complete' || (post.commentCount ?? 0) <= countCommentsFor(post.id);
       failures = 0;
       if (complete) delete tries[id];
+      // Every page was read, but Facebook's count includes comments it no longer shows: opening it again will not help.
+      else if (replayed === 'exhausted') tries[id] = 2;
       else tries[id] = (tries[id] ?? 0) + 1;
     } catch (error) {
       failures++;
@@ -882,13 +914,86 @@ async function collectComments(walk: WalkContext, archive: SourcePost[], known: 
     }
     queue.delete(id);
     state.pendingComments = [...queue];
-    if (++processed % 10 === 0) {
+    if (++processed % 50 === 0) {
       const changed = await walk.persist();
       log(`Saved (${changed} posts changed this run, ${ordered.length - processed} threads to go).`);
     }
-    await polite(2000);
+    await polite(500);
   }
   state.pendingComments = [...queue];
+}
+
+/**
+ * Reads a thread's comments and replies with the requests captured from the client, without opening the thread.
+ * 'complete' means Facebook's count was reached, 'exhausted' that every page was read but the count was not, and
+ * 'unavailable' that a needed request has not been captured yet or Facebook refused it; the caller then opens the
+ * thread instead, which also captures the requests again.
+ */
+async function replayComments(page: Page, post: SourcePost): Promise<'complete' | 'exhausted' | 'unavailable'> {
+  const root = commentTemplates.get(COMMENT_ROOT);
+  if (!root) return 'unavailable';
+  if (!stories.has(post.id)) {
+    // Comments are written out with their post, so the post must be among this run's stories.
+    stories.set(post.id, { id: post.id, url: post.url, author: post.author, date: post.date, text: post.text, reactions: post.reactions, commentCount: post.commentCount });
+  }
+  currentPostId = post.id;
+  try {
+    const before = countCommentsFor(post.id);
+    const feedbackId = feedbackIdFor(post.id);
+    const request = async (name: string, variables: Record<string, unknown>) => {
+      const template = commentTemplates.get(name);
+      const parsed = template && parseGraphqlForm(template.body);
+      if (!template || !parsed) return null;
+      const result = await replay(page, template, { ...parsed.variables, ...variables });
+      if (!result.ok) {
+        if (result.error === 'logged out') throw new Error('logged out');
+        if (DEBUG) log(`${name} for ${post.id} failed: ${result.error}`);
+        return null;
+      }
+      const errors = graphqlErrors(result.docs);
+      const read = extractCommentPage(result.docs);
+      if (errors.length && !read.pageInfo) {
+        if (DEBUG) log(`${name} for ${post.id} failed: ${errors[0]}`);
+        return null;
+      }
+      ingest(result.docs, name);
+      await polite(500);
+      return read;
+    };
+
+    // Top-level comments, ten a page.
+    const replies: ReplyThread[] = [];
+    let read = await request(COMMENT_ROOT, { id: feedbackId });
+    for (let pages = 0; read && !stopping; pages++) {
+      replies.push(...read.replies);
+      if (!read.pageInfo?.hasNextPage || !read.pageInfo.endCursor || pages > 300) break;
+      read = await request(COMMENT_PAGE, { id: feedbackId, commentsAfterCursor: read.pageInfo.endCursor });
+    }
+    if (!read) return 'unavailable';
+
+    // Replies, and replies to replies; each comment with replies is its own small paged list.
+    for (let i = 0; i < replies.length && !stopping; i++) {
+      const thread = replies[i]!;
+      const name = REPLY_PAGES[thread.depth];
+      if (!name) continue;
+      const cursorKey = thread.depth === 0 ? 'repliesAfterCursor' : 'subRepliesAfterCursor';
+      let cursor: string | null = null;
+      for (let pages = 0; pages < 100 && !stopping; pages++) {
+        const next = await request(name, { id: thread.feedbackId, expansionToken: thread.expansionToken, [cursorKey]: cursor });
+        if (!next) return 'unavailable';
+        replies.push(...next.replies);
+        if (!next.pageInfo?.hasNextPage || !next.pageInfo.endCursor) break;
+        cursor = next.pageInfo.endCursor;
+      }
+    }
+    if (stopping) return 'unavailable';
+
+    const got = countCommentsFor(post.id);
+    log(`${post.id}: ${got} comments (${before} before, Facebook says ${post.commentCount ?? '?'}).`);
+    return got >= (post.commentCount ?? 0) ? 'complete' : 'exhausted';
+  } finally {
+    currentPostId = '';
+  }
 }
 
 /** Opens one thread, switches to "All comments" and expands it until Facebook's count is reached. Returns true when complete. */
