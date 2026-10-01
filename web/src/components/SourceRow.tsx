@@ -9,9 +9,9 @@ interface Props {
   onHover?(n: number | null): void;
 }
 
-const KIND_LABEL: Record<SourceCard['kind'], string> = { archive: 'Thread', board: 'Student answer', announcement: 'Notice', official: 'Official page' };
+export const KIND_LABEL: Record<SourceCard['kind'], string> = { archive: 'Group thread', board: 'Student answer', announcement: 'Notice', official: 'Official page' };
 
-/** One numbered source under an answer: who, when, what kind, the matching passage and where it opens. */
+/** One numbered source under an answer: what kind, who, when, the matching passage and where it opens. Its colour is the line it lives on. */
 export function SourceRow({ source, hot, id, onHover }: Props) {
   const open = () => {
     if (source.kind === 'archive') navigate({ name: 'post', id: source.postId });
@@ -20,11 +20,11 @@ export function SourceRow({ source, hot, id, onHover }: Props) {
     else navigate({ name: 'announcements' });
   };
   return (
-    <div id={id} className={`source${hot ? ' hot' : ''}`} onMouseEnter={() => onHover?.(source.n)} onMouseLeave={() => onHover?.(null)}>
+    <div id={id} className={`source${hot ? ' hot' : ''}`} data-kind={source.kind} onMouseEnter={() => onHover?.(source.n)} onMouseLeave={() => onHover?.(null)}>
       <span className="source-n">{source.n}</span>
       <div className="source-top">
-        <span>{KIND_LABEL[source.kind]}</span>
-        <b>{source.author || 'Unknown'}</b>
+        <span className="kind">{KIND_LABEL[source.kind]}</span>
+        {source.kind !== 'official' && <b>{source.author || 'Unknown'}</b>}
         <span>{formatDate(source.date)}</span>
         {source.kind === 'archive' && source.commentCount > 0 && <span>{plural(source.commentCount, 'comment')}</span>}
       </div>
@@ -32,7 +32,7 @@ export function SourceRow({ source, hot, id, onHover }: Props) {
       <div className="source-text">{source.snippet || source.text}</div>
       <div className="source-links">
         <button type="button" onClick={open}>
-          Open
+          {source.kind === 'official' ? 'Open page' : 'Open'}
         </button>
         {source.kind === 'archive' && source.url && (
           <a href={source.url} target="_blank" rel="noreferrer">

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, type ContactKind, type MarketSummary, type Offer, type OfferSide } from '../api';
 import { ContactFields, ContactReveal } from '../components/Contact';
+import { Flap } from '../components/Flap';
 import { EmptyState } from '../components/EmptyState';
 import { useApp } from '../context';
 import { plural, relativeDate } from '../format';
@@ -18,12 +19,13 @@ export function expiresIn(iso: string): string {
   return hours < 24 ? `${hours} h left` : `${Math.round(hours / 24)} d left`;
 }
 
-/** Offers to sell or buy Falcons, cheapest sell and best buy first, with the market in one strip above. */
+/** Offers to sell or buy Falcons: the board up top, then the order book, cheapest sell and best buy first, each order with its depth behind it. */
 export function FalconsTab({ data, onClose, onPost }: { data: OffersData; onClose(offer: Offer, remove: boolean): void; onPost(side: OfferSide): void }) {
   const mineIds = new Set(data.mine.map((offer) => offer.id));
   const selling = data.offers.filter((offer) => offer.side === 'sell').sort((a, b) => a.rate - b.rate || b.amount - a.amount);
   const buying = data.offers.filter((offer) => offer.side === 'buy').sort((a, b) => b.rate - a.rate || b.amount - a.amount);
   const { market } = data;
+  const deepest = Math.max(1, ...data.offers.map((offer) => offer.amount));
 
   if (data.offers.length === 0) {
     return (
@@ -40,39 +42,37 @@ export function FalconsTab({ data, onClose, onPost }: { data: OffersData; onClos
 
   return (
     <>
-      <div className="strip">
+      <div className="ticker">
         <div>
-          <b>{market.bestAsk === null ? '–' : market.bestAsk.toFixed(2)}</b>
+          <b>
+            <Flap text={market.bestAsk === null ? '–' : market.bestAsk.toFixed(2)} />
+          </b>
           <span>Cheapest sell, AED per Falcon</span>
         </div>
         <div>
-          <b>{market.bestBid === null ? '–' : market.bestBid.toFixed(2)}</b>
+          <b>
+            <Flap text={market.bestBid === null ? '–' : market.bestBid.toFixed(2)} />
+          </b>
           <span>Best buy, AED per Falcon</span>
         </div>
-        <div>
-          <b>{market.open}</b>
-          <span>Open offers</span>
-        </div>
-        <div>
-          <b>{market.volume.toLocaleString()}</b>
-          <span>Falcons on offer</span>
-        </div>
+        <p className="ticker-note">
+          <span>{plural(market.open, 'open offer')}</span>
+          <span>{market.volume.toLocaleString()} Falcons on offer</span>
+        </p>
       </div>
-      <div className="offers-cols">
-        <OfferColumn title="Selling" hint="cheapest first" offers={selling} mineIds={mineIds} onClose={onClose} />
-        <OfferColumn title="Buying" hint="best rate first" offers={buying} mineIds={mineIds} onClose={onClose} />
+      <div className="book">
+        <OfferColumn side="sell" title="Selling" hint="cheapest first" offers={selling} deepest={deepest} mineIds={mineIds} onClose={onClose} />
+        <OfferColumn side="buy" title="Buying" hint="best rate first" offers={buying} deepest={deepest} mineIds={mineIds} onClose={onClose} />
       </div>
-      <p className="faint small" style={{ marginTop: 24 }}>
-        The trade happens between the two of you, on campus. Offers expire after five days.
-      </p>
+      <p className="market-note">The trade happens between the two of you, on campus. Offers expire after five days.</p>
     </>
   );
 }
 
-function OfferColumn({ title, hint, offers, mineIds, onClose }: { title: string; hint: string; offers: Offer[]; mineIds: Set<string>; onClose(offer: Offer, remove: boolean): void }) {
+function OfferColumn({ side, title, hint, offers, deepest, mineIds, onClose }: { side: OfferSide; title: string; hint: string; offers: Offer[]; deepest: number; mineIds: Set<string>; onClose(offer: Offer, remove: boolean): void }) {
   return (
-    <section>
-      <h2 className="section-title">
+    <section className={`book-side ${side}`}>
+      <h2>
         {title}
         <span>{offers.length ? `${plural(offers.length, 'offer')}, ${hint}` : ''}</span>
       </h2>
@@ -81,7 +81,7 @@ function OfferColumn({ title, hint, offers, mineIds, onClose }: { title: string;
       ) : (
         <div className="list">
           {offers.map((offer) => (
-            <OfferRow key={offer.id} offer={offer} mine={mineIds.has(offer.id)} onClose={onClose} />
+            <OfferRow key={offer.id} offer={offer} depth={(offer.amount / deepest) * 100} mine={mineIds.has(offer.id)} onClose={onClose} />
           ))}
         </div>
       )}
@@ -89,18 +89,19 @@ function OfferColumn({ title, hint, offers, mineIds, onClose }: { title: string;
   );
 }
 
-function OfferRow({ offer, mine, onClose }: { offer: Offer; mine: boolean; onClose(offer: Offer, remove: boolean): void }) {
+function OfferRow({ offer, depth, mine, onClose }: { offer: Offer; depth: number; mine: boolean; onClose(offer: Offer, remove: boolean): void }) {
   return (
-    <div className="offer">
-      <div className="offer-main">
-        <span className="amount">
-          {offer.amount.toLocaleString()}
-          <small>Falcons</small>
-        </span>
+    <div className="order">
+      <div className="order-main">
         <span className="rate">
-          at <b>{offer.rate.toFixed(2)}</b> AED each
+          {offer.rate.toFixed(2)}
+          <small>AED</small>
         </span>
-        <span className="total">{Math.round(offer.amount * offer.rate).toLocaleString()} AED</span>
+        <span className="total">{Math.round(offer.amount * offer.rate).toLocaleString()} AED in all</span>
+      </div>
+      <div className="qty">
+        <i style={{ '--depth': `${depth.toFixed(1)}%` } as React.CSSProperties} aria-hidden="true" />
+        {offer.amount.toLocaleString()} Falcons
       </div>
       {offer.note && <div className="note">{offer.note}</div>}
       <div className="meta">
@@ -108,12 +109,12 @@ function OfferRow({ offer, mine, onClose }: { offer: Offer; mine: boolean; onClo
         <span>{relativeDate(offer.createdAt)}</span>
         <span>{expiresIn(offer.expiresAt)}</span>
         {mine && (
-          <span className="pill k-accent">
+          <span className="pill tone-line">
             <span className="dot" /> Yours
           </span>
         )}
       </div>
-      <div className="offer-actions">
+      <div className="order-actions">
         {mine ? (
           <>
             <button type="button" className="btn sm" onClick={() => onClose(offer, false)}>

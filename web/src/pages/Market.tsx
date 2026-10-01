@@ -2,11 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError, type ContactKind, type Listing, type ListingKind, type Offer, type OfferSide } from '../api';
 import { ContactFields, ContactReveal } from '../components/Contact';
 import { EmptyState } from '../components/EmptyState';
+import { Flap } from '../components/Flap';
 import { Modal } from '../components/Modal';
 import { Segmented } from '../components/Segmented';
+import { Sign } from '../components/Sign';
 import { useApp } from '../context';
-import { formatPrice, formatTime, groupByDay, relativeDate, shortDate, startsIn } from '../format';
-import { IconArrow, IconBag, IconPin, IconPlus, IconQuestions } from '../icons';
+import { formatTime, groupByDay, plural, relativeDate, shortDate, startsIn } from '../format';
+import { IconArrow, IconBag, IconPin, IconPlus, IconQuestions, IconSearch } from '../icons';
+import { useNow } from '../motion';
 import { navigate, type MarketTab } from '../router';
 import { askerKey, loadContact, saveContact } from '../store';
 import { FalconCompose, FalconsTab, expiresIn, type OffersData } from './Falcons';
@@ -31,7 +34,7 @@ const LOST_KINDS: Array<{ id: ListingKind; label: string }> = [
   { id: 'found', label: 'Found' },
 ];
 
-const KIND_CLASS: Record<ListingKind, string> = { sell: 'k-accent', want: 'k-info', free: 'k-ok', ride: 'k-slate', lost: 'k-danger', found: 'k-ok' };
+const KIND_CLASS: Record<ListingKind, string> = { sell: 'tone-line', want: 'tone-info', free: 'tone-ok', ride: 'tone-slate', lost: 'tone-alert', found: 'tone-ok' };
 
 function tabOf(kind: ListingKind): MarketTab {
   return kind === 'ride' ? 'rides' : kind === 'lost' || kind === 'found' ? 'lost' : 'items';
@@ -129,27 +132,26 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
   })();
 
   return (
-    <div className="page wide">
-      <div className="page-head">
-        <h1>Market</h1>
+    <div className="page">
+      <Sign title="Market" ar="السوق">
         {!boardProblem &&
           (tab === 'falcons' ? (
-            <div className="actions">
+            <>
               <button type="button" className="btn" onClick={() => void startPosting({ side: 'buy' })}>
-                Buy
+                Buy Falcons
               </button>
               <button type="button" className="btn primary" onClick={() => void startPosting({ side: 'sell' })}>
-                <IconPlus /> Sell
+                <IconPlus /> Sell Falcons
               </button>
-            </div>
+            </>
           ) : (
             !notReady && (
               <button type="button" className="btn primary" onClick={() => void startPosting({ kind: defaultKind })}>
-                <IconPlus /> Post
+                <IconPlus /> {tab === 'rides' ? 'Post a ride' : tab === 'lost' ? 'Post lost or found' : 'List something'}
               </button>
             )
           ))}
-      </div>
+      </Sign>
       <div className="tabs-wrap">
         <Segmented
           variant="tabs"
@@ -203,11 +205,29 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
 
 function Loading() {
   return (
-    <div className="stack" aria-busy="true">
-      <div className="skeleton" style={{ height: 76 }} />
-      <div className="skeleton" style={{ height: 76 }} />
-      <div className="skeleton" style={{ height: 76 }} />
+    <div className="items" aria-busy="true">
+      <div className="skeleton" style={{ height: 190, borderRadius: 15 }} />
+      <div className="skeleton" style={{ height: 190, borderRadius: 15 }} />
+      <div className="skeleton" style={{ height: 190, borderRadius: 15 }} />
     </div>
+  );
+}
+
+/** A pickup or a sighting: campus building codes (A2, C3, D2) read as roundels, anything else as a pin and words. */
+function Place({ place }: { place: string }) {
+  const match = /^([A-H]\d{1,2}[A-C]?)\b[\s,]*(.*)$/i.exec(place.trim());
+  if (match) {
+    return (
+      <span className="place">
+        <span className="roundel sm">{match[1]!.toUpperCase()}</span>
+        {match[2]}
+      </span>
+    );
+  }
+  return (
+    <span className="place">
+      <IconPin /> {place}
+    </span>
   );
 }
 
@@ -226,8 +246,8 @@ function KindFilter({ kinds, value, counts, onChange }: { kinds: Array<{ id: Lis
         All <span className="n">{total}</span>
       </button>
       {kinds.map((kind) => (
-        <button key={kind.id} type="button" className={`chip ${KIND_CLASS[kind.id]}${value === kind.id ? ' on' : ''}`} onClick={() => onChange(value === kind.id ? '' : kind.id)}>
-          <span className="dot" /> {kind.label}
+        <button key={kind.id} type="button" className={`chip${value === kind.id ? ' on' : ''}`} onClick={() => onChange(value === kind.id ? '' : kind.id)}>
+          {kind.label}
           <span className="n">{counts.get(kind.id) ?? 0}</span>
         </button>
       ))}
@@ -264,52 +284,58 @@ function ItemsTab({ listings, mineIds, onClose, onPost }: TabProps) {
     <>
       <div className="toolbar">
         <KindFilter kinds={ITEM_KINDS} value={kind} counts={countKinds(items)} onChange={setKind} />
-        {items.length > 5 && <input className="input search" value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search listings" aria-label="Search listings" />}
+        {items.length > 5 && (
+          <div className="search-field">
+            <IconSearch />
+            <input className="input" value={q} onChange={(event) => setQ(event.target.value)} placeholder="Search listings" aria-label="Search listings" />
+          </div>
+        )}
       </div>
       {shown.length === 0 ? (
         <div className="empty">Nothing matches.</div>
       ) : (
-        <div className="list">
+        <div className="items">
           {shown.map((listing) => (
             <ItemRow key={listing.id} listing={listing} mine={mineIds.has(listing.id)} onClose={onClose} />
           ))}
         </div>
       )}
-      <p className="faint small" style={{ marginTop: 20 }}>
-        Listings come down after three weeks. Meet somewhere public on campus to hand things over.
-      </p>
+      <p className="market-note">Listings come down after three weeks. Meet somewhere public on campus to hand things over.</p>
     </>
   );
 }
 
-function priceLabel(listing: Listing): { text: string; muted: boolean } {
-  if (listing.kind === 'free') return { text: 'Free', muted: false };
-  if (listing.price === null) return { text: listing.kind === 'want' ? 'Wanted' : 'Make an offer', muted: true };
-  return { text: listing.kind === 'want' ? `Up to ${formatPrice(listing.price)}` : formatPrice(listing.price), muted: false };
+function Price({ listing }: { listing: Listing }) {
+  if (listing.kind === 'free') return <span className="price free">Free</span>;
+  if (listing.price === null) return <span className="price muted">{listing.kind === 'want' ? 'Any price' : 'Make an offer'}</span>;
+  const amount = listing.price.toLocaleString('en-GB', { maximumFractionDigits: 2 });
+  return (
+    <span className="price" title={listing.kind === 'want' ? 'Budget' : 'Price'}>
+      {listing.kind === 'want' && <small style={{ marginLeft: 0, marginRight: 4 }}>UP TO</small>}
+      {amount}
+      <small>AED</small>
+    </span>
+  );
 }
 
 function ItemRow({ listing, mine, onClose }: { listing: Listing; mine: boolean; onClose(listing: Listing, remove: boolean): void }) {
-  const price = priceLabel(listing);
   const label = ITEM_KINDS.find((entry) => entry.id === listing.kind)?.label ?? listing.kind;
   return (
-    <article className="listing">
-      <div className="listing-top">
+    <article className="item">
+      <div className="item-top">
         <h3>{listing.title}</h3>
-        <span className={`price${price.muted ? ' muted' : ''}${listing.kind === 'free' ? ' free' : ''}`}>{price.text}</span>
+        <Price listing={listing} />
       </div>
-      <div className="meta">
+      <div className="item-meta">
         <span className={`pill ${KIND_CLASS[listing.kind]}`}>
           <span className="dot" /> {label}
         </span>
-        {listing.place && (
-          <span className="with-icon">
-            <IconPin /> {listing.place}
-          </span>
-        )}
-        <span>{listing.posterName}</span>
-        <span>{relativeDate(listing.createdAt)}</span>
+        {listing.place && <Place place={listing.place} />}
+        <span>
+          {listing.posterName}, {relativeDate(listing.createdAt)}
+        </span>
       </div>
-      {listing.body && <Details text={listing.body} />}
+      {listing.body ? <Details text={listing.body} /> : <span />}
       <ListingActions listing={listing} mine={mine} onClose={onClose} />
     </article>
   );
@@ -317,10 +343,10 @@ function ItemRow({ listing, mine, onClose }: { listing: Listing; mine: boolean; 
 
 function ListingActions({ listing, mine, onClose }: { listing: Listing; mine: boolean; onClose(listing: Listing, remove: boolean): void }) {
   return (
-    <div className="listing-actions">
+    <div className="item-actions">
       {mine ? (
         <>
-          <span className="pill k-accent">
+          <span className="pill tone-line">
             <span className="dot" /> Yours, {expiresIn(listing.expiresAt)}
           </span>
           <button type="button" className="btn sm" onClick={() => onClose(listing, false)}>
@@ -339,21 +365,21 @@ function ListingActions({ listing, mine, onClose }: { listing: Listing; mine: bo
 
 function Details({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
-  const long = text.length > 200 || text.split('\n').length > 3;
+  const long = text.length > 160 || text.split('\n').length > 3;
   return (
-    <>
+    <div>
       <p className={`details${long && !open ? ' clamped' : ''}`}>{text}</p>
       {long && !open && (
-        <button type="button" className="link-btn small" style={{ justifySelf: 'start' }} onClick={() => setOpen(true)}>
+        <button type="button" className="link-btn small" onClick={() => setOpen(true)}>
           Read more
         </button>
       )}
-    </>
+    </div>
   );
 }
 
 function RidesTab({ listings, mineIds, onClose, onPost }: TabProps) {
-  const now = new Date();
+  const now = useNow();
   const rides = listings.filter((listing) => listing.kind === 'ride' && listing.happensAt).sort((a, b) => a.happensAt!.localeCompare(b.happensAt!));
   if (rides.length === 0) {
     return (
@@ -367,40 +393,41 @@ function RidesTab({ listings, mineIds, onClose, onPost }: TabProps) {
   return (
     <>
       {groupByDay(rides, (ride) => new Date(ride.happensAt!), now).map((group) => (
-        <section key={group.key} className="day-group">
-          <h2 className="section-title">
-            {group.label}
+        <section key={group.key} className="board" aria-label={`Rides ${group.label}`}>
+          <div className="board-head">
+            <h2>{group.label}</h2>
             {group.sub && <span>{group.sub}</span>}
-          </h2>
-          <div className="list">
-            {group.items.map((ride) => {
-              const soon = startsIn(new Date(ride.happensAt!), now, 60);
-              return (
-                <article key={ride.id} className="listing ride">
-                  <div className="ride-time num">{formatTime(ride.happensAt!)}</div>
-                  <div className="ride-main">
-                    <h3 className="route">
-                      {ride.place} <IconArrow /> {ride.destination}
-                    </h3>
-                    <div className="meta">
-                      {soon && (
-                        <span className={`pill soon${soon.live ? ' now' : ''}`}>
-                          <span className="dot" /> {soon.live ? 'Leaving now' : soon.text}
-                        </span>
-                      )}
-                      {ride.seats !== null && <span>{ride.seats === 1 ? '1 seat' : `${ride.seats} seats`}</span>}
-                      <span>{ride.posterName}</span>
-                      <span>{relativeDate(ride.createdAt)}</span>
-                    </div>
-                    {ride.body && <Details text={ride.body} />}
-                    <ListingActions listing={ride} mine={mineIds.has(ride.id)} onClose={onClose} />
-                  </div>
-                </article>
-              );
-            })}
+            <span style={{ marginLeft: 'auto' }}>{plural(group.items.length, 'ride')}</span>
           </div>
+          {group.items.map((ride) => {
+            const soon = startsIn(new Date(ride.happensAt!), now, 60);
+            const status = !soon ? 'On time' : soon.live ? 'Boarding' : soon.text;
+            return (
+              <article key={ride.id} className="board-row">
+                <div className="board-time">
+                  <Flap text={formatTime(ride.happensAt!)} />
+                </div>
+                <div className="board-route">
+                  <b>
+                    {ride.place} <IconArrow /> {ride.destination}
+                  </b>
+                  <span>
+                    {[ride.seats !== null ? (ride.seats === 1 ? '1 seat' : `${ride.seats} seats`) : '', ride.posterName, relativeDate(ride.createdAt)].filter(Boolean).join(' · ')}
+                  </span>
+                  {ride.body && <Details text={ride.body} />}
+                </div>
+                <div className="board-side">
+                  <span className={`board-status${soon ? (soon.live ? ' now' : ' soon') : ''}`}>
+                    <Flap text={status} />
+                  </span>
+                  <ListingActions listing={ride} mine={mineIds.has(ride.id)} onClose={onClose} />
+                </div>
+              </article>
+            );
+          })}
         </section>
       ))}
+      <p className="market-note">Rides come down three hours after they leave. Agree the split before you get in.</p>
     </>
   );
 }
@@ -426,33 +453,28 @@ function LostTab({ listings, mineIds, onClose, onPost }: TabProps) {
       <div className="toolbar">
         <KindFilter kinds={LOST_KINDS} value={kind} counts={countKinds(items)} onChange={setKind} />
       </div>
-      <div className="list">
+      <div className="items">
         {shown.map((listing) => (
-          <article key={listing.id} className="listing">
-            <div className="listing-top">
+          <article key={listing.id} className="item">
+            <div className="item-top">
               <h3>{listing.title}</h3>
             </div>
-            <div className="meta">
+            <div className="item-meta">
               <span className={`pill ${KIND_CLASS[listing.kind]}`}>
                 <span className="dot" /> {listing.kind === 'lost' ? 'Lost' : 'Found'}
                 {listing.happensAt ? ` ${shortDate(listing.happensAt)}` : ''}
               </span>
-              {listing.place && (
-                <span className="with-icon">
-                  <IconPin /> {listing.place}
-                </span>
-              )}
-              <span>{listing.posterName}</span>
-              <span>{relativeDate(listing.createdAt)}</span>
+              {listing.place && <Place place={listing.place} />}
+              <span>
+                {listing.posterName}, {relativeDate(listing.createdAt)}
+              </span>
             </div>
-            {listing.body && <Details text={listing.body} />}
+            {listing.body ? <Details text={listing.body} /> : <span />}
             <ListingActions listing={listing} mine={mineIds.has(listing.id)} onClose={onClose} />
           </article>
         ))}
       </div>
-      <p className="faint small" style={{ marginTop: 20 }}>
-        Things handed to a security guard on campus end up at Lost and Found, so check there too.
-      </p>
+      <p className="market-note">Things handed to a security guard on campus end up at Lost and Found, so check there too.</p>
     </>
   );
 }
@@ -578,7 +600,7 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
             ) : null}
             <div className="field">
               <label htmlFor="ls-place">{group === 'lost' ? 'Where' : 'Pickup (optional)'}</label>
-              <input id="ls-place" className="input" value={place} onChange={(event) => setPlace(event.target.value)} maxLength={80} placeholder={group === 'lost' ? 'Library, 2nd floor' : 'A2'} />
+              <input id="ls-place" className="input" value={place} onChange={(event) => setPlace(event.target.value)} maxLength={80} placeholder={group === 'lost' ? 'Library, 2nd floor' : 'A2, or any building code'} />
             </div>
           </div>
         </>

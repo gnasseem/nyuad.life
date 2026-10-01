@@ -1,11 +1,13 @@
-import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, boardProblem as describeBoardProblem, type Health, type HomePayload, type Profile } from './api';
-import { APP_NAME } from './brand';
+import { APP_NAME, GROUP_URL } from './brand';
 import { Wordmark } from './components/Logo';
+import { Network } from './components/Network';
+import { Palette } from './components/Palette';
 import { ProfileModal } from './components/ProfileForm';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
-import { initials, standingLabel } from './format';
-import { IconAsk, IconAuto, IconBag, IconBook, IconClose, IconMegaphone, IconMenu, IconMoon, IconQuestions, IconSettings, IconSun, IconTrash, IconUser } from './icons';
+import { formatDate, initials, plural, relativeDate } from './format';
+import { IconAsk, IconAuto, IconBag, IconClock, IconMap, IconMegaphone, IconMoon, IconQuestions, IconSearch, IconSun, IconTrash, IconUser } from './icons';
 import { AnnouncementsPage } from './pages/Announcements';
 import { AskPage } from './pages/Ask';
 import { GuidePage } from './pages/Guide';
@@ -13,19 +15,22 @@ import { MarketPage } from './pages/Market';
 import { PostPage } from './pages/Post';
 import { QuestionPage, QuestionsPage } from './pages/Questions';
 import { SettingsPage } from './pages/Settings';
+import { useAbuDhabiTime } from './motion';
 import { navigate, onLinkClick, routePath, useRoute, type Route } from './router';
 import { applyTheme, clearConversations, deleteConversation, loadConversations, loadProfile, loadTheme, onConversationsChange, saveProfile, type Conversation, type Theme } from './store';
 import { standingFor } from './year';
 
-const NAV: Array<{ route: Route; label: string; icon: typeof IconAsk; matches: Route['name'][] }> = [
-  { route: { name: 'ask' }, label: 'Ask', icon: IconAsk, matches: ['ask'] },
-  { route: { name: 'questions' }, label: 'Questions', icon: IconQuestions, matches: ['questions', 'question'] },
-  { route: { name: 'announcements' }, label: 'Notices', icon: IconMegaphone, matches: ['announcements'] },
-  { route: { name: 'market', tab: 'items' }, label: 'Market', icon: IconBag, matches: ['market'] },
-  { route: { name: 'guide' }, label: 'Guide', icon: IconBook, matches: ['guide', 'post'] },
+type Line = 'ask' | 'questions' | 'notices' | 'market' | 'guide';
+
+const NAV: Array<{ route: Route; label: string; line: Line; icon: typeof IconAsk; matches: Route['name'][] }> = [
+  { route: { name: 'ask' }, label: 'Ask', line: 'ask', icon: IconAsk, matches: ['ask'] },
+  { route: { name: 'questions' }, label: 'Questions', line: 'questions', icon: IconQuestions, matches: ['questions', 'question'] },
+  { route: { name: 'announcements' }, label: 'Notices', line: 'notices', icon: IconMegaphone, matches: ['announcements'] },
+  { route: { name: 'market', tab: 'items' }, label: 'Market', line: 'market', icon: IconBag, matches: ['market'] },
+  { route: { name: 'guide' }, label: 'Guide', line: 'guide', icon: IconMap, matches: ['guide', 'post'] },
 ];
 
-const THEME_LABEL: Record<Theme, string> = { system: 'System theme', light: 'Light theme', dark: 'Dark theme' };
+const THEME_LABEL: Record<Theme, string> = { system: 'Theme: automatic', light: 'Theme: day service', dark: 'Theme: night service' };
 const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Notices', market: 'Market', guide: 'Guide', post: 'Thread', settings: 'Settings' };
 const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: 'Your major and year decide which questions reach you. Your name appears next to what you write.' };
 
@@ -44,10 +49,12 @@ export function App() {
   const [toastState, setToastState] = useState<{ message: string; leaving: boolean; id: number } | null>(null);
   const [askPrefill, setAskPrefillState] = useState<(Prefill & { token: number }) | null>(null);
   const [boardPrefill, setBoardPrefill] = useState('');
-  const [drawer, setDrawer] = useState(false);
+  const [palette, setPalette] = useState(false);
+  const [history, setHistory] = useState(false);
   const [profileAsk, setProfileAsk] = useState<{ title: string; reason: string } | null>(null);
   const profileRequest = useRef<((saved: boolean) => void) | null>(null);
   const conversations = useConversations();
+  const clock = useAbuDhabiTime();
 
   // Class years roll over on 1 May; the stored standing is brought up to date so the board routes correctly.
   useEffect(() => {
@@ -76,13 +83,47 @@ export function App() {
   }, [theme]);
 
   useEffect(() => {
-    setDrawer(false);
+    setHistory(false);
+    setPalette(false);
   }, [route, search]);
 
   useEffect(() => {
     const title = PAGE_TITLE[route.name];
     document.title = title ? `${title} · ${APP_NAME}` : APP_NAME;
   }, [route.name]);
+
+  const activeIndex = NAV.findIndex((item) => item.matches.includes(route.name));
+  const line: Line = NAV[activeIndex]?.line ?? 'ask';
+  useEffect(() => {
+    document.documentElement.dataset.line = line;
+  }, [line]);
+
+  // ⌘K or Ctrl+K anywhere, or "/" when not typing, opens the palette; G then a letter jumps to a line.
+  useEffect(() => {
+    let pendingG = 0;
+    const jumps: Record<string, Route> = { a: { name: 'ask' }, q: { name: 'questions' }, n: { name: 'announcements' }, m: { name: 'market', tab: 'items' }, g: { name: 'guide' }, s: { name: 'settings' } };
+    const onKey = (event: KeyboardEvent) => {
+      const typing = event.target instanceof HTMLElement && (event.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName));
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPalette((open) => !open);
+        return;
+      }
+      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (pendingG && Date.now() - pendingG < 1200 && jumps[key]) {
+        event.preventDefault();
+        pendingG = 0;
+        navigate(jumps[key]!);
+      } else if (key === 'g') pendingG = Date.now();
+      else if (event.key === '/') {
+        event.preventDefault();
+        setPalette(true);
+      } else pendingG = 0;
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 
   const toastTimers = useRef<number[]>([]);
   const toast = useCallback((message: string) => {
@@ -129,6 +170,7 @@ export function App() {
   const cycleTheme = () => setThemeState(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');
   const ThemeIcon = theme === 'light' ? IconSun : theme === 'dark' ? IconMoon : IconAuto;
   const currentConversation = route.name === 'ask' ? search.get('c') : null;
+  const closePalette = useCallback(() => setPalette(false), []);
 
   const page = (() => {
     switch (route.name) {
@@ -151,133 +193,202 @@ export function App() {
     }
   })();
 
-  const clearAll = () => {
-    if (!window.confirm('Delete all saved conversations?')) return;
-    clearConversations();
-    if (currentConversation) navigate({ name: 'ask' });
-  };
-
-  const removeConversation = (id: string) => {
-    deleteConversation(id);
-    if (currentConversation === id) navigate({ name: 'ask' });
-  };
-
-  const settingsActive = route.name === 'settings';
-  const activeIndex = NAV.findIndex((item) => item.matches.includes(route.name));
-  const navLinks = NAV.map((item, index) => {
-    const active = index === activeIndex;
-    return (
-      <a key={item.label} href={routePath(item.route)} className={active ? 'active' : undefined} aria-current={active ? 'page' : undefined} onClick={onLinkClick}>
-        <item.icon /> <span>{item.label}</span>
-      </a>
-    );
-  });
-  const indicator = <span className="nav-indicator" style={{ '--i': Math.max(0, activeIndex), opacity: activeIndex < 0 ? 0 : 1 } as React.CSSProperties} aria-hidden="true" />;
   // A new key per page replays its entrance. Market tabs and the guide's side panel keep the key, so they do not.
   const pageKey = route.name === 'market' ? 'market' : route.name === 'guide' ? `guide-${route.section ?? ''}` : routePath(route);
+  const settingsActive = route.name === 'settings';
+
+  const me = (
+    <button type="button" className="me-btn" onClick={() => (profile ? navigate({ name: 'settings' }) : void requestProfile())} title={profile ? `${profile.name}, settings` : 'Add your details'} aria-label={profile ? 'Settings' : 'Add your details'}>
+      {profile ? (
+        <span className="avatar">{initials(profile.name)}</span>
+      ) : (
+        <span className="avatar plain">
+          <IconUser style={{ width: 15, height: 15 }} />
+        </span>
+      )}
+    </button>
+  );
 
   return (
     <AppContext.Provider value={context}>
-      <div className="shell">
-        <div className={`scrim${drawer ? ' open' : ''}`} onClick={() => setDrawer(false)} aria-hidden="true" />
-        <aside className={`sidebar${drawer ? ' open' : ''}`} aria-label="Navigation">
-          <div className="sidebar-top">
-            <a href="/" className="wordmark" onClick={onLinkClick}>
-              <Wordmark />
-            </a>
-            <button type="button" className="icon-btn" onClick={() => setDrawer(false)} aria-label="Close menu" style={{ display: drawer ? undefined : 'none' }}>
-              <IconClose />
+      <div className="app">
+        <div className="ground" aria-hidden="true" />
+        <Network />
+        <header className="appbar">
+          <a href="/" className="brand" onClick={onLinkClick} aria-label={`${APP_NAME}, home`}>
+            <Wordmark />
+          </a>
+          <LineNav activeIndex={activeIndex} />
+          <div className="bar-tools">
+            <button type="button" className="where-to" onClick={() => setPalette(true)} aria-label="Where to? Search or ask">
+              <IconSearch />
+              <span>Where to?</span>
+              <kbd>⌘K</kbd>
             </button>
-          </div>
-          <nav className="nav">
-            {indicator}
-            {navLinks}
-          </nav>
-          <div className="recent">
-            <div className="recent-head">
-              <span className="eyebrow">Recent</span>
-              {conversations.length > 0 && (
-                <button type="button" onClick={clearAll}>
-                  Clear
-                </button>
-              )}
-            </div>
-            {conversations.length === 0 ? (
-              <div className="recent-empty">No conversations yet.</div>
-            ) : (
-              <div className="recent-list">
-                {conversations.slice(0, 40).map((conversation) => (
-                  <div key={conversation.id} className={`recent-item${currentConversation === conversation.id ? ' active' : ''}`}>
-                    <a href={`/?c=${conversation.id}`} onClick={onLinkClick} title={conversation.title}>
-                      {conversation.title}
-                    </a>
-                    <button type="button" onClick={() => removeConversation(conversation.id)} aria-label="Delete conversation">
-                      <IconTrash />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="sidebar-foot">
-            {profile ? (
-              <a href="/settings" className="me" onClick={onLinkClick}>
-                <span className="avatar">{initials(profile.name)}</span>
-                <span className="who">
-                  <b>{profile.name}</b>
-                  <span>
-                    {profile.major}, {standingLabel(profile.year)}
-                  </span>
-                </span>
-              </a>
-            ) : (
-              <button type="button" className="me" onClick={() => void requestProfile()}>
-                <span className="avatar plain">
-                  <IconUser style={{ width: 14, height: 14 }} />
-                </span>
-                <span className="who">
-                  <b>Add details</b>
-                  <span>To answer or post</span>
-                </span>
-              </button>
-            )}
+            <HistoryMenu open={history} setOpen={setHistory} conversations={conversations} current={currentConversation} />
             <button type="button" className="icon-btn" onClick={cycleTheme} title={THEME_LABEL[theme]} aria-label={THEME_LABEL[theme]}>
               <ThemeIcon key={theme} className="turn-in" />
             </button>
-            <a href="/settings" className={`icon-btn${settingsActive ? ' active' : ''}`} onClick={onLinkClick} title="Settings" aria-label="Settings" aria-current={settingsActive ? 'page' : undefined}>
-              <IconSettings />
-            </a>
+            <span className={settingsActive ? 'is-settings' : undefined}>{me}</span>
           </div>
-        </aside>
+        </header>
 
-        <div className="main">
-          <header className="topbar">
-            <button type="button" className="icon-btn" onClick={() => setDrawer(true)} aria-label="Open menu">
-              <IconMenu />
-            </button>
-            <a href="/" className="wordmark" onClick={onLinkClick}>
-              <Wordmark />
+        <main className="main" key={pageKey}>
+          <ErrorBoundary>{page}</ErrorBoundary>
+        </main>
+
+        <footer className="statusbar">
+          <span className={`svc${health && !health.gemini.configured ? ' paused' : ''}`}>
+            <i /> {health ? (health.gemini.configured ? 'Ask: good service' : 'Ask: answers paused') : 'Checking service'}
+          </span>
+          {health && (
+            <span className={`svc${boardProblem ? ' paused' : ''}`}>
+              <i /> {boardProblem ? 'Board: not running' : 'Board: good service'}
+            </span>
+          )}
+          {health?.archive && (
+            <span>
+              {plural(health.archive.posts, 'thread')} to {formatDate(health.archive.newestPost)}
+            </span>
+          )}
+          {health?.official?.pages ? <span>{health.official.pages.toLocaleString()} official pages</span> : null}
+          <a href={GROUP_URL} target="_blank" rel="noreferrer">
+            Facebook group
+          </a>
+          <a href="/settings" onClick={onLinkClick}>
+            Settings
+          </a>
+          <span className="clock" title="Time in Abu Dhabi">
+            Abu Dhabi {clock}
+          </span>
+        </footer>
+
+        <nav className="tabbar" aria-label="Sections">
+          {NAV.map((item, index) => (
+            <a key={item.label} href={routePath(item.route)} data-line={item.line} aria-current={index === activeIndex ? 'page' : undefined} onClick={onLinkClick}>
+              <item.icon />
+              <span>{item.label}</span>
             </a>
-            <a href="/settings" className={`icon-btn${settingsActive ? ' active' : ''}`} onClick={onLinkClick} aria-label="Settings">
-              <IconSettings />
-            </a>
-          </header>
-          <main key={pageKey}>
-            <ErrorBoundary>{page}</ErrorBoundary>
-          </main>
-          <nav className="tabbar" aria-label="Sections">
-            {indicator}
-            {navLinks}
-          </nav>
-        </div>
+          ))}
+        </nav>
       </div>
       {toastState && (
         <div key={toastState.id} className={`toast${toastState.leaving ? ' leaving' : ''}`} role="status">
           {toastState.message}
         </div>
       )}
+      <Palette open={palette} onClose={closePalette} />
       <ProfileModal open={profileAsk !== null} title={profileAsk?.title ?? ''} reason={profileAsk?.reason ?? ''} onClose={() => finishProfile(false)} onDone={() => finishProfile(true)} />
     </AppContext.Provider>
+  );
+}
+
+/** The five lines as tabs, with one enamel plate that slides to the line you are on and takes its colour. */
+function LineNav({ activeIndex }: { activeIndex: number }) {
+  const ref = useRef<HTMLElement>(null);
+  const [plate, setPlate] = useState<{ x: number; w: number } | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const measure = () => {
+      const active = element.querySelector<HTMLElement>('[aria-current="page"]');
+      setPlate(active ? { x: active.offsetLeft, w: active.offsetWidth } : null);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    void document.fonts?.ready.then(measure);
+    return () => observer.disconnect();
+  }, [activeIndex]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => setReady(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  return (
+    <nav ref={ref} className="lines" aria-label="Sections">
+      <span
+        className="lines-plate"
+        style={{ transform: `translateX(${plate?.x ?? 0}px)`, width: plate?.w ?? 0, opacity: plate ? 1 : 0, transition: ready ? undefined : 'none' }}
+        aria-hidden="true"
+      >
+        <i key={activeIndex} className="shine" />
+      </span>
+      {NAV.map((item, index) => (
+        <a key={item.label} href={routePath(item.route)} className="line-tab" data-line={item.line} aria-current={index === activeIndex ? 'page' : undefined} onClick={onLinkClick}>
+          <span className="swatch" />
+          {item.label}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+function HistoryMenu({ open, setOpen, conversations, current }: { open: boolean; setOpen(open: boolean): void; conversations: Conversation[]; current: string | null }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, setOpen]);
+
+  const remove = (id: string) => {
+    deleteConversation(id);
+    if (current === id) navigate({ name: 'ask' });
+  };
+
+  const clearAll = () => {
+    if (!window.confirm('Delete all saved conversations?')) return;
+    clearConversations();
+    setOpen(false);
+    if (current) navigate({ name: 'ask' });
+  };
+
+  return (
+    <div className="menu-wrap" ref={ref}>
+      <button type="button" className="icon-btn" onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="true" title="Your questions" aria-label="Your questions">
+        <IconClock />
+      </button>
+      {open && (
+        <div className="popover" role="menu">
+          <div className="popover-head">
+            <span className="label">Your questions</span>
+            {conversations.length > 0 && (
+              <button type="button" className="btn ghost sm" onClick={clearAll}>
+                Clear all
+              </button>
+            )}
+          </div>
+          {conversations.length === 0 ? (
+            <p className="popover-empty">Questions you ask are kept here, in this browser only.</p>
+          ) : (
+            conversations.slice(0, 40).map((conversation) => (
+              <div key={conversation.id} className={`hist-item${current === conversation.id ? ' active' : ''}`}>
+                <a href={`/?c=${conversation.id}`} onClick={onLinkClick} title={conversation.title}>
+                  <b>{conversation.title}</b>
+                  <span>{relativeDate(conversation.updatedAt)}</span>
+                </a>
+                <button type="button" onClick={() => remove(conversation.id)} aria-label="Delete conversation">
+                  <IconTrash />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

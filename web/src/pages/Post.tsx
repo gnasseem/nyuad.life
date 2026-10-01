@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, type PostDetail, type PostSummary } from '../api';
 import { PostRow } from '../components/PostRow';
 import { useApp } from '../context';
-import { formatDate, plural, topicLabel } from '../format';
+import { formatDate, initials, plural, topicLabel } from '../format';
 import { IconBack, IconExternal } from '../icons';
 import { navigate } from '../router';
 
@@ -10,6 +10,7 @@ interface Props {
   id: string;
 }
 
+/** One thread from the group: the post, its comments as stops down a line, and what to do next beside it. */
 export function PostPage({ id }: Props) {
   const { setAskPrefill } = useApp();
   const [post, setPost] = useState<PostDetail | null>(null);
@@ -43,6 +44,8 @@ export function PostPage({ id }: Props) {
     navigate({ name: 'ask' });
   };
 
+  const topics = post?.topics.filter((topic) => topic !== 'general') ?? [];
+
   return (
     <div className="page">
       <button type="button" className="btn ghost sm back" onClick={() => (window.history.length > 1 ? window.history.back() : navigate({ name: 'guide' }))}>
@@ -50,77 +53,94 @@ export function PostPage({ id }: Props) {
       </button>
       {error && <div className="alert error">{error}</div>}
       {!post && !error && (
-        <div className="stack" aria-busy="true">
+        <div className="stack" aria-busy="true" style={{ maxWidth: 720 }}>
           <div className="skeleton" style={{ width: '40%' }} />
-          <div className="skeleton" style={{ height: 60 }} />
+          <div className="skeleton" style={{ height: 80 }} />
           <div className="skeleton" style={{ height: 40 }} />
         </div>
       )}
       {post && (
-        <>
-          <article className="stack" style={{ gap: 14 }}>
-            <div className="meta">
-              <b>{post.author || 'Unknown'}</b>
-              <span>{formatDate(post.date)}</span>
-              {post.reactions > 0 && <span>{plural(post.reactions, 'reaction')}</span>}
+        <div className="split">
+          <div>
+            <article>
+              <div className="post-head">
+                <span className="avatar">{initials(post.author || 'Unknown') || '?'}</span>
+                <div>
+                  <b>{post.author || 'Unknown'}</b>
+                  <span>
+                    {formatDate(post.date)}
+                    {post.reactions > 0 ? `, ${plural(post.reactions, 'reaction')}` : ''}
+                  </span>
+                </div>
+              </div>
+              <div className="post-full">{post.text}</div>
+            </article>
+
+            <h2 className="section-title">
+              Comments <span>{post.comments.length ? plural(post.comments.length, 'comment') : 'none yet'}</span>
+            </h2>
+            {post.comments.length === 0 ? (
+              <p className="muted">Nobody replied in the group.</p>
+            ) : (
+              <div className="comments">
+                <div className="stations">
+                  {post.comments.map((comment, index) => (
+                    <div key={index} className="comment">
+                      <span className="who">
+                        <b>{comment.author || 'Unknown'}</b>
+                        <span>{formatDate(comment.date)}</span>
+                      </span>
+                      <div className="what">{comment.text}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <aside className="rail">
+            <div className="rail-block">
+              <h2>From this thread</h2>
+              <div className="stack" style={{ gap: 8 }}>
+                <button type="button" className="btn primary" onClick={askAbout}>
+                  Ask about this
+                </button>
+                {post.url && (
+                  <a className="btn" href={post.url} target="_blank" rel="noreferrer">
+                    <IconExternal /> Open on Facebook
+                  </a>
+                )}
+              </div>
             </div>
-            <div className="post-full">{post.text}</div>
-            {(post.courses.length > 0 || post.topics.some((topic) => topic !== 'general')) && (
-              <div className="chips">
-                {post.courses.map((code) => (
-                  <button key={code} type="button" className="chip mono" onClick={() => navigate({ name: 'guide', section: 'courses', id: code })}>
-                    {code}
-                  </button>
-                ))}
-                {post.topics
-                  .filter((topic) => topic !== 'general')
-                  .map((topic) => (
+            {(post.courses.length > 0 || topics.length > 0) && (
+              <div className="rail-block">
+                <h2>Filed under</h2>
+                <div className="chips">
+                  {post.courses.map((code) => (
+                    <button key={code} type="button" className="chip mono" onClick={() => navigate({ name: 'guide', section: 'courses', id: code })}>
+                      {code}
+                    </button>
+                  ))}
+                  {topics.map((topic) => (
                     <button key={topic} type="button" className="chip" onClick={() => navigate({ name: 'guide', section: 'threads' }, { search: `topic=${encodeURIComponent(topic)}` })}>
                       {topicLabel(topic)}
                     </button>
                   ))}
+                </div>
               </div>
             )}
-            <div className="row wrap">
-              <button type="button" className="btn primary sm" onClick={askAbout}>
-                Ask about this
-              </button>
-              {post.url && (
-                <a className="btn sm" href={post.url} target="_blank" rel="noreferrer">
-                  <IconExternal /> Open on Facebook
-                </a>
-              )}
-            </div>
-          </article>
-
-          <h2 className="section-title">{plural(post.comments.length, 'comment')}</h2>
-          {post.comments.length === 0 ? (
-            <p className="muted">No comments.</p>
-          ) : (
-            <div className="list">
-              {post.comments.map((comment, index) => (
-                <div key={index} className="comment">
-                  <span className="meta">
-                    <b>{comment.author || 'Unknown'}</b>
-                    <span>{formatDate(comment.date)}</span>
-                  </span>
-                  <div className="what">{comment.text}</div>
+            {related.length > 0 && (
+              <div className="rail-block">
+                <h2>Related threads</h2>
+                <div className="list">
+                  {related.slice(0, 5).map((entry) => (
+                    <PostRow key={entry.id} post={entry} />
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
-
-          {related.length > 0 && (
-            <>
-              <h2 className="section-title">Related threads</h2>
-              <div className="list">
-                {related.map((entry) => (
-                  <PostRow key={entry.id} post={entry} />
-                ))}
               </div>
-            </>
-          )}
-        </>
+            )}
+          </aside>
+        </div>
       )}
     </div>
   );

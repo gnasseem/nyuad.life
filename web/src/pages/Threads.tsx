@@ -4,15 +4,16 @@ import { PostRow } from '../components/PostRow';
 import { Segmented } from '../components/Segmented';
 import { useApp } from '../context';
 import { plural, topicLabel } from '../format';
+import { IconSearch } from '../icons';
 import { navigate } from '../router';
 
 type Sort = 'relevance' | 'newest' | 'discussed';
 
-const TOPICS = ['courses', 'professors', 'housing', 'study-away', 'visa-travel', 'jobs', 'money', 'food', 'health', 'transport', 'tech', 'events', 'research', 'grad-school', 'marketplace', 'lost-found'];
+export const TOPICS = ['courses', 'professors', 'housing', 'study-away', 'visa-travel', 'jobs', 'money', 'food', 'health', 'transport', 'tech', 'events', 'research', 'grad-school', 'marketplace', 'lost-found'];
 
 /** The group's own threads, searched by keyword and meaning, with no model writing anything: the archive as it is. */
 export function ThreadSearch() {
-  const { health } = useApp();
+  const { health, setAskPrefill } = useApp();
   const initial = new URLSearchParams(window.location.search);
   const [q, setQ] = useState(initial.get('q') ?? '');
   const [topic, setTopic] = useState(initial.get('topic') ?? '');
@@ -63,60 +64,102 @@ export function ThreadSearch() {
   };
 
   const sorts: Array<{ id: Sort; label: string }> = query ? [{ id: 'relevance', label: 'Best match' }, { id: 'newest', label: 'Newest' }, { id: 'discussed', label: 'Most discussed' }] : [{ id: 'newest', label: 'Newest' }, { id: 'discussed', label: 'Most discussed' }];
+  const topicButtons = (
+    <>
+      <button type="button" className={topic ? undefined : 'on'} onClick={() => setTopic('')}>
+        All topics
+      </button>
+      {TOPICS.map((id) => (
+        <button key={id} type="button" className={topic === id ? 'on' : undefined} onClick={() => setTopic(topic === id ? '' : id)}>
+          {topicLabel(id)}
+        </button>
+      ))}
+    </>
+  );
 
   return (
-    <>
-      <div className="search-box">
-        <input
-          className="input"
-          type="search"
-          value={q}
-          onChange={(event) => setQ(event.target.value)}
-          placeholder={health?.archive ? `Search ${health.archive.posts.toLocaleString()} threads` : 'Search threads'}
-          aria-label="Search threads"
-          autoFocus={window.matchMedia('(min-width: 900px)').matches}
-        />
-        {loading && <span className="spinner" aria-label="Searching" />}
-      </div>
-      <div className="toolbar">
-        <div className="chips scroll-x">
-          <button type="button" className={`chip${topic ? '' : ' on'}`} onClick={() => setTopic('')}>
-            All topics
-          </button>
-          {TOPICS.map((id) => (
-            <button key={id} type="button" className={`chip${topic === id ? ' on' : ''}`} onClick={() => setTopic(topic === id ? '' : id)}>
-              {topicLabel(id)}
+    <div className="split">
+      <div>
+        <div className="search-field big" style={{ marginBottom: 14 }}>
+          <IconSearch />
+          <input
+            className="input"
+            type="search"
+            value={q}
+            onChange={(event) => setQ(event.target.value)}
+            placeholder={health?.archive ? `Search ${health.archive.posts.toLocaleString()} threads` : 'Search threads'}
+            aria-label="Search threads"
+            autoFocus={window.matchMedia('(min-width: 900px)').matches}
+          />
+          {loading && <span className="spinner" aria-label="Searching" />}
+        </div>
+        <div className="threads-topics-mobile">
+          <div className="chips scroll-x">
+            <button type="button" className={`chip${topic ? '' : ' on'}`} onClick={() => setTopic('')}>
+              All topics
             </button>
-          ))}
+            {TOPICS.map((id) => (
+              <button key={id} type="button" className={`chip${topic === id ? ' on' : ''}`} onClick={() => setTopic(topic === id ? '' : id)}>
+                {topicLabel(id)}
+              </button>
+            ))}
+          </div>
         </div>
+        <div className="results-head">
+          <span className="faint small">{results ? (results.total === 0 ? 'No threads' : plural(results.total, 'thread')) : ' '}</span>
+          <Segmented<Sort> value={effectiveSort} onChange={setSort} label="Sort" options={sorts} />
+        </div>
+        {error && <div className="alert error">{error}</div>}
+        {!results && !error && (
+          <div className="stack" aria-busy="true">
+            <div className="skeleton" style={{ height: 96 }} />
+            <div className="skeleton" style={{ height: 96 }} />
+            <div className="skeleton" style={{ height: 96 }} />
+          </div>
+        )}
+        {results && results.items.length === 0 && (
+          <div className="empty">
+            Nothing in the group matches. Try fewer words, or ask it instead.
+            <br />
+            {query && (
+              <button
+                type="button"
+                className="btn primary"
+                onClick={() => {
+                  setAskPrefill({ question: query, autoSend: true });
+                  navigate({ name: 'ask' });
+                }}
+              >
+                Ask “{query.slice(0, 60)}”
+              </button>
+            )}
+          </div>
+        )}
+        {results && results.items.length > 0 && (
+          <div className={`list${loading ? ' dim' : ''}`}>
+            {results.items.map((post) => (
+              <PostRow key={post.id} post={post} terms={results.terms} />
+            ))}
+          </div>
+        )}
+        {results && results.items.length < results.total && (
+          <div className="load-more">
+            <button type="button" className="btn" onClick={more} disabled={loading}>
+              {loading ? 'Loading' : 'Show more'}
+            </button>
+          </div>
+        )}
       </div>
-      <div className="row between results-head">
-        <span className="faint small">{results ? (results.total === 0 ? 'No threads' : plural(results.total, 'thread')) : ' '}</span>
-        <Segmented<Sort> value={effectiveSort} onChange={setSort} label="Sort" options={sorts} />
-      </div>
-      {error && <div className="alert error">{error}</div>}
-      {!results && !error && (
-        <div className="stack" aria-busy="true">
-          <div className="skeleton" style={{ height: 88 }} />
-          <div className="skeleton" style={{ height: 88 }} />
-          <div className="skeleton" style={{ height: 88 }} />
+      <aside className="rail threads-topics">
+        <div className="rail-block">
+          <h2>Topics</h2>
+          <div className="topic-list">{topicButtons}</div>
         </div>
-      )}
-      {results && results.items.length === 0 && <div className="empty">Nothing in the group matches. Try fewer words, or ask the question on the Ask page.</div>}
-      {results && results.items.length > 0 && (
-        <div className={`list${loading ? ' dim' : ''}`}>
-          {results.items.map((post) => (
-            <PostRow key={post.id} post={post} terms={results.terms} />
-          ))}
+        <div className="rail-block">
+          <h2>About the archive</h2>
+          <p className="rail-note">Threads and comments from the Room of Requirement Facebook group, matched by keyword and by meaning. Nothing here is written by a model.</p>
         </div>
-      )}
-      {results && results.items.length < results.total && (
-        <div className="load-more">
-          <button type="button" className="btn" onClick={more} disabled={loading}>
-            {loading ? 'Loading' : 'Show more'}
-          </button>
-        </div>
-      )}
-    </>
+      </aside>
+    </div>
   );
 }

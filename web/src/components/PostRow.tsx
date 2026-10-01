@@ -1,5 +1,6 @@
 import type { PostSummary } from '../api';
 import { formatDate, plural } from '../format';
+import { IconChat } from '../icons';
 import { highlight } from '../markdown';
 import { navigate } from '../router';
 
@@ -12,13 +13,15 @@ export function PostRow({ post, terms }: { post: PostSummary; terms?: string[] }
         <b>{post.author || 'Unknown'}</b>
         <span>{formatDate(post.date)}</span>
         {post.courses.slice(0, 3).map((code) => (
-          <span key={code} className="tag course">
+          <span key={code} className="code">
             {code}
           </span>
         ))}
       </span>
       <span className="body">{terms ? highlight(passage, terms) : passage}</span>
-      <span className="meta">{post.commentCount ? plural(post.commentCount, 'comment') : 'No comments'}</span>
+      <span className="pr-foot">
+        <IconChat /> {post.commentCount ? plural(post.commentCount, 'comment') : 'No comments'}
+      </span>
     </button>
   );
 }

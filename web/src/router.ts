@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
 
 export type Route =
   | { name: 'ask' }
@@ -67,10 +68,26 @@ const listeners = new Set<() => void>();
 
 export function navigate(route: Route, options: { replace?: boolean; search?: string; keepScroll?: boolean } = {}): void {
   const url = routePath(route) + (options.search ? `?${options.search}` : '');
-  if (options.replace) window.history.replaceState(null, '', url);
-  else window.history.pushState(null, '', url);
-  listeners.forEach((listener) => listener());
-  if (!options.keepScroll) window.scrollTo({ top: 0 });
+  const commit = () => {
+    if (options.replace) window.history.replaceState(null, '', url);
+    else window.history.pushState(null, '', url);
+    listeners.forEach((listener) => listener());
+    if (!options.keepScroll) window.scrollTo({ top: 0 });
+  };
+  if (!options.replace && changesPage(parseRoute(window.location.pathname), route) && canTransition()) document.startViewTransition(() => flushSync(commit));
+  else commit();
+}
+
+/** A new page, not a panel opening over the same one, gets the cross-fade. */
+function changesPage(from: Route, to: Route): boolean {
+  if (from.name !== to.name) return true;
+  if (from.name === 'guide' && to.name === 'guide') return from.section !== to.section;
+  if ((from.name === 'post' && to.name === 'post') || (from.name === 'question' && to.name === 'question')) return from.id !== to.id;
+  return false;
+}
+
+function canTransition(): boolean {
+  return typeof document.startViewTransition === 'function' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 export function useRoute(): { route: Route; search: URLSearchParams } {
@@ -89,7 +106,7 @@ export function useRoute(): { route: Route; search: URLSearchParams } {
 }
 
 /** Intercepts plain <a href="/..."> clicks so they use the in-app router. */
-export function onLinkClick(event: React.MouseEvent<HTMLAnchorElement>): void {
+export function onLinkClick(event: React.MouseEvent<HTMLAnchorElement | SVGAElement>): void {
   if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   const href = event.currentTarget.getAttribute('href');
   if (!href || !href.startsWith('/') || href.startsWith('//')) return;

@@ -7,9 +7,11 @@ interface MarkdownProps {
   /** Hover with the pill's position, so a preview can be anchored to it. */
   onCitationHover?(n: number | null, rect?: DOMRect): void;
   hot?: number | null;
+  /** The kind of source behind a citation number, so its pill takes that source's line colour. */
+  citeKind?(n: number): string | undefined;
 }
 
-export function Markdown({ text, onCitation, onCitationHover, hot }: MarkdownProps) {
+export function Markdown({ text, onCitation, onCitationHover, hot, citeKind }: MarkdownProps) {
   const blocks = parseBlocks(text);
   return (
     <>
@@ -17,12 +19,12 @@ export function Markdown({ text, onCitation, onCitationHover, hot }: MarkdownPro
         const key = `${block.type}-${index}`;
         switch (block.type) {
           case 'heading':
-            return <h3 key={key}>{inline(block.text, { onCitation, onCitationHover, hot })}</h3>;
+            return <h3 key={key}>{inline(block.text, { onCitation, onCitationHover, hot, citeKind })}</h3>;
           case 'ul':
             return (
               <ul key={key}>
                 {block.items.map((item, i) => (
-                  <li key={i}>{inline(item, { onCitation, onCitationHover, hot })}</li>
+                  <li key={i}>{inline(item, { onCitation, onCitationHover, hot, citeKind })}</li>
                 ))}
               </ul>
             );
@@ -30,14 +32,14 @@ export function Markdown({ text, onCitation, onCitationHover, hot }: MarkdownPro
             return (
               <ol key={key} start={block.start}>
                 {block.items.map((item, i) => (
-                  <li key={i}>{inline(item, { onCitation, onCitationHover, hot })}</li>
+                  <li key={i}>{inline(item, { onCitation, onCitationHover, hot, citeKind })}</li>
                 ))}
               </ol>
             );
           case 'quote':
-            return <blockquote key={key}>{inline(block.text, { onCitation, onCitationHover, hot })}</blockquote>;
+            return <blockquote key={key}>{inline(block.text, { onCitation, onCitationHover, hot, citeKind })}</blockquote>;
           default:
-            return <p key={key}>{inline(block.text, { onCitation, onCitationHover, hot })}</p>;
+            return <p key={key}>{inline(block.text, { onCitation, onCitationHover, hot, citeKind })}</p>;
         }
       })}
     </>
@@ -109,6 +111,7 @@ interface InlineOptions {
   onCitation?(n: number): void;
   onCitationHover?(n: number | null, rect?: DOMRect): void;
   hot?: number | null;
+  citeKind?(n: number): string | undefined;
 }
 
 const INLINE = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*\s][^*]*\*|_[^_\s][^_]*_|\[(?:\d+)(?:\]\[\d+)*\]|\[\d+(?:,\s*\d+)+\]|\[[^\]]+\]\((?:https?:\/\/)[^)\s]+\)|https?:\/\/[^\s)]+)/g;
@@ -134,6 +137,7 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
             key={key++}
             type="button"
             className={`cite${options.hot === n ? ' hot' : ''}`}
+            data-kind={options.citeKind?.(n) ?? 'archive'}
             aria-label={`Source ${n}`}
             onClick={() => options.onCitation?.(n)}
             onMouseEnter={(event) => options.onCitationHover?.(n, event.currentTarget.getBoundingClientRect())}

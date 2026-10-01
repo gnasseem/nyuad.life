@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { askStream } from '../api';
+import { api, askStream, type Announcement, type GuideCourse, type Listing, type MarketSummary, type QuestionWithAnswers, type SourceCard } from '../api';
+import { Flap } from '../components/Flap';
 import { RedirectCard } from '../components/RedirectCard';
-import { SourceRow } from '../components/SourceRow';
+import { KIND_LABEL, SourceRow } from '../components/SourceRow';
 import { useApp } from '../context';
-import { IconArrow, IconCheck, IconChevron, IconCopy, IconPlus, IconSend, IconStop } from '../icons';
+import { formatTime, plural, relativeDate, startsIn, topicLabel } from '../format';
+import { IconArrow, IconCheck, IconChevron, IconCopy, IconPlus, IconStop } from '../icons';
+import { Mark } from '../components/Logo';
 import { Markdown } from '../markdown';
-import { navigate } from '../router';
-import { loadConversations, saveConversation, toHistory, uid, type Conversation, type Message } from '../store';
+import { useAbuDhabiTime, useNow } from '../motion';
+import { navigate, onLinkClick } from '../router';
+import { askerKey, loadConversations, onConversationsChange, saveConversation, toHistory, uid, type Conversation, type Message } from '../store';
 
 interface Props {
   resumeId?: string;
@@ -20,15 +24,24 @@ interface Hot {
 }
 
 const CONFIDENCE_LABEL = { medium: 'Partly covered', low: 'Thinly sourced' };
+const STAGES: Array<{ label: string; match: RegExp }> = [
+  { label: 'Reading', match: /^reading/i },
+  { label: 'Searching', match: /^search/i },
+  { label: 'Ranking sources', match: /^rank/i },
+  { label: 'Writing', match: /^writ/i },
+];
+const KIND_COLOR: Record<SourceCard['kind'], string> = { archive: 'var(--cobalt)', official: 'var(--cobalt)', board: 'var(--green)', announcement: 'var(--amber)' };
 
 export function AskPage({ resumeId }: Props) {
   const { home, health, toast, askPrefill, setAskPrefill, setBoardPrefill } = useApp();
   const [conversation, setConversation] = useState<Conversation>(() => (resumeId && loadConversations().find((entry) => entry.id === resumeId)) || fresh());
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
+  const [departing, setDeparting] = useState(0);
   const [hot, setHot] = useState<Hot | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [copied, setCopied] = useState<string | null>(null);
+  const [railId, setRailId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -43,6 +56,7 @@ export function AskPage({ resumeId }: Props) {
       if (saved) {
         conversationRef.current = saved;
         setConversation(saved);
+        setRailId(null);
       }
     } else if (current.messages.length > 0) {
       abortRef.current?.abort();
@@ -50,6 +64,7 @@ export function AskPage({ resumeId }: Props) {
       setConversation(conversationRef.current);
       setInput('');
       setExpanded(new Set());
+      setRailId(null);
     }
   }, [resumeId]);
 
@@ -78,10 +93,12 @@ export function AskPage({ resumeId }: Props) {
       const current = conversationRef.current;
       const history = toHistory(current.messages);
       const userMessage: Message = { id: uid(), role: 'user', content: question };
-      const modelMessage: Message = { id: uid(), role: 'model', content: '', pending: true, status: 'Starting' };
+      const modelMessage: Message = { id: uid(), role: 'model', content: '', pending: true, status: 'Reading the question' };
       update((c) => ({ ...c, title: c.title || question.slice(0, 80), updatedAt: new Date().toISOString(), messages: [...c.messages, userMessage, modelMessage] }));
       setInput('');
       setRunning(true);
+      setDeparting((n) => n + 1);
+      setRailId(modelMessage.id);
       const controller = new AbortController();
       abortRef.current = controller;
       try {
@@ -139,6 +156,35 @@ export function AskPage({ resumeId }: Props) {
     element.style.height = `${Math.min(220, element.scrollHeight)}px`;
   }, [input]);
 
+  const empty = conversation.messages.length === 0;
+  useEffect(() => {
+    document.documentElement.toggleAttribute('data-conv', !empty);
+    return () => document.documentElement.removeAttribute('data-conv');
+  }, [empty]);
+
+  // The source rail follows the answer you are reading: the model turn nearest the middle of the screen.
+  useEffect(() => {
+    if (empty) return;
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const turns = [...document.querySelectorAll<HTMLElement>('.turn.model[data-id]')];
+        const middle = window.innerHeight * 0.45;
+        let best: HTMLElement | undefined;
+        for (const turn of turns) if (turn.getBoundingClientRect().top < middle) best = turn;
+        const id = (best ?? turns[0])?.dataset.id;
+        if (id) setRailId((current) => (current === id ? current : id));
+      });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.cancelAnimationFrame(frame);
+    };
+  }, [empty]);
+
   const stop = () => abortRef.current?.abort();
 
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -166,13 +212,24 @@ export function AskPage({ resumeId }: Props) {
       return next;
     });
 
+  const wide = () => window.matchMedia('(min-width: 1241px)').matches;
+
   const jumpToSource = (messageId: string, n: number) => {
-    setExpanded((current) => new Set(current).add(messageId));
+    setRailId(messageId);
+    if (!wide()) setExpanded((current) => new Set(current).add(messageId));
     setHot({ messageId, n });
     window.setTimeout(() => {
-      document.getElementById(`source-${messageId}-${n}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.getElementById(`${wide() ? 'rail' : 'source'}-${messageId}-${n}`)?.scrollIntoView({ behavior: 'smooth', block: wide() ? 'nearest' : 'center' });
     }, 30);
     window.setTimeout(() => setHot((current) => (current?.messageId === messageId && current.n === n && !current.rect ? null : current)), 1800);
+  };
+
+  const hoverCitation = (messageId: string, n: number | null, rect?: DOMRect) => {
+    if (n === null) return setHot(null);
+    setRailId(messageId);
+    // With the rail on screen the source lights up there; without it, a preview floats by the pill.
+    setHot({ messageId, n, rect: wide() ? undefined : rect });
+    if (wide()) document.getElementById(`rail-${messageId}-${n}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   };
 
   const askStudents = (question: string) => {
@@ -180,7 +237,6 @@ export function AskPage({ resumeId }: Props) {
     navigate({ name: 'questions' });
   };
 
-  const empty = conversation.messages.length === 0;
   const popover = useMemo(() => {
     if (!hot?.rect) return null;
     const message = conversation.messages.find((entry) => entry.id === hot.messageId);
@@ -206,7 +262,7 @@ export function AskPage({ resumeId }: Props) {
         value={input}
         onChange={(event) => setInput(event.target.value)}
         onKeyDown={onKey}
-        placeholder={empty ? 'Ask a question' : 'Ask a follow-up'}
+        placeholder={empty ? 'Ask about a course, a professor, housing, a visa…' : 'Ask a follow-up'}
         maxLength={600}
         aria-label="Your question"
         autoFocus={window.matchMedia('(min-width: 900px)').matches}
@@ -216,8 +272,8 @@ export function AskPage({ resumeId }: Props) {
           <IconStop />
         </button>
       ) : (
-        <button type="button" className="send" onClick={() => void send(input)} disabled={!input.trim()} aria-label="Send">
-          <IconSend />
+        <button key={departing} type="button" className={`send${departing ? ' depart' : ''}`} onClick={() => void send(input)} disabled={!input.trim()} aria-label="Ask">
+          <IconArrow />
         </button>
       )}
     </div>
@@ -225,120 +281,491 @@ export function AskPage({ resumeId }: Props) {
 
   if (empty) {
     return (
-      <div className="page ask">
-        <div className="hero">
-          <h1 className="greeting">
-            Ask <i>anything</i> about NYUAD.
-          </h1>
-          {composer}
-          {home && home.suggestions.length > 0 && (
-            <div className="starters">
-              {home.suggestions.slice(0, 3).map((suggestion) => (
-                <button key={suggestion.question} type="button" className="starter" onClick={() => void send(suggestion.question)}>
-                  {suggestion.question}
-                  <IconArrow />
-                </button>
-              ))}
-            </div>
-          )}
-          {health && !health.gemini.configured && <p className="ask-note">Answers are unavailable right now. The guide and the rest of the site still work.</p>}
-        </div>
-      </div>
+      <Home
+        composer={composer}
+        suggestions={home?.suggestions ?? []}
+        onSuggestion={(question) => void send(question)}
+        answersOff={Boolean(health && !health.gemini.configured)}
+      />
     );
   }
 
+  const railMessage = conversation.messages.find((message) => message.id === railId && message.role === 'model') ?? [...conversation.messages].reverse().find((message) => message.role === 'model');
+  const railSources = railMessage?.sources ?? [];
+
   return (
-    <div className="page ask">
-      <div className="conversation-head">
-        <button type="button" className="btn ghost sm" onClick={() => navigate({ name: 'ask' })}>
-          <IconPlus /> New question
-        </button>
-      </div>
-      <div className="thread">
-        {conversation.messages.map((message) =>
-          message.role === 'user' ? (
-            <div key={message.id} className="turn user">
-              {message.content}
-            </div>
-          ) : (
-            <div key={message.id} className="turn model">
-              {message.status && (
-                <div className="status-line">
-                  <span className="spinner" /> <span key={message.status} className="status-text">{message.status}</span>
-                </div>
-              )}
-              {message.redirect && <RedirectCard redirect={message.redirect} />}
-              {message.content && (
-                <div className="answer">
-                  <Markdown
-                    text={message.content}
-                    hot={hot?.messageId === message.id ? hot.n : null}
-                    onCitation={(n) => jumpToSource(message.id, n)}
-                    onCitationHover={(n, rect) => setHot(n === null ? null : { messageId: message.id, n, rect })}
-                  />
-                  {message.pending && <span className="cursor" />}
-                </div>
-              )}
-              {message.error && <div className="alert error">{message.error}</div>}
-              {!message.pending && message.content && (
-                <div className="answer-foot">
-                  {message.confidence && message.confidence.level !== 'high' && (
-                    <span className={`pill confidence ${message.confidence.level}`} title={message.confidence.reason || undefined}>
-                      <span className="dot" /> {CONFIDENCE_LABEL[message.confidence.level]}
-                    </span>
-                  )}
-                  {message.sources && message.sources.length > 0 && (
-                    <button type="button" className={`foot-btn${expanded.has(message.id) ? ' open' : ''}`} onClick={() => toggleSources(message.id)} aria-expanded={expanded.has(message.id)}>
-                      {message.sources.length} {message.sources.length === 1 ? 'source' : 'sources'} <IconChevron className="chev" />
-                    </button>
-                  )}
-                  <button type="button" className="foot-btn" onClick={() => void copy(message.id, message.content)}>
-                    {copied === message.id ? (
-                      <>
-                        <IconCheck className="pop-in" /> Copied
-                      </>
-                    ) : (
-                      <>
-                        <IconCopy /> Copy
-                      </>
+    <div className="conv">
+      <div className="conv-main">
+        <div className="conv-head">
+          <button type="button" className="btn ghost sm" onClick={() => navigate({ name: 'ask' })}>
+            <IconPlus /> New question
+          </button>
+        </div>
+        <div className="thread">
+          {conversation.messages.map((message) =>
+            message.role === 'user' ? (
+              <div key={message.id} className="turn user">
+                {message.content}
+              </div>
+            ) : (
+              <div key={message.id} data-id={message.id} className={`turn model${message.pending && !message.content ? ' pending' : ''}`} style={{ '--route': routeGradient(message.sources) } as React.CSSProperties}>
+                {message.status && <Route status={message.status} />}
+                {message.redirect && <RedirectCard redirect={message.redirect} />}
+                {message.content && (
+                  <div className="answer">
+                    <Markdown
+                      text={message.content}
+                      hot={hot?.messageId === message.id ? hot.n : null}
+                      citeKind={(n) => message.sources?.find((source) => source.n === n)?.kind}
+                      onCitation={(n) => jumpToSource(message.id, n)}
+                      onCitationHover={(n, rect) => hoverCitation(message.id, n, rect)}
+                    />
+                    {message.pending && <span className="cursor" />}
+                  </div>
+                )}
+                {message.error && <div className="alert error">{message.error}</div>}
+                {!message.pending && message.content && (
+                  <div className="answer-foot">
+                    {message.confidence && message.confidence.level !== 'high' && (
+                      <span className={`pill confidence ${message.confidence.level}`} title={message.confidence.reason || undefined}>
+                        <span className="dot" /> {CONFIDENCE_LABEL[message.confidence.level]}
+                      </span>
                     )}
-                  </button>
-                  {(!message.confidence || message.confidence.level !== 'high') && (
-                    <button type="button" className="foot-btn" onClick={() => askStudents(questionBefore(conversation.messages, message.id))}>
-                      Ask students <IconArrow />
+                    {message.sources && message.sources.length > 0 && (
+                      <button type="button" className={`foot-btn${expanded.has(message.id) ? ' open' : ''}`} onClick={() => toggleSources(message.id)} aria-expanded={expanded.has(message.id)}>
+                        {plural(message.sources.length, 'source')} <IconChevron className="chev" />
+                      </button>
+                    )}
+                    <button type="button" className="foot-btn" onClick={() => void copy(message.id, message.content)}>
+                      {copied === message.id ? (
+                        <>
+                          <IconCheck className="pop-in" /> Copied
+                        </>
+                      ) : (
+                        <>
+                          <IconCopy /> Copy
+                        </>
+                      )}
                     </button>
-                  )}
-                </div>
-              )}
-              {message.sources && message.sources.length > 0 && (
-                <div className={`collapse${expanded.has(message.id) ? ' open' : ''}`} inert={!expanded.has(message.id)}>
-                  <div>
-                    <div className="sources">
-                      {message.sources.map((source) => (
-                        <SourceRow key={source.n} id={`source-${message.id}-${source.n}`} source={source} hot={hot?.messageId === message.id && hot.n === source.n} onHover={(n) => setHot(n === null ? null : { messageId: message.id, n })} />
-                      ))}
+                    {(!message.confidence || message.confidence.level !== 'high') && (
+                      <button type="button" className="foot-btn" onClick={() => askStudents(questionBefore(conversation.messages, message.id))}>
+                        Ask students <IconArrow />
+                      </button>
+                    )}
+                  </div>
+                )}
+                {message.sources && message.sources.length > 0 && (
+                  <div className={`collapse${expanded.has(message.id) ? ' open' : ''}`} inert={!expanded.has(message.id)}>
+                    <div>
+                      <div className="sources">
+                        {message.sources.map((source) => (
+                          <SourceRow key={source.n} id={`source-${message.id}-${source.n}`} source={source} hot={hot?.messageId === message.id && hot.n === source.n} onHover={(n) => setHot(n === null ? null : { messageId: message.id, n })} />
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
-              {!message.pending && message.followups && message.followups.length > 0 && (
-                <div className="followups">
-                  {message.followups.map((question) => (
-                    <button key={question} type="button" className="followup" onClick={() => void send(question)} disabled={running}>
-                      {question}
-                      <IconArrow />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ),
-        )}
-        <div ref={endRef} />
+                )}
+                {!message.pending && message.followups && message.followups.length > 0 && (
+                  <div className="followups">
+                    {message.followups.map((question) => (
+                      <button key={question} type="button" className="followup" onClick={() => void send(question)} disabled={running}>
+                        {question}
+                        <IconArrow />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ),
+          )}
+          <div ref={endRef} />
+        </div>
+        <div className="composer-wrap">{composer}</div>
       </div>
-      <div className="composer-wrap">{composer}</div>
+      <aside className="conv-rail" aria-label="Sources">
+        <h2>
+          Sources {railSources.length > 0 && <span>{plural(railSources.length, 'stop')}</span>}
+        </h2>
+        {railSources.length > 0 ? (
+          <div className="rail-sources">
+            {railSources.map((source) => (
+              <SourceRow
+                key={`${railMessage!.id}-${source.n}`}
+                id={`rail-${railMessage!.id}-${source.n}`}
+                source={source}
+                hot={hot?.messageId === railMessage!.id && hot.n === source.n}
+                onHover={(n) => setHot(n === null ? null : { messageId: railMessage!.id, n })}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="rail-empty">{railMessage?.pending ? 'Looking through the group, the official pages and student answers.' : 'This answer did not cite anything.'}</p>
+        )}
+        <div className="kind-key">
+          {(['official', 'archive', 'board', 'announcement'] as const).map((kind) => (
+            <span key={kind} data-kind={kind}>
+              <i /> {KIND_LABEL[kind]}
+            </span>
+          ))}
+        </div>
+      </aside>
       {popover}
     </div>
+  );
+}
+
+/** The four stages the server reports, as stops on a short line that fills as the answer is put together. */
+function Route({ status }: { status: string }) {
+  const stage = STAGES.findIndex((entry) => entry.match.test(status));
+  return (
+    <div className="route" role="status" aria-label={status}>
+      {STAGES.map((entry, index) => (
+        <span key={entry.label} style={{ display: 'contents' }}>
+          {index > 0 && <span className={`route-seg${stage >= index ? ' done' : ''}`} />}
+          <span className={`route-stop${stage > index ? ' done' : stage === index ? ' now' : ''}`}>
+            <i /> {entry.label}
+          </span>
+        </span>
+      ))}
+      {stage < 0 && <span className="route-note">{status}</span>}
+    </div>
+  );
+}
+
+/** The line beside an answer, coloured by the lines its sources came from, in the order they are numbered. */
+function routeGradient(sources: SourceCard[] | undefined): string | undefined {
+  if (!sources || sources.length === 0) return undefined;
+  const step = 100 / sources.length;
+  return `linear-gradient(${sources.map((source, index) => `${KIND_COLOR[source.kind]} ${index * step}% ${(index + 1) * step}%`).join(', ')})`;
+}
+
+interface HomeData {
+  notices: Announcement[] | null;
+  rides: Listing[] | null;
+  listings: number;
+  market: MarketSummary | null;
+  answered: QuestionWithAnswers[] | null;
+  open: number | null;
+  courses: GuideCourse[] | null;
+}
+
+function useHomeData(): HomeData {
+  const { boardProblem } = useApp();
+  const [data, setData] = useState<HomeData>({ notices: null, rides: null, listings: 0, market: null, answered: null, open: null, courses: null });
+  useEffect(() => {
+    const set = (patch: Partial<HomeData>) => setData((current) => ({ ...current, ...patch }));
+    if (!boardProblem) {
+      api.board
+        .announcements()
+        .then((result) => set({ notices: result.announcements }))
+        .catch(() => set({ notices: [] }));
+      api.board
+        .listings(askerKey())
+        .then((result) => {
+          const now = Date.now();
+          set({
+            rides: result.listings.filter((listing) => listing.kind === 'ride' && listing.happensAt && Date.parse(listing.happensAt) > now - 30 * 60_000).sort((a, b) => a.happensAt!.localeCompare(b.happensAt!)),
+            listings: result.listings.filter((listing) => listing.kind !== 'ride').length,
+          });
+        })
+        .catch(() => set({ rides: [] }));
+      api.board
+        .offers(askerKey())
+        .then((result) => set({ market: result.market }))
+        .catch(() => set({ market: null }));
+      api.board
+        .recent()
+        .then((result) => set({ answered: result.questions }))
+        .catch(() => set({ answered: [] }));
+      api.board
+        .stats()
+        .then((result) => set({ open: result.open }))
+        .catch(() => set({ open: null }));
+    }
+    api.guide
+      .courses()
+      .then((result) => set({ courses: [...result.items].filter((course) => course.threads > 0).sort((a, b) => b.threads - a.threads).slice(0, 4) }))
+      .catch(() => set({ courses: [] }));
+  }, [boardProblem]);
+  return data;
+}
+
+function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: ReactNode; suggestions: Array<{ topic: string; question: string }>; onSuggestion(question: string): void; answersOff: boolean }) {
+  const { boardProblem } = useApp();
+  const data = useHomeData();
+  const clock = useAbuDhabiTime();
+  const [recent, setRecent] = useState(() => loadConversations().slice(0, 4));
+  const [hotLine, setHotLine] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => onConversationsChange(() => setRecent(loadConversations().slice(0, 4))), []);
+  useEffect(() => {
+    document.documentElement.setAttribute('data-home', '');
+    return () => document.documentElement.removeAttribute('data-home');
+  }, []);
+
+  const now = useNow();
+  const upcoming = (data.notices ?? []).filter((entry) => !entry.startsAt || Date.parse(entry.startsAt) > now.getTime() - 3 * 3_600_000).slice(0, 4);
+  const offline = boardProblem ? <p className="stops-note">The board is not running right now.</p> : null;
+
+  return (
+    <div className="home" ref={rootRef}>
+      <section className="home-center">
+        <div className="central" data-anchor="hub">
+          <div className="central-head">
+            <span className="central-ring" aria-hidden="true">
+              <Mark />
+            </span>
+            <h1 className="central-name">Central</h1>
+            <span className="central-ar" lang="ar" dir="rtl">
+              المركز
+            </span>
+            <span className="central-clock" title="Time in Abu Dhabi">
+              <Flap text={clock} />
+              <small>Abu Dhabi</small>
+            </span>
+          </div>
+          <p className="central-line">Every line meets here. Ask about NYUAD and the answer comes from the group's threads, the official pages and other students, with each source shown.</p>
+          {composer}
+          <div className="composer-hints">
+            <span>
+              <kbd>↵</kbd> to ask, <kbd>⇧</kbd>
+              <kbd>↵</kbd> for a new line
+            </span>
+            <span>
+              <kbd>⌘K</kbd> to go anywhere
+            </span>
+          </div>
+        </div>
+        {answersOff && <p className="ask-note">Answers are paused right now. The guide, the board and the market still work.</p>}
+        {suggestions.length > 0 && (
+          <div className="journeys">
+            <h2>Asked a lot this time of year</h2>
+            {suggestions.slice(0, 3).map((suggestion) => (
+              <button key={suggestion.question} type="button" className="journey" onClick={() => onSuggestion(suggestion.question)}>
+                <span className="tag">{topicLabel(suggestion.topic)}</span>
+                {suggestion.question}
+                <IconArrow />
+              </button>
+            ))}
+          </div>
+        )}
+        {recent.length > 0 && (
+          <div className="home-recent">
+            <h2>Pick up where you left off</h2>
+            {recent.map((conversation) => (
+              <a key={conversation.id} href={`/?c=${conversation.id}`} onClick={onLinkClick}>
+                <span>{conversation.title}</span>
+                <small>{relativeDate(conversation.updatedAt)}</small>
+              </a>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <aside className="home-rail left" aria-label="On campus">
+        <RailSection line="notices" title="On campus" href="/notices" more="All notices" onHot={setHotLine}>
+          {offline ??
+            (data.notices === null ? (
+              <Loading />
+            ) : upcoming.length === 0 ? (
+              <p className="stops-note">Nothing posted yet. Events, deadlines and openings show up here.</p>
+            ) : (
+              upcoming.map((entry, index) => (
+                <a key={entry.id} className="stn" href="/notices" onClick={onLinkClick} style={{ '--i': index } as React.CSSProperties}>
+                  <span className="when">{noticeWhen(entry, now)}</span>
+                  <span className="what">{entry.title}</span>
+                  {entry.location && <span className="where">{entry.location}</span>}
+                </a>
+              ))
+            ))}
+        </RailSection>
+        <RailSection line="market" title="Leaving soon" href="/market/rides" more="Rides" onHot={setHotLine}>
+          {offline ??
+            (data.rides === null ? (
+              <Loading />
+            ) : (
+              <>
+                {data.rides.length === 0 ? (
+                  <p className="stops-note">No rides posted. Heading out? Post one and split the fare.</p>
+                ) : (
+                  data.rides.slice(0, 3).map((ride, index) => {
+                    const soon = startsIn(new Date(ride.happensAt!), now, 60);
+                    return (
+                      <a key={ride.id} className="stn" href="/market/rides" onClick={onLinkClick} style={{ '--i': index } as React.CSSProperties}>
+                        <span className="when">
+                          {formatTime(ride.happensAt!)}
+                          {soon ? ` · ${soon.live ? 'leaving now' : soon.text.toLowerCase()}` : ''}
+                        </span>
+                        <span className="what">To {ride.destination}</span>
+                        <span className="where">{[ride.place && `From ${ride.place}`, ride.seats ? plural(ride.seats, 'seat') : ''].filter(Boolean).join(', ')}</span>
+                      </a>
+                    );
+                  })
+                )}
+                {data.market && data.market.open > 0 && (
+                  <a href="/market/falcons" onClick={onLinkClick} style={{ '--i': 4, paddingTop: 10 } as React.CSSProperties}>
+                    <div className="rate-board" title="Falcons, AED per Falcon">
+                      <div>
+                        <b>
+                          <Flap text={data.market.bestAsk === null ? '–' : data.market.bestAsk.toFixed(2)} />
+                        </b>
+                        <span>Falcons from</span>
+                      </div>
+                      <div>
+                        <b>
+                          <Flap text={data.market.bestBid === null ? '–' : data.market.bestBid.toFixed(2)} />
+                        </b>
+                        <span>Buyers pay</span>
+                      </div>
+                    </div>
+                  </a>
+                )}
+              </>
+            ))}
+        </RailSection>
+      </aside>
+
+      <aside className="home-rail right" aria-label="Students and the guide">
+        <RailSection line="questions" title="Students asking" href="/questions?tab=help" more={data.open ? `${data.open} waiting` : 'Answer'} onHot={setHotLine}>
+          {offline ??
+            (data.answered === null ? (
+              <Loading />
+            ) : data.answered.length === 0 ? (
+              <p className="stops-note">{data.open ? `${plural(data.open, 'question')} waiting for someone who knows.` : 'When the archive falls short, questions go to students here.'}</p>
+            ) : (
+              data.answered.slice(0, 3).map((question, index) => (
+                <a key={question.id} className="stn" href={`/questions/${question.id}`} onClick={onLinkClick} style={{ '--i': index } as React.CSSProperties}>
+                  <span className="when">{plural(question.answers.length, 'answer')}</span>
+                  <span className="what">{question.text}</span>
+                  <span className="where">{relativeDate(question.createdAt)}</span>
+                </a>
+              ))
+            ))}
+        </RailSection>
+        <RailSection line="guide" title="Most discussed" href="/guide/courses" more="All courses" onHot={setHotLine}>
+          {data.courses === null ? (
+            <Loading />
+          ) : data.courses.length === 0 ? (
+            <p className="stops-note">Every course in the bulletin, with what students say about it.</p>
+          ) : (
+            data.courses.map((course, index) => (
+              <a key={course.code} className="stn" href={`/guide/courses/${encodeURIComponent(course.code)}`} onClick={onLinkClick} style={{ '--i': index } as React.CSSProperties}>
+                <span className="when">{course.code}</span>
+                <span className="what">{course.title || 'Mentioned in the group'}</span>
+                <span className="where">{plural(course.threads, 'thread')}</span>
+              </a>
+            ))
+          )}
+        </RailSection>
+      </aside>
+
+      <HomeLines root={rootRef} hot={hotLine} deps={[data, recent.length, suggestions.length]} />
+    </div>
+  );
+}
+
+function Loading() {
+  return (
+    <div className="stops-note">
+      <span className="spinner" />
+    </div>
+  );
+}
+
+function noticeWhen(entry: Announcement, now: Date): string {
+  if (!entry.startsAt) return 'Open';
+  const when = new Date(entry.startsAt);
+  const soon = startsIn(when, now);
+  if (soon?.live) return 'Now';
+  const day = when.toDateString() === now.toDateString() ? 'Today' : when.toDateString() === new Date(now.getTime() + 86_400_000).toDateString() ? 'Tomorrow' : when.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  const allDay = when.getHours() === 0 && when.getMinutes() === 0;
+  return allDay ? day : `${day} ${formatTime(entry.startsAt)}`;
+}
+
+function RailSection({ line, title, href, more, onHot, children }: { line: string; title: string; href: string; more: string; onHot(line: string | null): void; children: ReactNode }) {
+  return (
+    <section className="rail-sec" data-line={line} onMouseEnter={() => onHot(line)} onMouseLeave={() => onHot(null)}>
+      <div className="rail-head">
+        <span className="rail-ring" data-ring={line} />
+        <h2>{title}</h2>
+        <a href={href} onClick={onLinkClick}>
+          {more}
+        </a>
+      </div>
+      <div className="stations in-plate grow">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * The lines from the interchange to each rail section, measured from the page so they meet the rings exactly. Lines
+ * leave the hub in pairs, the nearer section's line runs straight across and the further one drops down the gap
+ * between the columns, bending at 45° like a printed diagram. Trains run in towards the hub now and then.
+ */
+function HomeLines({ root, hot, deps }: { root: React.RefObject<HTMLDivElement | null>; hot: string | null; deps: unknown[] }) {
+  const [paths, setPaths] = useState<Array<{ line: string; d: string; dur: number; delay: number }>>([]);
+
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    const measure = () => {
+      if (!window.matchMedia('(min-width: 1241px)').matches) return setPaths([]);
+      const box = element.getBoundingClientRect();
+      const rect = (selector: string) => element.querySelector(selector)?.getBoundingClientRect();
+      const hub = rect('[data-anchor="hub"]');
+      const head = rect('.central-head');
+      const center = rect('.home-center');
+      if (!hub || !head || !center) return;
+      const hy = head.top + head.height / 2 - box.top;
+      const edge = { left: hub.left - box.left, right: hub.right - box.left };
+      const next: Array<{ line: string; d: string; dur: number; delay: number }> = [];
+      const sides: Array<{ dir: -1 | 1; lines: string[]; rail: DOMRect | undefined }> = [
+        { dir: -1, lines: ['notices', 'market'], rail: rect('.home-rail.left') },
+        { dir: 1, lines: ['questions', 'guide'], rail: rect('.home-rail.right') },
+      ];
+      for (const side of sides) {
+        if (!side.rail) continue;
+        const gap = side.dir < 0 ? (side.rail.right + center.left) / 2 - box.left : (center.right + side.rail.left) / 2 - box.left;
+        side.lines.forEach((line, index) => {
+          const ring = rect(`[data-ring="${line}"]`);
+          if (!ring) return;
+          const rx = ring.left + ring.width / 2 - box.left;
+          const ry = ring.top + ring.height / 2 - box.top;
+          const y0 = hy + (index === 0 ? -5 : 5);
+          const sx = side.dir < 0 ? edge.left : edge.right;
+          const c = 22;
+          let points: Array<[number, number]>;
+          if (index === 0) {
+            const dy = ry - y0;
+            const jogStart = rx - side.dir * (Math.abs(dy) + 28);
+            points = Math.abs(dy) < 2 ? [[sx, y0], [rx, y0]] : [[sx, y0], [jogStart, y0], [jogStart + side.dir * Math.abs(dy), ry], [rx, ry]];
+          } else {
+            points = [[sx, y0], [gap - side.dir * c, y0], [gap, y0 + c], [gap, ry - c], [gap + side.dir * c, ry], [rx, ry]];
+          }
+          next.push({ line, d: `M ${points.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(' L ')}`, dur: 6 + index * 2.5 + (side.dir > 0 ? 1.3 : 0), delay: 1.4 + next.length * 0.9 });
+        });
+      }
+      setPaths(next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    element.querySelectorAll('.home-rail, .home-center').forEach((node) => observer.observe(node));
+    void document.fonts?.ready.then(measure);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+
+  if (paths.length === 0) return null;
+  return (
+    <svg className="home-lines" aria-hidden="true" data-hot={hot ?? undefined}>
+      {paths.map((path, index) => (
+        <path key={path.line} className="hl draw" data-line={path.line} d={path.d} pathLength={1} style={{ animationDelay: `${index * 0.12}s` }} />
+      ))}
+      {paths.map((path) => (
+        <path key={`t-${path.line}`} className="hl-train" d={path.d} pathLength={1} style={{ '--dur': `${path.dur}s`, '--delay': `${path.delay}s` } as React.CSSProperties} />
+      ))}
+    </svg>
   );
 }
 

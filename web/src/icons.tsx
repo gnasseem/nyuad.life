@@ -2,10 +2,17 @@ import type { SVGProps } from 'react';
 
 const base = (props: SVGProps<SVGSVGElement>) => ({ viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true, ...props });
 
-export const IconAsk = (p: SVGProps<SVGSVGElement>) => (
+export const IconSearch = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
     <circle cx="11" cy="11" r="6.5" />
     <path d="m20 20-4.4-4.4" />
+  </svg>
+);
+/** Ask: an interchange, four lines meeting at one ring. */
+export const IconAsk = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="3.6" />
+    <path d="M12 3v5.4M12 15.6V21M3 12h5.4M15.6 12H21" />
   </svg>
 );
 export const IconQuestions = (p: SVGProps<SVGSVGElement>) => (
@@ -166,5 +173,42 @@ export const IconLink = (p: SVGProps<SVGSVGElement>) => (
 export const IconChat = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
     <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5z" />
+  </svg>
+);
+export const IconClock = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 7.5V12l3 2" />
+  </svg>
+);
+export const IconMap = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M9 4.5 3.5 6.5v13l5.5-2 6 2 5.5-2v-13l-5.5 2z" />
+    <path d="M9 4.5v13M15 6.5v13" />
+  </svg>
+);
+export const IconSeal = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M4 9.5 12 5l8 4.5" />
+    <path d="M6 10v7M10 10v7M14 10v7M18 10v7" />
+    <path d="M4 19.5h16" />
+  </svg>
+);
+export const IconStudent = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <circle cx="9" cy="8.5" r="3.5" />
+    <path d="M2.8 19.5a6.2 6.2 0 0 1 12.4 0" />
+    <path d="M16 5.2a3.5 3.5 0 0 1 0 6.6M18.2 14.2a6.2 6.2 0 0 1 3 5.3" />
+  </svg>
+);
+export const IconTicket = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M4 7.5A1.5 1.5 0 0 1 5.5 6h13A1.5 1.5 0 0 1 20 7.5v2a2.5 2.5 0 0 0 0 5v2a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 16.5v-2a2.5 2.5 0 0 0 0-5z" />
+    <path d="M14 6v12" strokeDasharray="2 2.4" />
+  </svg>
+);
+export const IconBolt = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M13 3 5 13.5h6L10 21l8-10.5h-6z" />
   </svg>
 );

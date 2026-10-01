@@ -306,6 +306,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await response.json()) as T;
 }
 
+const memo = new Map<string, Promise<unknown>>();
+
+/** One request per session for lists that rarely change (the guide index, the course list); a failure is forgotten. */
+function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
+  let hit = memo.get(key) as Promise<T> | undefined;
+  if (!hit) {
+    hit = load().catch((error: unknown) => {
+      memo.delete(key);
+      throw error;
+    });
+    memo.set(key, hit);
+  }
+  return hit;
+}
+
 function post<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 }
@@ -320,6 +335,7 @@ export const api = {
   },
   post: (id: string) => request<{ post: PostDetail; related: PostSummary[] }>(`/api/post?id=${encodeURIComponent(id)}`),
   board: {
+    stats: () => request<{ open: number; answered: number; answers: number; helpers: number }>('/api/board?op=stats'),
     recent: () => request<{ questions: QuestionWithAnswers[] }>('/api/board?op=recent'),
     question: (id: string) => request<{ question: Question; answers: Answer[] }>(`/api/board?op=question&id=${encodeURIComponent(id)}`),
     mine: (key: string) => request<{ questions: QuestionWithAnswers[] }>(`/api/board?op=mine&key=${encodeURIComponent(key)}`),
@@ -342,9 +358,9 @@ export const api = {
     leaderboard: () => request<{ helpers: LeaderboardEntry[] }>('/api/board?op=leaderboard'),
   },
   guide: {
-    sections: () => request<{ official: { available: boolean; pages: number; fetchedAt: string }; sections: GuideSection[] }>('/api/guide'),
+    sections: () => cached('guide', () => request<{ official: { available: boolean; pages: number; fetchedAt: string }; sections: GuideSection[] }>('/api/guide')),
     section: (id: string) => request<{ section: string; label: string; items: GuideItem[] }>(`/api/guide?section=${encodeURIComponent(id)}`),
-    courses: (q = '') => request<{ section: 'courses'; items: GuideCourse[] }>(`/api/guide?section=courses&q=${encodeURIComponent(q)}`),
+    courses: () => cached('courses', () => request<{ section: 'courses'; items: GuideCourse[] }>('/api/guide?section=courses')),
     item: (id: string) => request<GuideDetail>(`/api/guide?item=${encodeURIComponent(id)}`),
     course: (code: string) => request<GuideDetail>(`/api/guide?course=${encodeURIComponent(code)}`),
   },
