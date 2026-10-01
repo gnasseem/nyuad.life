@@ -1,22 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api, type GuideCourse, type GuideDetail, type GuideItem, type GuideSection } from '../api';
 import { PostRow } from '../components/PostRow';
 import { useApp } from '../context';
 import { formatDate, plural } from '../format';
-import { IconBack, IconChevronRight, IconClose, IconExternal } from '../icons';
+import { IconBack, IconChat, IconChevronRight, IconClose, IconExternal } from '../icons';
+import { useLatest, usePresence } from '../motion';
 import { navigate, onLinkClick } from '../router';
+import { ThreadSearch } from './Threads';
 
 interface Props {
   section?: string;
   id?: string;
 }
 
-const CONFIDENCE_LABEL = { high: 'High confidence', medium: 'Medium confidence', low: 'Low confidence' };
+const CONFIDENCE_LABEL = { medium: 'Partly covered', low: 'Thinly sourced' };
 
-/** Official NYUAD pages by section and every course with a code; opening an entry slides in a panel with the summary. */
+/** The group's threads, official NYUAD pages by section and every course with a code; opening an entry slides in a panel with the summary. */
 export function GuidePage({ section, id }: Props) {
+  const { health } = useApp();
   const [index, setIndex] = useState<{ official: { available: boolean }; sections: GuideSection[] } | null>(null);
   const [error, setError] = useState('');
+  const panel = usePresence(Boolean(section && id), 220);
+  const shownId = useLatest(id);
 
   useEffect(() => {
     api.guide
@@ -25,7 +31,7 @@ export function GuidePage({ section, id }: Props) {
       .catch((err) => setError(err instanceof Error ? err.message : 'Could not load the guide.'));
   }, []);
 
-  const closeDetail = () => navigate({ name: 'guide', section }, { keepScroll: true });
+  const closeDetail = useCallback(() => navigate({ name: 'guide', section }, { keepScroll: true }), [section]);
   const current = section ? index?.sections.find((entry) => entry.id === section) : undefined;
 
   return (
@@ -36,13 +42,26 @@ export function GuidePage({ section, id }: Props) {
         </button>
       )}
       <div className="page-head">
-        <h1>{current?.label ?? (section === 'courses' ? 'Courses' : 'Guide')}</h1>
+        <h1>{current?.label ?? (section === 'courses' ? 'Courses' : section === 'threads' ? 'Group threads' : 'Guide')}</h1>
       </div>
       {error && <div className="alert error">{error}</div>}
       {index && !index.official.available && (
         <div className="alert" style={{ marginBottom: 16 }}>
           Official pages have not been crawled on this server yet, so only courses mentioned in threads are listed.
         </div>
+      )}
+      {!section && (
+        <a href="/guide/threads" className="feature-row" onClick={onLinkClick}>
+          <span className="feature-icon">
+            <IconChat />
+          </span>
+          <span className="grow">
+            <span className="title">Group threads</span>
+            <span className="sub">Search the Room of Requirement by keyword, topic or course</span>
+          </span>
+          {health?.archive && <span className="count">{plural(health.archive.posts, 'thread')}</span>}
+          <IconChevronRight className="chev" />
+        </a>
       )}
       {!section && index && (
         <div className="list">
@@ -60,9 +79,10 @@ export function GuidePage({ section, id }: Props) {
         </div>
       )}
       {!section && !index && !error && <div className="skeleton" style={{ height: 240 }} aria-busy="true" />}
+      {section === 'threads' && <ThreadSearch />}
       {section === 'courses' && <CourseList selected={id} />}
-      {section && section !== 'courses' && <SectionList section={section} selected={id} />}
-      {section && id && <Detail section={section} id={id} onClose={closeDetail} />}
+      {section && section !== 'courses' && section !== 'threads' && <SectionList section={section} selected={id} />}
+      {section && panel.mounted && shownId && <Detail section={section} id={shownId} closing={panel.closing} onClose={closeDetail} />}
     </div>
   );
 }
@@ -158,7 +178,7 @@ function SectionList({ section, selected }: { section: string; selected?: string
   );
 }
 
-function Detail({ section, id, onClose }: { section: string; id: string; onClose(): void }) {
+function Detail({ section, id, closing, onClose }: { section: string; id: string; closing: boolean; onClose(): void }) {
   const { setAskPrefill } = useApp();
   const [detail, setDetail] = useState<GuideDetail | null>(null);
   const [error, setError] = useState('');
@@ -174,6 +194,7 @@ function Detail({ section, id, onClose }: { section: string; id: string; onClose
   useEffect(load, [load]);
 
   useEffect(() => {
+    if (closing) return;
     const onKey = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
     document.addEventListener('keydown', onKey);
     const { overflow } = document.body.style;
@@ -182,7 +203,7 @@ function Detail({ section, id, onClose }: { section: string; id: string; onClose
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = overflow;
     };
-  }, [onClose]);
+  }, [onClose, closing]);
 
   const ask = () => {
     if (!detail) return;
@@ -193,8 +214,8 @@ function Detail({ section, id, onClose }: { section: string; id: string; onClose
   const title = detail?.title ?? (section === 'courses' ? id : 'Loading');
   const crumbs = (detail?.breadcrumbs ?? []).filter((crumb) => crumb !== 'Home' && crumb !== title).slice(-2);
   const eyebrow = crumbs.length ? crumbs.join(' / ') : section === 'courses' ? 'Course' : 'Official page';
-  return (
-    <>
+  return createPortal(
+    <div className={closing ? 'closing' : undefined}>
       <div className="drawer-scrim" onClick={onClose} aria-hidden="true" />
       <aside className="drawer" role="dialog" aria-modal="true" aria-label={title}>
         <div className="drawer-head">
@@ -232,7 +253,7 @@ function Detail({ section, id, onClose }: { section: string; id: string; onClose
               {detail.summary ? (
                 <Summary summary={detail.summary} sources={detail.sources} />
               ) : (
-                <div className="alert">{detail.official || detail.threads.length ? 'No summary: no model key is set on this server.' : 'No information for this entry.'}</div>
+                <div className="alert">{detail.official || detail.threads.length ? 'No summary right now. The official text and the threads are below.' : 'Nothing is known about this one yet.'}</div>
               )}
               {detail.official && (
                 <>
@@ -269,7 +290,8 @@ function Detail({ section, id, onClose }: { section: string; id: string; onClose
           )}
         </div>
       </aside>
-    </>
+    </div>,
+    document.body,
   );
 }
 
@@ -277,11 +299,20 @@ function Summary({ summary, sources }: { summary: NonNullable<GuideDetail['summa
   const cite = (text: string) =>
     text.split(/(\[\d+(?:\]\[\d+)*\])/).map((part, index) => {
       if (!/^\[\d/.test(part)) return part;
-      return part.match(/\d+/g)?.map((n) => (
-        <span key={`${index}-${n}`} className="cite" title={sources.find((source) => source.n === Number(n))?.title}>
-          {n}
-        </span>
-      ));
+      const numbers = [...new Set(part.match(/\d+/g) ?? [])];
+      const shown = numbers.length > 3 ? numbers.slice(0, 2) : numbers;
+      return [
+        ...shown.map((n) => (
+          <span key={`${index}-${n}`} className="cite" title={sources.find((source) => source.n === Number(n))?.title}>
+            {n}
+          </span>
+        )),
+        numbers.length > shown.length && (
+          <span key={`${index}-more`} className="cite more" title={`Sources ${numbers.slice(shown.length).join(', ')}`}>
+            +{numbers.length - shown.length}
+          </span>
+        ),
+      ];
     });
   const sections: Array<[string, string[]]> = [
     ['From the official page', summary.facts],
@@ -306,10 +337,12 @@ function Summary({ summary, sources }: { summary: NonNullable<GuideDetail['summa
           </div>
         ))}
       <div className="meta">
-        <span className={`pill confidence ${summary.confidence}`}>
-          <span className="dot" /> {CONFIDENCE_LABEL[summary.confidence]}
-        </span>
-        <span>Written from the sources below, {formatDate(summary.createdAt.slice(0, 10))}</span>
+        {summary.confidence !== 'high' && (
+          <span className={`pill confidence ${summary.confidence}`}>
+            <span className="dot" /> {CONFIDENCE_LABEL[summary.confidence]}
+          </span>
+        )}
+        <span>From the sources below, {formatDate(summary.createdAt.slice(0, 10))}</span>
       </div>
       {sources.length > 0 && (
         <div className="sources-list">

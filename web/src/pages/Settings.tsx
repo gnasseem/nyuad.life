@@ -34,10 +34,12 @@ export function SettingsPage() {
   const server = health
     ? [
         health.gemini.configured ? 'Answers on' : 'Answers off',
-        health.embeddings?.semanticSearch ? 'semantic search on' : 'keyword search only',
-        health.official?.pages ? `${health.official.pages.toLocaleString()} official pages` : 'no official pages',
-        boardProblem ? 'board off' : 'board on',
-      ].join(', ')
+        health.archive ? plural(health.archive.posts, 'thread') : '',
+        health.official?.pages ? `${health.official.pages.toLocaleString()} official pages` : '',
+        boardProblem ? 'board off' : '',
+      ]
+        .filter(Boolean)
+        .join(', ')
     : 'Checking';
 
   return (

@@ -6,9 +6,12 @@ export type Route =
   | { name: 'question'; id: string }
   | { name: 'announcements' }
   | { name: 'post'; id: string }
-  | { name: 'falcons' }
+  | { name: 'market'; tab: MarketTab }
   | { name: 'guide'; section?: string; id?: string }
   | { name: 'settings' };
+
+export type MarketTab = 'items' | 'falcons' | 'rides' | 'lost';
+const MARKET_TABS: MarketTab[] = ['items', 'falcons', 'rides', 'lost'];
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent);
@@ -29,7 +32,9 @@ export function parseRoute(pathname: string): Route {
     case 'settings':
       return { name: 'settings' };
     case 'falcons':
-      return { name: 'falcons' };
+      return { name: 'market', tab: 'falcons' };
+    case 'market':
+      return { name: 'market', tab: MARKET_TABS.includes(parts[1] as MarketTab) ? (parts[1] as MarketTab) : 'items' };
     case 'guide':
       return { name: 'guide', section: parts[1], id: parts[2] };
     default:
@@ -51,8 +56,8 @@ export function routePath(route: Route): string {
       return `/post/${encodeURIComponent(route.id)}`;
     case 'settings':
       return '/settings';
-    case 'falcons':
-      return '/falcons';
+    case 'market':
+      return route.tab === 'items' ? '/market' : `/market/${route.tab}`;
     case 'guide':
       return route.section ? (route.id ? `/guide/${encodeURIComponent(route.section)}/${encodeURIComponent(route.id)}` : `/guide/${encodeURIComponent(route.section)}`) : '/guide';
   }

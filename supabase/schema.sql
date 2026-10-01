@@ -101,6 +101,30 @@ create table if not exists public.board_offers (
 create index if not exists board_offers_open_idx   on public.board_offers (status, expires_at);
 create index if not exists board_offers_poster_idx on public.board_offers (poster_key);
 
+-- The market: things for sale, wanted or free, shared rides, and lost and found. Price is in dirhams.
+create table if not exists public.board_listings (
+  id            uuid primary key default gen_random_uuid(),
+  kind          text not null check (kind in ('sell', 'want', 'free', 'ride', 'lost', 'found')),
+  title         text not null,
+  body          text not null default '',
+  price         numeric(9, 2),
+  place         text not null default '',
+  destination   text not null default '',
+  happens_at    timestamptz,
+  seats         int,
+  contact_kind  text not null check (contact_kind in ('whatsapp', 'instagram', 'email', 'phone')),
+  contact       text not null,
+  poster_key    text not null,
+  poster_net_id text not null references public.board_profiles (net_id),
+  poster_name   text not null,
+  status        text not null default 'open' check (status in ('open', 'done')),
+  expires_at    timestamptz not null,
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists board_listings_open_idx   on public.board_listings (status, expires_at);
+create index if not exists board_listings_poster_idx on public.board_listings (poster_key);
+
 -- Cached AI summaries for the guide (courses, majors, study-away sites), keyed by kind and id.
 create table if not exists public.guide_summaries (
   key        text primary key,
@@ -113,8 +137,9 @@ alter table public.board_questions     enable row level security;
 alter table public.board_answers       enable row level security;
 alter table public.board_events        enable row level security;
 alter table public.board_announcements enable row level security;
-alter table public.board_offers         enable row level security;
-alter table public.guide_summaries      enable row level security;
+alter table public.board_offers        enable row level security;
+alter table public.board_listings      enable row level security;
+alter table public.guide_summaries     enable row level security;
 
 -- Counters the API bumps atomically (PostgREST cannot express "views = views + 1" on its own).
 create or replace function public.board_bump(q_id uuid, d_views int default 0, d_skips int default 0, d_answers int default 0)

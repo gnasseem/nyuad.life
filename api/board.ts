@@ -1,7 +1,8 @@
 /**
- * The student board and the announcements feed, on one route so the function count stays small:
- *   GET  /api/board?op=stats | question&id= | mine&key= | announcements | offers[&key=] | leaderboard
- *   POST /api/board { op: profile | ask | next | answer | skip | announce | unannounce | offer | offer_done | unoffer, ... }
+ * The student board, the announcements feed and the market, on one route so the function count stays small:
+ *   GET  /api/board?op=stats | question&id= | recent | mine&key= | announcements | offers[&key=] | listings[&key=] | leaderboard
+ *   POST /api/board { op: profile | ask | next | answer | skip | announce | unannounce | offer | offer_done | unoffer
+ *                       | listing | listing_done | unlisting, ... }
  */
 import {
   eligibleQuestions,
@@ -13,6 +14,7 @@ import {
   validateAnnouncement,
   validateAnswerText,
   validateKey,
+  validateListing,
   summarizeMarket,
   validateNetId,
   validateOffer,
@@ -20,6 +22,7 @@ import {
   validateQuestionText,
   type Announcement,
   type Answer,
+  type Listing,
   type Offer,
   type Profile,
   type Question,
@@ -56,6 +59,23 @@ export default route(['GET', 'POST'], async (req, res) => {
       const open = await store.listOffers(new Date());
       const mine = key && /^[a-z0-9-]{8,64}$/i.test(key) ? await store.listOffersByPoster(key) : [];
       sendJson(res, 200, { offers: open.map(publicOffer), mine: mine.map(publicOffer), market: summarizeMarket(open) });
+      return;
+    }
+    case 'listings': {
+      rateLimit(req, 60, 60, 'board-read');
+      const key = queryString(req, 'key').trim();
+      const open = await store.listListings(new Date());
+      const mine = key && /^[a-z0-9-]{8,64}$/i.test(key) ? await store.listListingsByPoster(key) : [];
+      sendJson(res, 200, { listings: open.map(publicListing), mine: mine.map(publicListing) });
+      return;
+    }
+    case 'recent': {
+      rateLimit(req, 60, 60, 'board-read');
+      const questions = await store.listAnswered(12);
+      const answers = await store.listAnswers(questions.map((question) => question.id));
+      sendJson(res, 200, {
+        questions: questions.map((question) => ({ ...publicQuestion(question), answers: answers.filter((answer) => answer.questionId === question.id).map(publicAnswer) })),
+      });
       return;
     }
     case 'leaderboard': {
@@ -101,6 +121,24 @@ export default route(['GET', 'POST'], async (req, res) => {
       rateLimit(req, 30, 30, 'board-offer');
       const changed = await store.closeOffer(String(body.id ?? ''), validateKey(body.key), op === 'unoffer');
       if (!changed) throw new ApiError(404, 'Only the person who posted an offer can change it.', 'not_found');
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    case 'listing': {
+      rateLimit(req, 10, 4, 'board-listing');
+      const profile = await requireProfile(store, body.netId);
+      const posterKey = validateKey(body.key);
+      const open = (await store.listListingsByPoster(posterKey)).filter((listing) => listing.status === 'open' && Date.parse(listing.expiresAt) > Date.now());
+      if (open.length >= 8) throw new ApiError(400, 'You already have eight open posts. Mark one done first.', 'too_many_listings');
+      const listing = await store.createListing({ ...validateListing(body), posterKey, posterNetId: profile.netId, posterName: profile.name, status: 'open' });
+      sendJson(res, 200, { listing: publicListing(listing) });
+      return;
+    }
+    case 'listing_done':
+    case 'unlisting': {
+      rateLimit(req, 30, 30, 'board-listing');
+      const changed = await store.closeListing(String(body.id ?? ''), validateKey(body.key), op === 'unlisting');
+      if (!changed) throw new ApiError(404, 'Only the person who posted it can change it.', 'not_found');
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -206,6 +244,11 @@ function publicProfile(profile: Profile) {
 
 function publicOffer(offer: Offer) {
   const { posterKey: _key, posterNetId: _netId, ...rest } = offer;
+  return rest;
+}
+
+function publicListing(listing: Listing) {
+  const { posterKey: _key, posterNetId: _netId, ...rest } = listing;
   return rest;
 }
 

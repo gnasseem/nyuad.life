@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { api, ApiError, type Answer, type LeaderboardEntry, type PostSummary, type Question, type QuestionWithAnswers, type Redirect } from '../api';
+import { EmptyState } from '../components/EmptyState';
 import { PostRow } from '../components/PostRow';
+import { RedirectCard } from '../components/RedirectCard';
 import { Segmented } from '../components/Segmented';
 import { useApp } from '../context';
 import { initials, plural, relativeDate, standingLabel, topicLabel } from '../format';
-import { IconBack } from '../icons';
-import { navigate } from '../router';
+import { IconBack, IconChat, IconLink } from '../icons';
+import { sleep } from '../motion';
+import { navigate, onLinkClick } from '../router';
 import { askerKey } from '../store';
 
 type Tab = 'ask' | 'help';
@@ -38,12 +41,14 @@ export function QuestionsPage({ search }: Props) {
       {boardProblem ? (
         <div className="alert">{boardProblem}</div>
       ) : tab === 'ask' ? (
-        <AskStudents />
+        <div className="tab-body" key="ask">
+          <AskStudents />
+        </div>
       ) : (
-        <>
+        <div className="tab-body" key="help">
           <HelpOut />
           <Leaderboard />
-        </>
+        </div>
       )}
     </div>
   );
@@ -88,6 +93,7 @@ function AskStudents() {
   const [error, setError] = useState('');
   const [posted, setPosted] = useState<{ similar: QuestionWithAnswers[]; related: PostSummary[]; redirect?: Redirect } | null>(null);
   const [mine, setMine] = useState<QuestionWithAnswers[]>([]);
+  const [recent, setRecent] = useState<QuestionWithAnswers[]>([]);
 
   useEffect(() => {
     if (boardPrefill) setBoardPrefill('');
@@ -107,6 +113,16 @@ function AskStudents() {
   }, []);
 
   useEffect(loadMine, [loadMine]);
+
+  useEffect(() => {
+    api.board
+      .recent()
+      .then((result) => setRecent(result.questions))
+      .catch(() => setRecent([]));
+  }, []);
+
+  const mineIds = new Set(mine.map((entry) => entry.id));
+  const others = recent.filter((entry) => !mineIds.has(entry.id) && entry.answers.length > 0).slice(0, 6);
 
   const ready = text.trim().length >= 12 && !posting;
 
@@ -152,19 +168,11 @@ function AskStudents() {
             </button>
           </div>
         </div>
-        <p className="faint small">Anonymous unless you add a name. Goes to students in the majors and years most likely to know.</p>
+        <p className="faint small">{name.trim() ? `Posted as ${name.trim()}.` : 'Posted anonymously.'} Goes to the students most likely to know, by major and year.</p>
         {error && <div className="alert error">{error}</div>}
       </div>
 
-      {posted?.redirect && (
-        <div className="redirect">
-          <h3>{posted.redirect.title}</h3>
-          <p>{posted.redirect.message}</p>
-          <a className="btn primary sm" href={posted.redirect.link.url} target={posted.redirect.link.url.startsWith('/') ? undefined : '_blank'} rel="noreferrer">
-            {posted.redirect.link.label}
-          </a>
-        </div>
-      )}
+      {posted?.redirect && <RedirectCard redirect={posted.redirect} />}
       {posted && posted.similar.length > 0 && (
         <div>
           <h2 className="section-title">Already answered</h2>
@@ -195,14 +203,31 @@ function AskStudents() {
           </div>
         </div>
       )}
+      {others.length > 0 && (
+        <div>
+          <h2 className="section-title">Recently answered</h2>
+          <div className="list">
+            {others.map((entry) => (
+              <QuestionThread key={entry.id} question={entry} answers={entry.answers} compact />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function QuestionThread({ question, answers }: { question: Question; answers: Answer[] }) {
+function QuestionThread({ question, answers, compact = false }: { question: Question; answers: Answer[]; compact?: boolean }) {
+  const shown = compact ? answers.slice(0, 1) : answers;
   return (
     <div className="qa">
-      <div className="q">{question.text}</div>
+      {compact ? (
+        <a className="q link-q" href={`/questions/${question.id}`} onClick={onLinkClick}>
+          {question.text}
+        </a>
+      ) : (
+        <div className="q">{question.text}</div>
+      )}
       <div className="meta">
         <span className={`pill ${answers.length ? 'k-ok' : 'k-warn'}`}>
           <span className="dot" /> {answers.length ? plural(answers.length, 'answer') : `Open, seen by ${question.views}`}
@@ -222,7 +247,7 @@ function QuestionThread({ question, answers }: { question: Question; answers: An
           </span>
         ))}
       </div>
-      {answers.map((answer) => (
+      {shown.map((answer) => (
         <div key={answer.id} className="qa-answer">
           <span className="meta">
             <span className="avatar sm">{initials(answer.helperName)}</span>
@@ -231,9 +256,14 @@ function QuestionThread({ question, answers }: { question: Question; answers: An
               {answer.helperMajor}, {standingLabel(answer.helperYear)}, {relativeDate(answer.createdAt)}
             </span>
           </span>
-          <div className="text">{answer.text}</div>
+          <div className={`text${compact ? ' clamped' : ''}`}>{answer.text}</div>
         </div>
       ))}
+      {compact && answers.length > 1 && (
+        <a className="link small" href={`/questions/${question.id}`} onClick={onLinkClick}>
+          See all {answers.length} answers
+        </a>
+      )}
     </div>
   );
 }
@@ -243,8 +273,17 @@ function HelpOut() {
   const [card, setCard] = useState<{ question: Question | null; remaining: number; answered: number } | null>(null);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [leaving, setLeaving] = useState<'answer' | 'skip' | null>(null);
   const [error, setError] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // After an answer or a skip, the next card's box takes the focus; on first load it does not, so phones keep the keyboard down.
+  const refocus = useRef(false);
+
+  useEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    textareaRef.current?.focus({ preventScroll: true });
+  }, [card?.question?.id]);
 
   const load = useCallback(async () => {
     if (!profile) return;
@@ -265,13 +304,11 @@ function HelpOut() {
 
   if (!profile) {
     return (
-      <div className="invite">
-        <h2>Answer questions from other students</h2>
-        <p>Questions are matched to you by major and year. Your name appears next to your answers.</p>
-        <button type="button" className="btn primary lg" onClick={() => void requestProfile({ title: 'Your details', reason: 'Questions are matched by major and year. Your name appears next to your answers.' })}>
+      <EmptyState icon={<IconChat />} title="Answer questions from other students" text="Questions are matched to you by major and year. Your name appears next to your answers.">
+        <button type="button" className="btn primary" onClick={() => void requestProfile({ title: 'Your details', reason: 'Questions are matched by major and year. Your name appears next to your answers.' })}>
           Add your details
         </button>
-      </div>
+      </EmptyState>
     );
   }
 
@@ -285,11 +322,14 @@ function HelpOut() {
         const result = await api.board.answer({ netId: profile.netId, questionId: card.question.id, text: text.trim() });
         setProfile({ ...profile, answers: result.answered });
       } else await api.board.skip({ netId: profile.netId, questionId: card.question.id });
+      setLeaving(kind);
+      refocus.current = true;
+      await sleep(200);
       await load();
-      textareaRef.current?.focus();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not send the answer.');
     } finally {
+      setLeaving(null);
       setBusy(false);
     }
   };
@@ -314,7 +354,7 @@ function HelpOut() {
         </span>
       </div>
       {question ? (
-        <div className="flashcard" key={question.id}>
+        <div className={`flashcard${leaving ? ` leaving-${leaving}` : ''}`} key={question.id}>
           <div className="stack" style={{ gap: 10 }}>
             <div className={`question${question.text.length > 140 ? ' long' : ''}`}>{question.text}</div>
             <div className="meta">
@@ -357,13 +397,14 @@ function HelpOut() {
           </div>
         </div>
       ) : (
-        <div className="empty">New questions appear here as students ask them.</div>
+        <EmptyState icon={<IconChat />} title="You're all caught up" text="New questions appear here as students ask them." />
       )}
     </div>
   );
 }
 
 export function QuestionPage({ id }: { id: string }) {
+  const { toast } = useApp();
   const [data, setData] = useState<{ question: Question; answers: Answer[] } | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -375,10 +416,27 @@ export function QuestionPage({ id }: { id: string }) {
   }, [id]);
   return (
     <div className="page">
-      <button type="button" className="btn ghost sm back" onClick={() => navigate({ name: 'questions' })}>
-        <IconBack /> Questions
-      </button>
+      <div className="row between back-row">
+        <button type="button" className="btn ghost sm back" onClick={() => navigate({ name: 'questions' })}>
+          <IconBack /> Questions
+        </button>
+        {data && (
+          <button
+            type="button"
+            className="btn ghost sm"
+            onClick={() => {
+              navigator.clipboard.writeText(window.location.href).then(
+                () => toast('Link copied'),
+                () => toast('Could not copy'),
+              );
+            }}
+          >
+            <IconLink /> Copy link
+          </button>
+        )}
+      </div>
       {error && <div className="alert error">{error}</div>}
+      {!data && !error && <div className="skeleton" style={{ height: 160 }} aria-busy="true" />}
       {data && (
         <div className="list">
           <QuestionThread question={data.question} answers={data.answers} />

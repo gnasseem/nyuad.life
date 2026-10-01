@@ -415,15 +415,21 @@ export function validateOffer(body: Record<string, unknown>, now = new Date()): 
   if (!Number.isFinite(amount) || amount < OFFER_MIN || amount > OFFER_MAX) throw new ApiError(400, `Amount must be between ${OFFER_MIN} and ${OFFER_MAX.toLocaleString()} Falcons.`, 'bad_amount');
   const rate = Math.round(Number(body.rate) * 100) / 100;
   if (!Number.isFinite(rate) || rate < 0.1 || rate > 2) throw new ApiError(400, 'The rate must be between 0.10 and 2.00 AED per Falcon.', 'bad_rate');
+  const { contactKind, contact } = validateContact(body);
+  const note = collapseWhitespace(String(body.note ?? '')).slice(0, 200);
+  const expiresAt = new Date(now.getTime() + OFFER_DAYS * 86_400_000).toISOString();
+  return { side, amount, rate, contactKind, contact, note, expiresAt };
+}
+
+/** How to reach whoever posted an offer or a listing; shown only when someone asks for it. */
+export function validateContact(body: Record<string, unknown>): { contactKind: ContactKind; contact: string } {
   const contactKind = String(body.contactKind ?? 'whatsapp') as ContactKind;
   if (!CONTACT_KINDS.includes(contactKind)) throw new ApiError(400, 'Choose a contact method.', 'bad_contact_kind');
   const contact = collapseWhitespace(String(body.contact ?? '')).slice(0, 80);
   if (contact.length < 3) throw new ApiError(400, 'Enter your contact details.', 'bad_contact');
   if (contactKind === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact)) throw new ApiError(400, 'Enter a valid email address.', 'bad_contact');
   if ((contactKind === 'whatsapp' || contactKind === 'phone') && !/^\+?[\d\s()-]{7,20}$/.test(contact)) throw new ApiError(400, 'Use a phone number with the country code, like +971 50 123 4567.', 'bad_contact');
-  const note = collapseWhitespace(String(body.note ?? '')).slice(0, 200);
-  const expiresAt = new Date(now.getTime() + OFFER_DAYS * 86_400_000).toISOString();
-  return { side, amount, rate, contactKind, contact, note, expiresAt };
+  return { contactKind, contact };
 }
 
 export interface MarketSummary {
@@ -453,4 +459,84 @@ export function summarizeMarket(offers: Offer[]): MarketSummary {
     medianRate: median === null ? null : Math.round(median * 100) / 100,
     volume: open.reduce((sum, offer) => sum + offer.amount, 0),
   };
+}
+
+/* ---------- Market: things for sale, wanted or free, shared rides, and lost and found ---------- */
+
+const LISTING_KINDS = ['sell', 'want', 'free', 'ride', 'lost', 'found'] as const;
+export type ListingKind = (typeof LISTING_KINDS)[number];
+
+export interface Listing {
+  id: string;
+  kind: ListingKind;
+  title: string;
+  body: string;
+  /** Asking price in AED for sell, budget for want; null when not given, 0 for free. */
+  price: number | null;
+  /** Pickup spot, where something was lost or found, or where a ride leaves from. */
+  place: string;
+  /** Where a ride goes. */
+  destination: string;
+  /** When a ride leaves, or when something was lost or found. */
+  happensAt?: string;
+  /** People a ride has room for. */
+  seats: number | null;
+  contactKind: ContactKind;
+  contact: string;
+  posterKey: string;
+  posterNetId: string;
+  posterName: string;
+  status: 'open' | 'done';
+  expiresAt: string;
+  createdAt: string;
+}
+
+/** Days a listing stays up. Rides drop off three hours after they leave. */
+const LISTING_DAYS: Record<Exclude<ListingKind, 'ride'>, number> = { sell: 21, want: 14, free: 7, lost: 21, found: 21 };
+const RIDE_GRACE_MS = 3 * 3_600_000;
+const PRICE_MAX = 100_000;
+
+export function validateListing(body: Record<string, unknown>, now = new Date()): Omit<Listing, 'id' | 'createdAt' | 'posterKey' | 'posterNetId' | 'posterName' | 'status'> {
+  const kind = String(body.kind ?? '') as ListingKind;
+  if (!LISTING_KINDS.includes(kind)) throw new ApiError(400, 'Choose what kind of post this is.', 'bad_kind');
+  const place = collapseWhitespace(String(body.place ?? '')).slice(0, 80);
+  const destination = kind === 'ride' ? collapseWhitespace(String(body.destination ?? '')).slice(0, 80) : '';
+  let title = collapseWhitespace(String(body.title ?? '')).slice(0, 100);
+  if (kind === 'ride') {
+    if (place.length < 2 || destination.length < 2) throw new ApiError(400, 'Say where the ride leaves from and where it goes.', 'bad_route');
+    title = `${place} to ${destination}`;
+  } else if (title.length < 3) throw new ApiError(400, 'Enter a title.', 'bad_title');
+  const text = String(body.body ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (text.length > 1000) throw new ApiError(400, 'Keep the details under 1,000 characters.', 'body_too_long');
+
+  let price: number | null = null;
+  if (kind === 'free') price = 0;
+  else if ((kind === 'sell' || kind === 'want') && body.price !== undefined && body.price !== null && String(body.price).trim() !== '') {
+    price = Math.round(Number(body.price) * 100) / 100;
+    if (!Number.isFinite(price) || price < 0 || price > PRICE_MAX) throw new ApiError(400, `The price must be between 0 and ${PRICE_MAX.toLocaleString()} AED.`, 'bad_price');
+  }
+
+  let happensAt: string | undefined;
+  if (body.happensAt) {
+    const parsed = Date.parse(String(body.happensAt));
+    if (Number.isNaN(parsed)) throw new ApiError(400, 'The date is invalid.', 'bad_date');
+    if (kind === 'ride' && parsed < now.getTime() - RIDE_GRACE_MS) throw new ApiError(400, 'That time has passed.', 'past_date');
+    if (kind === 'ride' && parsed > now.getTime() + 60 * 86_400_000) throw new ApiError(400, 'Rides can be posted up to two months ahead.', 'far_date');
+    if ((kind === 'lost' || kind === 'found') && parsed > now.getTime() + 3_600_000) throw new ApiError(400, 'That date is in the future.', 'future_date');
+    if (kind === 'ride' || kind === 'lost' || kind === 'found') happensAt = new Date(parsed).toISOString();
+  }
+  if (kind === 'ride' && !happensAt) throw new ApiError(400, 'Say when the ride leaves.', 'bad_date');
+
+  let seats: number | null = null;
+  if (kind === 'ride' && body.seats !== undefined && body.seats !== null && String(body.seats).trim() !== '') {
+    seats = Math.round(Number(body.seats));
+    if (!Number.isFinite(seats) || seats < 1 || seats > 12) throw new ApiError(400, 'Seats must be between 1 and 12.', 'bad_seats');
+  }
+
+  const { contactKind, contact } = validateContact(body);
+  const expiresAt = kind === 'ride' ? new Date(Date.parse(happensAt!) + RIDE_GRACE_MS).toISOString() : new Date(now.getTime() + LISTING_DAYS[kind] * 86_400_000).toISOString();
+  return { kind, title, body: text, price, place, destination, happensAt, seats, contactKind, contact, expiresAt };
 }

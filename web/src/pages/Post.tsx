@@ -75,9 +75,9 @@ export function PostPage({ id }: Props) {
                 {post.topics
                   .filter((topic) => topic !== 'general')
                   .map((topic) => (
-                    <span key={topic} className="chip">
+                    <button key={topic} type="button" className="chip" onClick={() => navigate({ name: 'guide', section: 'threads' }, { search: `topic=${encodeURIComponent(topic)}` })}>
                       {topicLabel(topic)}
-                    </span>
+                    </button>
                   ))}
               </div>
             )}

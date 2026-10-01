@@ -6,11 +6,13 @@ level: threads from the Room of Requirement Facebook group, official NYUAD pages
 - **Ask.** Hybrid keyword and vector search over the archive and the official pages, reranked and written up by Gemini.
 - **Questions.** When the archive falls short, a question goes to students. Helpers give a name, NetID, major and class
   year once, then get questions one at a time, matched by major and year. Answered questions are cited by Ask.
-- **What's on.** Events, deadlines and opportunities posted by students. Dated ones drop off the day after, undated ones
-  after two weeks.
-- **Falcons.** Offers to buy or sell campus dirhams, with a contact method revealed on tap. Offers expire after five days.
-- **Guide.** Official pages by section and every course with a code, each with a cached summary written from the
-  official text and the group's threads.
+- **Notices.** Events, deadlines and opportunities posted by students, by day, with a calendar file for dated ones.
+  Dated notices drop off the day after, undated ones after two weeks.
+- **Market.** What the group is mostly used for besides questions: things for sale, wanted or free (up for three weeks),
+  Falcons (offers to buy or sell campus dirhams, five days), shared rides by day (gone three hours after they leave) and
+  lost and found. Contact details are revealed on tap. Ask sends listings, rides and lost items here.
+- **Guide.** The group's threads, searchable by keyword, topic and course with no model involved; official pages by
+  section; and every course with a code, each with a cached summary written from the official text and the threads.
 
 Everything is TypeScript in one repository: `api/` and `lib/` are Vercel serverless functions, `web/` is a Vite and
 React app, `scripts/` holds the scraper, the crawler and the indexer, and `supabase/schema.sql` is the board schema.
@@ -30,10 +32,11 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
 3. Deploy. `GET /api/health` reports what is active. `board.ok` comes from a real probe of the database and
    `board.problem` says what is wrong when it is false.
 
-Routes: `GET /api/health`, `/api/home`, `/api/search`, `/api/post?id=`, `/api/courses`, `/api/guide`
-(`section=`, `item=`, `course=`); `POST /api/ask` (server-sent events); `GET|POST /api/board`
-(`op=stats|question|mine|announcements|offers|leaderboard` on GET, `profile|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer`
-on POST). Every route is rate-limited per IP.
+Routes: `GET /api/health`, `/api/home`, `/api/search` (`q=`, `topic=`, `sort=`, `page=`), `/api/post?id=`,
+`/api/guide` (`section=`, `item=`, `course=`); `POST /api/ask` (server-sent events); `GET|POST /api/board`
+(`op=stats|question|recent|mine|announcements|offers|listings|leaderboard` on GET,
+`profile|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer|listing|listing_done|unlisting` on POST). Ask,
+the guide and the board are rate-limited per IP.
 
 ## Scrape the group
 

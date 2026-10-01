@@ -4,8 +4,8 @@ const base = (props: SVGProps<SVGSVGElement>) => ({ viewBox: '0 0 24 24', fill: 
 
 export const IconAsk = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
-    <path d="M12 3l1.8 4.6L18.5 9.4l-4.7 1.8L12 16l-1.8-4.8L5.5 9.4l4.7-1.8z" />
-    <path d="M19 15l.7 1.8 1.8.7-1.8.7L19 20l-.7-1.8-1.8-.7 1.8-.7z" />
+    <circle cx="11" cy="11" r="6.5" />
+    <path d="m20 20-4.4-4.4" />
   </svg>
 );
 export const IconQuestions = (p: SVGProps<SVGSVGElement>) => (
@@ -132,5 +132,39 @@ export const IconBook = (p: SVGProps<SVGSVGElement>) => (
 export const IconChevronRight = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
     <path d="m9 6 6 6-6 6" />
+  </svg>
+);
+export const IconBag = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M5 8h14l-1 12H6z" />
+    <path d="M9 10V7a3 3 0 0 1 6 0v3" />
+  </svg>
+);
+export const IconCheck = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)} strokeWidth={2.2}>
+    <path d="m5 12.5 4.5 4.5L19 7.5" />
+  </svg>
+);
+export const IconPin = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" />
+    <circle cx="12" cy="10" r="2.3" />
+  </svg>
+);
+export const IconCalendar = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <rect x="4" y="5" width="16" height="15" rx="2" />
+    <path d="M4 10h16M9 3v4M15 3v4" />
+  </svg>
+);
+export const IconLink = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
+    <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+  </svg>
+);
+export const IconChat = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5z" />
   </svg>
 );

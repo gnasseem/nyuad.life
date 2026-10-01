@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { askStream } from '../api';
+import { RedirectCard } from '../components/RedirectCard';
 import { SourceRow } from '../components/SourceRow';
 import { useApp } from '../context';
-import { IconArrow, IconChevron, IconCopy, IconPlus, IconSend, IconStop } from '../icons';
+import { IconArrow, IconCheck, IconChevron, IconCopy, IconPlus, IconSend, IconStop } from '../icons';
 import { Markdown } from '../markdown';
 import { navigate } from '../router';
 import { loadConversations, saveConversation, toHistory, uid, type Conversation, type Message } from '../store';
@@ -17,7 +19,7 @@ interface Hot {
   rect?: DOMRect;
 }
 
-const CONFIDENCE_LABEL = { high: 'High confidence', medium: 'Medium confidence', low: 'Low confidence' };
+const CONFIDENCE_LABEL = { medium: 'Partly covered', low: 'Thinly sourced' };
 
 export function AskPage({ resumeId }: Props) {
   const { home, health, toast, askPrefill, setAskPrefill, setBoardPrefill } = useApp();
@@ -26,6 +28,7 @@ export function AskPage({ resumeId }: Props) {
   const [running, setRunning] = useState(false);
   const [hot, setHot] = useState<Hot | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [copied, setCopied] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -145,10 +148,11 @@ export function AskPage({ resumeId }: Props) {
     }
   };
 
-  const copy = async (text: string) => {
+  const copy = async (id: string, text: string) => {
     try {
-      await navigator.clipboard.writeText(text);
-      toast('Copied');
+      await navigator.clipboard.writeText(text.replace(/\[(\d+)\]/g, ''));
+      setCopied(id);
+      window.setTimeout(() => setCopied((current) => (current === id ? null : current)), 1600);
     } catch {
       toast('Could not copy');
     }
@@ -186,10 +190,11 @@ export function AskPage({ resumeId }: Props) {
     const left = Math.max(16, Math.min(hot.rect.left, window.innerWidth - width - 16));
     const below = hot.rect.bottom + 8;
     const style = below + 180 < window.innerHeight ? { top: below, left } : { bottom: window.innerHeight - hot.rect.top + 8, left };
-    return (
+    return createPortal(
       <div className="cite-pop" style={style}>
         <SourceRow source={source} hot />
-      </div>
+      </div>,
+      document.body,
     );
   }, [hot, conversation.messages]);
 
@@ -236,7 +241,7 @@ export function AskPage({ resumeId }: Props) {
               ))}
             </div>
           )}
-          {health && !health.gemini.configured && <p className="ask-note">Answers are off: no model key is set on this server.</p>}
+          {health && !health.gemini.configured && <p className="ask-note">Answers are unavailable right now. The guide and the rest of the site still work.</p>}
         </div>
       </div>
     );
@@ -259,18 +264,10 @@ export function AskPage({ resumeId }: Props) {
             <div key={message.id} className="turn model">
               {message.status && (
                 <div className="status-line">
-                  <span className="spinner" /> {message.status}
+                  <span className="spinner" /> <span key={message.status} className="status-text">{message.status}</span>
                 </div>
               )}
-              {message.redirect && (
-                <div className="redirect">
-                  <h3>{message.redirect.title}</h3>
-                  <p>{message.redirect.message}</p>
-                  <a className="btn primary sm" href={message.redirect.link.url} target={message.redirect.link.url.startsWith('/') ? undefined : '_blank'} rel="noreferrer">
-                    {message.redirect.link.label}
-                  </a>
-                </div>
-              )}
+              {message.redirect && <RedirectCard redirect={message.redirect} />}
               {message.content && (
                 <div className="answer">
                   <Markdown
@@ -285,19 +282,26 @@ export function AskPage({ resumeId }: Props) {
               {message.error && <div className="alert error">{message.error}</div>}
               {!message.pending && message.content && (
                 <div className="answer-foot">
-                  {message.confidence && (
-                    <span className={`pill confidence ${message.confidence.level}`} title={message.confidence.reason}>
+                  {message.confidence && message.confidence.level !== 'high' && (
+                    <span className={`pill confidence ${message.confidence.level}`} title={message.confidence.reason || undefined}>
                       <span className="dot" /> {CONFIDENCE_LABEL[message.confidence.level]}
                     </span>
                   )}
-                  {message.confidence?.reason && <span>{message.confidence.reason}</span>}
                   {message.sources && message.sources.length > 0 && (
                     <button type="button" className={`foot-btn${expanded.has(message.id) ? ' open' : ''}`} onClick={() => toggleSources(message.id)} aria-expanded={expanded.has(message.id)}>
                       {message.sources.length} {message.sources.length === 1 ? 'source' : 'sources'} <IconChevron className="chev" />
                     </button>
                   )}
-                  <button type="button" className="foot-btn" onClick={() => void copy(message.content)}>
-                    <IconCopy /> Copy
+                  <button type="button" className="foot-btn" onClick={() => void copy(message.id, message.content)}>
+                    {copied === message.id ? (
+                      <>
+                        <IconCheck className="pop-in" /> Copied
+                      </>
+                    ) : (
+                      <>
+                        <IconCopy /> Copy
+                      </>
+                    )}
                   </button>
                   {(!message.confidence || message.confidence.level !== 'high') && (
                     <button type="button" className="foot-btn" onClick={() => askStudents(questionBefore(conversation.messages, message.id))}>
@@ -306,11 +310,15 @@ export function AskPage({ resumeId }: Props) {
                   )}
                 </div>
               )}
-              {message.sources && message.sources.length > 0 && expanded.has(message.id) && (
-                <div className="sources">
-                  {message.sources.map((source) => (
-                    <SourceRow key={source.n} id={`source-${message.id}-${source.n}`} source={source} hot={hot?.messageId === message.id && hot.n === source.n} onHover={(n) => setHot(n === null ? null : { messageId: message.id, n })} />
-                  ))}
+              {message.sources && message.sources.length > 0 && (
+                <div className={`collapse${expanded.has(message.id) ? ' open' : ''}`} inert={!expanded.has(message.id)}>
+                  <div>
+                    <div className="sources">
+                      {message.sources.map((source) => (
+                        <SourceRow key={source.n} id={`source-${message.id}-${source.n}`} source={source} hot={hot?.messageId === message.id && hot.n === source.n} onHover={(n) => setHot(n === null ? null : { messageId: message.id, n })} />
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
               {!message.pending && message.followups && message.followups.length > 0 && (

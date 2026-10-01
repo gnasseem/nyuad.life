@@ -3,7 +3,7 @@
  * production; an in-memory store for local development and tests. `boardStore()` picks one from the environment.
  */
 import { randomUUID } from 'node:crypto';
-import type { Announcement, Answer, BoardEvent, EventKind, Offer, Profile, Question } from './board.ts';
+import type { Announcement, Answer, BoardEvent, EventKind, Listing, Offer, Profile, Question } from './board.ts';
 import { ApiError } from './http.ts';
 
 interface BoardStats {
@@ -55,6 +55,12 @@ export interface BoardStore {
   listOffersByPoster(posterKey: string): Promise<Offer[]>;
   /** Marks an offer done or removes it; only the poster's key works. Returns whether anything changed. */
   closeOffer(id: string, posterKey: string, remove: boolean): Promise<boolean>;
+  createListing(listing: Omit<Listing, 'id' | 'createdAt'>): Promise<Listing>;
+  /** Open, unexpired listings, newest first. */
+  listListings(now: Date): Promise<Listing[]>;
+  listListingsByPoster(posterKey: string): Promise<Listing[]>;
+  /** Marks a listing done or removes it; only the poster's key works. Returns whether anything changed. */
+  closeListing(id: string, posterKey: string, remove: boolean): Promise<boolean>;
   /** A cached AI summary for the guide, or null. */
   getSummary(key: string): Promise<{ payload: unknown; createdAt: string } | null>;
   putSummary(key: string, payload: unknown): Promise<void>;
@@ -73,6 +79,7 @@ export class MemoryBoardStore implements BoardStore {
   private events: BoardEvent[] = [];
   private announcements = new Map<string, Announcement>();
   private offers = new Map<string, Offer>();
+  private listings = new Map<string, Listing>();
   private summaries = new Map<string, { payload: unknown; createdAt: string }>();
 
   async getProfile(netId: string): Promise<Profile | null> {
@@ -179,6 +186,24 @@ export class MemoryBoardStore implements BoardStore {
     if (!offer || offer.posterKey !== posterKey) return false;
     if (remove) this.offers.delete(id);
     else offer.status = 'done';
+    return true;
+  }
+  async createListing(listing: Omit<Listing, 'id' | 'createdAt'>): Promise<Listing> {
+    const created: Listing = { ...listing, id: randomUUID(), createdAt: new Date().toISOString() };
+    this.listings.set(created.id, created);
+    return created;
+  }
+  async listListings(now: Date): Promise<Listing[]> {
+    return [...this.listings.values()].filter((listing) => listing.status === 'open' && Date.parse(listing.expiresAt) > now.getTime()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  async listListingsByPoster(posterKey: string): Promise<Listing[]> {
+    return [...this.listings.values()].filter((listing) => listing.posterKey === posterKey).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  async closeListing(id: string, posterKey: string, remove: boolean): Promise<boolean> {
+    const listing = this.listings.get(id);
+    if (!listing || listing.posterKey !== posterKey) return false;
+    if (remove) this.listings.delete(id);
+    else listing.status = 'done';
     return true;
   }
   async getSummary(key: string): Promise<{ payload: unknown; createdAt: string } | null> {
@@ -440,6 +465,39 @@ export class SupabaseBoardStore implements BoardStore {
       : await this.write('PATCH', path, { status: 'done' });
     return Array.isArray(rows) && rows.length > 0;
   }
+  async createListing(listing: Omit<Listing, 'id' | 'createdAt'>): Promise<Listing> {
+    const rows = await this.write('POST', 'board_listings', {
+      kind: listing.kind,
+      title: listing.title,
+      body: listing.body,
+      price: listing.price,
+      place: listing.place,
+      destination: listing.destination,
+      happens_at: listing.happensAt ?? null,
+      seats: listing.seats,
+      contact_kind: listing.contactKind,
+      contact: listing.contact,
+      poster_key: listing.posterKey,
+      poster_net_id: listing.posterNetId,
+      poster_name: listing.posterName,
+      status: listing.status,
+      expires_at: listing.expiresAt,
+    });
+    return listingFrom(rows[0]!);
+  }
+  async listListings(now: Date): Promise<Listing[]> {
+    return (await this.select('board_listings', `status=eq.open&expires_at=gt.${enc(now.toISOString())}&order=created_at.desc&limit=400`)).map(listingFrom);
+  }
+  async listListingsByPoster(posterKey: string): Promise<Listing[]> {
+    return (await this.select('board_listings', `poster_key=eq.${enc(posterKey)}&order=created_at.desc&limit=50`)).map(listingFrom);
+  }
+  async closeListing(id: string, posterKey: string, remove: boolean): Promise<boolean> {
+    const path = `board_listings?id=eq.${enc(id)}&poster_key=eq.${enc(posterKey)}`;
+    const rows = remove
+      ? ((await this.call(path, { method: 'DELETE', headers: this.headers('return=representation') })) as Row[] | null)
+      : await this.write('PATCH', path, { status: 'done' });
+    return Array.isArray(rows) && rows.length > 0;
+  }
   async getSummary(key: string): Promise<{ payload: unknown; createdAt: string } | null> {
     const rows = await this.select('guide_summaries', `key=eq.${enc(key)}&limit=1`);
     return rows[0] ? { payload: rows[0].payload, createdAt: String(rows[0].created_at) } : null;
@@ -520,6 +578,28 @@ function offerFrom(row: Row): Offer {
     posterNetId: String(row.poster_net_id),
     posterName: String(row.poster_name),
     status: String(row.status) as Offer['status'],
+    expiresAt: String(row.expires_at),
+    createdAt: String(row.created_at),
+  };
+}
+
+function listingFrom(row: Row): Listing {
+  return {
+    id: String(row.id),
+    kind: String(row.kind) as Listing['kind'],
+    title: String(row.title),
+    body: String(row.body ?? ''),
+    price: row.price === null || row.price === undefined ? null : Number(row.price),
+    place: String(row.place ?? ''),
+    destination: String(row.destination ?? ''),
+    happensAt: row.happens_at ? String(row.happens_at) : undefined,
+    seats: row.seats === null || row.seats === undefined ? null : Number(row.seats),
+    contactKind: String(row.contact_kind) as Listing['contactKind'],
+    contact: String(row.contact),
+    posterKey: String(row.poster_key),
+    posterNetId: String(row.poster_net_id),
+    posterName: String(row.poster_name),
+    status: String(row.status) as Listing['status'],
     expiresAt: String(row.expires_at),
     createdAt: String(row.created_at),
   };

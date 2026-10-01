@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, boardProblem as describeBoardProblem, type Health, type HomePayload, type Profile } from './api';
+import { APP_NAME } from './brand';
 import { Wordmark } from './components/Logo';
 import { ProfileModal } from './components/ProfileForm';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
 import { initials, standingLabel } from './format';
-import { IconAsk, IconAuto, IconBook, IconClose, IconCoins, IconMegaphone, IconMenu, IconMoon, IconQuestions, IconSettings, IconSun, IconTrash, IconUser } from './icons';
+import { IconAsk, IconAuto, IconBag, IconBook, IconClose, IconMegaphone, IconMenu, IconMoon, IconQuestions, IconSettings, IconSun, IconTrash, IconUser } from './icons';
 import { AnnouncementsPage } from './pages/Announcements';
 import { AskPage } from './pages/Ask';
-import { FalconsPage } from './pages/Falcons';
 import { GuidePage } from './pages/Guide';
+import { MarketPage } from './pages/Market';
 import { PostPage } from './pages/Post';
 import { QuestionPage, QuestionsPage } from './pages/Questions';
 import { SettingsPage } from './pages/Settings';
@@ -20,11 +21,12 @@ const NAV: Array<{ route: Route; label: string; icon: typeof IconAsk; matches: R
   { route: { name: 'ask' }, label: 'Ask', icon: IconAsk, matches: ['ask'] },
   { route: { name: 'questions' }, label: 'Questions', icon: IconQuestions, matches: ['questions', 'question'] },
   { route: { name: 'announcements' }, label: 'Notices', icon: IconMegaphone, matches: ['announcements'] },
-  { route: { name: 'falcons' }, label: 'Falcons', icon: IconCoins, matches: ['falcons'] },
+  { route: { name: 'market', tab: 'items' }, label: 'Market', icon: IconBag, matches: ['market'] },
   { route: { name: 'guide' }, label: 'Guide', icon: IconBook, matches: ['guide', 'post'] },
 ];
 
 const THEME_LABEL: Record<Theme, string> = { system: 'System theme', light: 'Light theme', dark: 'Dark theme' };
+const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Notices', market: 'Market', guide: 'Guide', post: 'Thread', settings: 'Settings' };
 const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: 'Your major and year decide which questions reach you. Your name appears next to what you write.' };
 
 function useConversations(): Conversation[] {
@@ -39,7 +41,7 @@ export function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [profile, setProfileState] = useState<Profile | null>(loadProfile);
   const [theme, setThemeState] = useState<Theme>(loadTheme);
-  const [toastMessage, setToastMessage] = useState('');
+  const [toastState, setToastState] = useState<{ message: string; leaving: boolean; id: number } | null>(null);
   const [askPrefill, setAskPrefillState] = useState<(Prefill & { token: number }) | null>(null);
   const [boardPrefill, setBoardPrefill] = useState('');
   const [drawer, setDrawer] = useState(false);
@@ -77,9 +79,17 @@ export function App() {
     setDrawer(false);
   }, [route, search]);
 
+  useEffect(() => {
+    const title = PAGE_TITLE[route.name];
+    document.title = title ? `${title} · ${APP_NAME}` : APP_NAME;
+  }, [route.name]);
+
+  const toastTimers = useRef<number[]>([]);
   const toast = useCallback((message: string) => {
-    setToastMessage(message);
-    window.setTimeout(() => setToastMessage(''), 1800);
+    toastTimers.current.forEach((timer) => window.clearTimeout(timer));
+    const id = Date.now();
+    setToastState({ message, leaving: false, id });
+    toastTimers.current = [window.setTimeout(() => setToastState((current) => (current?.id === id ? { ...current, leaving: true } : current)), 1900), window.setTimeout(() => setToastState((current) => (current?.id === id ? null : current)), 2100)];
   }, []);
 
   const setAskPrefill = useCallback((prefill: Prefill | null) => {
@@ -128,8 +138,8 @@ export function App() {
         return <QuestionPage id={route.id} />;
       case 'announcements':
         return <AnnouncementsPage />;
-      case 'falcons':
-        return <FalconsPage />;
+      case 'market':
+        return <MarketPage tab={route.tab} />;
       case 'guide':
         return <GuidePage section={route.section} id={route.id} />;
       case 'post':
@@ -153,14 +163,18 @@ export function App() {
   };
 
   const settingsActive = route.name === 'settings';
-  const navLinks = NAV.map((item) => {
-    const active = item.matches.includes(route.name);
+  const activeIndex = NAV.findIndex((item) => item.matches.includes(route.name));
+  const navLinks = NAV.map((item, index) => {
+    const active = index === activeIndex;
     return (
       <a key={item.label} href={routePath(item.route)} className={active ? 'active' : undefined} aria-current={active ? 'page' : undefined} onClick={onLinkClick}>
-        <item.icon /> {item.label}
+        <item.icon /> <span>{item.label}</span>
       </a>
     );
   });
+  const indicator = <span className="nav-indicator" style={{ '--i': Math.max(0, activeIndex), opacity: activeIndex < 0 ? 0 : 1 } as React.CSSProperties} aria-hidden="true" />;
+  // A new key per page replays its entrance. Market tabs and the guide's side panel keep the key, so they do not.
+  const pageKey = route.name === 'market' ? 'market' : route.name === 'guide' ? `guide-${route.section ?? ''}` : routePath(route);
 
   return (
     <AppContext.Provider value={context}>
@@ -175,7 +189,10 @@ export function App() {
               <IconClose />
             </button>
           </div>
-          <nav className="nav">{navLinks}</nav>
+          <nav className="nav">
+            {indicator}
+            {navLinks}
+          </nav>
           <div className="recent">
             <div className="recent-head">
               <span className="eyebrow">Recent</span>
@@ -225,7 +242,7 @@ export function App() {
               </button>
             )}
             <button type="button" className="icon-btn" onClick={cycleTheme} title={THEME_LABEL[theme]} aria-label={THEME_LABEL[theme]}>
-              <ThemeIcon />
+              <ThemeIcon key={theme} className="turn-in" />
             </button>
             <a href="/settings" className={`icon-btn${settingsActive ? ' active' : ''}`} onClick={onLinkClick} title="Settings" aria-label="Settings" aria-current={settingsActive ? 'page' : undefined}>
               <IconSettings />
@@ -245,18 +262,40 @@ export function App() {
               <IconSettings />
             </a>
           </header>
-          <main>{page}</main>
+          <main key={pageKey}>
+            <ErrorBoundary>{page}</ErrorBoundary>
+          </main>
           <nav className="tabbar" aria-label="Sections">
+            {indicator}
             {navLinks}
           </nav>
         </div>
       </div>
-      {toastMessage && (
-        <div className="toast" role="status">
-          {toastMessage}
+      {toastState && (
+        <div key={toastState.id} className={`toast${toastState.leaving ? ' leaving' : ''}`} role="status">
+          {toastState.message}
         </div>
       )}
       <ProfileModal open={profileAsk !== null} title={profileAsk?.title ?? ''} reason={profileAsk?.reason ?? ''} onClose={() => finishProfile(false)} onDone={() => finishProfile(true)} />
     </AppContext.Provider>
   );
+}
+
+/** Keeps one broken page from blanking the whole site. */
+class ErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="page">
+        <div className="alert error">
+          <b>This page hit a problem.</b>
+          Reload to try again.
+        </div>
+      </div>
+    );
+  }
 }

@@ -1,154 +1,71 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { api, type ContactKind, type MarketSummary, type Offer, type OfferSide } from '../api';
-import { Modal } from '../components/Modal';
+import { ContactFields, ContactReveal } from '../components/Contact';
+import { EmptyState } from '../components/EmptyState';
 import { useApp } from '../context';
 import { plural, relativeDate } from '../format';
-import { IconPlus } from '../icons';
-import { askerKey } from '../store';
+import { IconCoins } from '../icons';
+import { askerKey, loadContact, saveContact } from '../store';
 
-const CONTACTS: Array<{ id: ContactKind; label: string; placeholder: string }> = [
-  { id: 'whatsapp', label: 'WhatsApp', placeholder: '+971 50 123 4567' },
-  { id: 'instagram', label: 'Instagram', placeholder: '@handle' },
-  { id: 'email', label: 'Email', placeholder: 'abc1234@nyu.edu' },
-  { id: 'phone', label: 'Phone', placeholder: '+971 50 123 4567' },
-];
-
-function contactHref(offer: Offer): string | null {
-  const digits = offer.contact.replace(/[^\d+]/g, '');
-  switch (offer.contactKind) {
-    case 'whatsapp':
-      return `https://wa.me/${digits.replace(/^\+/, '')}?text=${encodeURIComponent(`About your Falcons offer on nyuad.life: ${offer.amount} at ${offer.rate}`)}`;
-    case 'instagram':
-      return `https://instagram.com/${offer.contact.replace(/^@/, '')}`;
-    case 'email':
-      return `mailto:${offer.contact}?subject=${encodeURIComponent('Your Falcons offer on nyuad.life')}`;
-    case 'phone':
-      return `tel:${digits}`;
-  }
+export interface OffersData {
+  offers: Offer[];
+  mine: Offer[];
+  market: MarketSummary;
 }
 
-function expiresIn(iso: string): string {
+export function expiresIn(iso: string): string {
   const hours = Math.max(0, Math.round((Date.parse(iso) - Date.now()) / 3_600_000));
   return hours < 24 ? `${hours} h left` : `${Math.round(hours / 24)} d left`;
 }
 
-export function FalconsPage() {
-  const { boardProblem, profile, requestProfile, toast } = useApp();
-  const [data, setData] = useState<{ offers: Offer[]; mine: Offer[]; market: MarketSummary } | null>(null);
-  const [error, setError] = useState('');
-  const [composing, setComposing] = useState<OfferSide | null>(null);
+/** Offers to sell or buy Falcons, cheapest sell and best buy first, with the market in one strip above. */
+export function FalconsTab({ data, onClose, onPost }: { data: OffersData; onClose(offer: Offer, remove: boolean): void; onPost(side: OfferSide): void }) {
+  const mineIds = new Set(data.mine.map((offer) => offer.id));
+  const selling = data.offers.filter((offer) => offer.side === 'sell').sort((a, b) => a.rate - b.rate || b.amount - a.amount);
+  const buying = data.offers.filter((offer) => offer.side === 'buy').sort((a, b) => b.rate - a.rate || b.amount - a.amount);
+  const { market } = data;
 
-  const load = useCallback(() => {
-    if (boardProblem) return;
-    api.board
-      .offers(askerKey())
-      .then((result) => {
-        setData(result);
-        setError('');
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load offers.'));
-  }, [boardProblem]);
-
-  useEffect(load, [load]);
-
-  const startPosting = async (side: OfferSide) => {
-    if (!profile && !(await requestProfile({ title: 'Your details', reason: 'Your name appears on the offer.' }))) return;
-    setComposing(side);
-  };
-
-  const close = async (offer: Offer, remove: boolean) => {
-    if (remove && !window.confirm('Remove this offer?')) return;
-    try {
-      if (remove) await api.board.unoffer({ id: offer.id, key: askerKey() });
-      else await api.board.offerDone({ id: offer.id, key: askerKey() });
-      toast(remove ? 'Removed' : 'Marked done');
-      load();
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not update the offer.');
-    }
-  };
-
-  const mineIds = useMemo(() => new Set((data?.mine ?? []).map((offer) => offer.id)), [data]);
-  const selling = (data?.offers ?? []).filter((offer) => offer.side === 'sell').sort((a, b) => a.rate - b.rate || b.amount - a.amount);
-  const buying = (data?.offers ?? []).filter((offer) => offer.side === 'buy').sort((a, b) => b.rate - a.rate || b.amount - a.amount);
-  const market = data?.market;
+  if (data.offers.length === 0) {
+    return (
+      <EmptyState icon={<IconCoins />} title="No open offers" text="Post how many Falcons you have or want, and at what rate. People reach you directly.">
+        <button type="button" className="btn" onClick={() => onPost('buy')}>
+          Buy Falcons
+        </button>
+        <button type="button" className="btn primary" onClick={() => onPost('sell')}>
+          Sell Falcons
+        </button>
+      </EmptyState>
+    );
+  }
 
   return (
-    <div className="page wide">
-      <div className="page-head">
-        <h1>Falcons</h1>
-        {!boardProblem && (
-          <div className="actions">
-            <button type="button" className="btn" onClick={() => void startPosting('buy')}>
-              Buy
-            </button>
-            <button type="button" className="btn primary" onClick={() => void startPosting('sell')}>
-              <IconPlus /> Sell
-            </button>
-          </div>
-        )}
+    <>
+      <div className="strip">
+        <div>
+          <b>{market.bestAsk === null ? '–' : market.bestAsk.toFixed(2)}</b>
+          <span>Cheapest sell, AED per Falcon</span>
+        </div>
+        <div>
+          <b>{market.bestBid === null ? '–' : market.bestBid.toFixed(2)}</b>
+          <span>Best buy, AED per Falcon</span>
+        </div>
+        <div>
+          <b>{market.open}</b>
+          <span>Open offers</span>
+        </div>
+        <div>
+          <b>{market.volume.toLocaleString()}</b>
+          <span>Falcons on offer</span>
+        </div>
       </div>
-      {boardProblem && <div className="alert">{boardProblem}</div>}
-      {error && <div className="alert error">{error}</div>}
-      {market && market.open > 0 && (
-        <div className="strip">
-          <div>
-            <b>{market.bestAsk === null ? '–' : market.bestAsk.toFixed(2)}</b>
-            <span>Cheapest sell, AED per Falcon</span>
-          </div>
-          <div>
-            <b>{market.bestBid === null ? '–' : market.bestBid.toFixed(2)}</b>
-            <span>Best buy, AED per Falcon</span>
-          </div>
-          <div>
-            <b>{market.open}</b>
-            <span>Open offers</span>
-          </div>
-          <div>
-            <b>{market.volume.toLocaleString()}</b>
-            <span>Falcons on offer</span>
-          </div>
-        </div>
-      )}
-      {!boardProblem && !data && !error && (
-        <div className="stack" aria-busy="true">
-          <div className="skeleton" style={{ height: 64 }} />
-          <div className="skeleton" style={{ height: 64 }} />
-        </div>
-      )}
-      {data && data.offers.length === 0 && (
-        <div className="empty">
-          No open offers.
-          <br />
-          <button type="button" className="btn" onClick={() => void startPosting('sell')}>
-            Post the first one
-          </button>
-        </div>
-      )}
-      {data && data.offers.length > 0 && (
-        <div className="offers-cols">
-          <OfferColumn title="Selling" hint="cheapest first" offers={selling} mineIds={mineIds} onClose={close} />
-          <OfferColumn title="Buying" hint="best rate first" offers={buying} mineIds={mineIds} onClose={close} />
-        </div>
-      )}
+      <div className="offers-cols">
+        <OfferColumn title="Selling" hint="cheapest first" offers={selling} mineIds={mineIds} onClose={onClose} />
+        <OfferColumn title="Buying" hint="best rate first" offers={buying} mineIds={mineIds} onClose={onClose} />
+      </div>
       <p className="faint small" style={{ marginTop: 24 }}>
-        The site only lists offers. The trade happens between the two of you, on campus. Offers expire after five days.
+        The trade happens between the two of you, on campus. Offers expire after five days.
       </p>
-      <Modal open={composing !== null} onClose={() => setComposing(null)} title={composing === 'buy' ? 'Buy Falcons' : 'Sell Falcons'} width={480}>
-        {composing && (
-          <Compose
-            side={composing}
-            market={market ?? null}
-            onDone={() => {
-              setComposing(null);
-              load();
-              toast('Posted');
-            }}
-            onCancel={() => setComposing(null)}
-          />
-        )}
-      </Modal>
-    </div>
+    </>
   );
 }
 
@@ -160,7 +77,7 @@ function OfferColumn({ title, hint, offers, mineIds, onClose }: { title: string;
         <span>{offers.length ? `${plural(offers.length, 'offer')}, ${hint}` : ''}</span>
       </h2>
       {offers.length === 0 ? (
-        <div className="empty">Nothing here yet.</div>
+        <div className="empty small">Nothing here yet.</div>
       ) : (
         <div className="list">
           {offers.map((offer) => (
@@ -173,9 +90,6 @@ function OfferColumn({ title, hint, offers, mineIds, onClose }: { title: string;
 }
 
 function OfferRow({ offer, mine, onClose }: { offer: Offer; mine: boolean; onClose(offer: Offer, remove: boolean): void }) {
-  const [revealed, setRevealed] = useState(false);
-  const href = contactHref(offer);
-  const label = CONTACTS.find((entry) => entry.id === offer.contactKind)?.label ?? offer.contactKind;
   return (
     <div className="offer">
       <div className="offer-main">
@@ -209,36 +123,25 @@ function OfferRow({ offer, mine, onClose }: { offer: Offer; mine: boolean; onClo
               Remove
             </button>
           </>
-        ) : revealed ? (
-          <>
-            <span className="contact">{offer.contact}</span>
-            {href && (
-              <a className="btn sm primary" href={href} target="_blank" rel="noreferrer">
-                Open {label}
-              </a>
-            )}
-          </>
         ) : (
-          <button type="button" className="btn sm" onClick={() => setRevealed(true)}>
-            Show {label}
-          </button>
+          <ContactReveal kind={offer.contactKind} contact={offer.contact} about={`${offer.amount} Falcons at ${offer.rate.toFixed(2)}`} />
         )}
       </div>
     </div>
   );
 }
 
-function Compose({ side, market, onDone, onCancel }: { side: OfferSide; market: MarketSummary | null; onDone(): void; onCancel(): void }) {
+export function FalconCompose({ side, market, onDone, onCancel }: { side: OfferSide; market: MarketSummary | null; onDone(): void; onCancel(): void }) {
   const { profile } = useApp();
   const suggested = (side === 'sell' ? market?.bestBid : market?.bestAsk) ?? market?.medianRate ?? 0.8;
+  const saved = loadContact();
   const [amount, setAmount] = useState('');
   const [rate, setRate] = useState(suggested.toFixed(2));
-  const [contactKind, setContactKind] = useState<ContactKind>('whatsapp');
-  const [contact, setContact] = useState('');
+  const [contactKind, setContactKind] = useState<ContactKind>(saved.contactKind);
+  const [contact, setContact] = useState(saved.contact);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const contactMeta = CONTACTS.find((entry) => entry.id === contactKind)!;
   const total = Number(amount) > 0 && Number(rate) > 0 ? Math.round(Number(amount) * Number(rate)) : 0;
 
   const submit = async () => {
@@ -247,6 +150,7 @@ function Compose({ side, market, onDone, onCancel }: { side: OfferSide; market: 
     setError('');
     try {
       await api.board.offer({ netId: profile.netId, key: askerKey(), side, amount: Number(amount), rate: Number(rate), contactKind, contact: contact.trim(), note: note.trim() || undefined });
+      saveContact({ contactKind, contact: contact.trim() });
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not post the offer.');
@@ -271,24 +175,13 @@ function Compose({ side, market, onDone, onCancel }: { side: OfferSide; market: 
             <input id="of-rate" className="input" inputMode="decimal" value={rate} onChange={(event) => setRate(event.target.value.replace(/[^\d.]/g, ''))} placeholder="0.85" />
             <span className="suffix">AED each</span>
           </div>
-          {total > 0 && <span className="hint">{total.toLocaleString()} AED in total.</span>}
+          <span className="hint">{total > 0 ? `${total.toLocaleString()} AED in total.` : ' '}</span>
         </div>
       </div>
-      <div className="field">
-        <label>Contact by</label>
-        <div className="chips" role="radiogroup" aria-label="Contact method">
-          {CONTACTS.map((entry) => (
-            <button key={entry.id} type="button" role="radio" aria-checked={contactKind === entry.id} className={`chip${contactKind === entry.id ? ' on' : ''}`} onClick={() => setContactKind(entry.id)}>
-              {entry.label}
-            </button>
-          ))}
-        </div>
-        <input className="input" value={contact} onChange={(event) => setContact(event.target.value)} placeholder={contactMeta.placeholder} aria-label={contactMeta.label} inputMode={contactKind === 'email' ? 'email' : contactKind === 'instagram' ? 'text' : 'tel'} />
-        <span className="hint">Shown only when someone taps Show on your offer.</span>
-      </div>
+      <ContactFields kind={contactKind} contact={contact} onKind={setContactKind} onContact={setContact} />
       <div className="field">
         <label htmlFor="of-note">Note (optional)</label>
-        <input id="of-note" className="input" value={note} onChange={(event) => setNote(event.target.value)} maxLength={200} />
+        <input id="of-note" className="input" value={note} onChange={(event) => setNote(event.target.value)} maxLength={200} placeholder="Pay by transfer, meet at D2" />
       </div>
       {error && <div className="alert error">{error}</div>}
       <div className="modal-actions" style={{ marginTop: 4 }}>

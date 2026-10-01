@@ -277,3 +277,42 @@ describe('Falcons offers and the leaderboard', () => {
     ]);
   });
 });
+
+describe('the market', () => {
+  it('validates listings and gives each kind its expiry', async () => {
+    const { validateListing } = await import('./board.ts');
+    const contact = { contactKind: 'whatsapp', contact: '+971 50 123 4567' };
+    const fridge = validateListing({ kind: 'sell', title: ' Mini  fridge ', price: '150', place: 'A2', ...contact }, now);
+    expect(fridge).toMatchObject({ kind: 'sell', title: 'Mini fridge', price: 150, place: 'A2', destination: '', seats: null });
+    expect(fridge.expiresAt).toBe('2026-10-20T12:00:00.000Z');
+    expect(validateListing({ kind: 'want', title: 'Desk lamp', ...contact }, now).price).toBeNull();
+    expect(validateListing({ kind: 'free', title: 'Hangers', price: 40, ...contact }, now).price).toBe(0);
+    expect(() => validateListing({ kind: 'sell', title: 'Car', price: -5, ...contact }, now)).toThrow();
+    expect(() => validateListing({ kind: 'trade', title: 'Things', ...contact }, now)).toThrow();
+    expect(() => validateListing({ kind: 'sell', title: 'Lamp', contactKind: 'email', contact: 'nope' }, now)).toThrow();
+
+    const ride = validateListing({ kind: 'ride', title: 'ignored', place: 'Campus', destination: 'Dubai Mall', happensAt: '2026-10-02T17:00:00Z', seats: '3', ...contact }, now);
+    expect(ride).toMatchObject({ title: 'Campus to Dubai Mall', seats: 3, happensAt: '2026-10-02T17:00:00.000Z', price: null });
+    expect(ride.expiresAt).toBe('2026-10-02T20:00:00.000Z');
+    expect(() => validateListing({ kind: 'ride', place: 'Campus', destination: 'Dubai', ...contact }, now)).toThrow();
+    expect(() => validateListing({ kind: 'ride', place: 'Campus', destination: 'Dubai', happensAt: '2026-09-01T10:00:00Z', ...contact }, now)).toThrow();
+    expect(() => validateListing({ kind: 'ride', place: 'Campus', destination: 'Dubai', happensAt: '2026-10-02T10:00:00Z', seats: 40, ...contact }, now)).toThrow();
+
+    const lost = validateListing({ kind: 'lost', title: 'AirPods', place: 'Library', happensAt: '2026-09-28', ...contact }, now);
+    expect(lost.happensAt).toBe('2026-09-28T00:00:00.000Z');
+    expect(() => validateListing({ kind: 'found', title: 'Keys', happensAt: '2026-12-01', ...contact }, now)).toThrow();
+  });
+
+  it('keeps listings in the memory store and lets only the poster close them', async () => {
+    const store = new MemoryBoardStore();
+    const base = { body: '', price: 150, place: 'A2', destination: '', seats: null, contactKind: 'phone' as const, contact: '+971501234567', posterKey: 'key-1234567', posterNetId: 'abc1234', posterName: 'Sara', status: 'open' as const };
+    const fridge = await store.createListing({ ...base, kind: 'sell', title: 'Mini fridge', expiresAt: '2030-01-01T00:00:00Z' });
+    await store.createListing({ ...base, kind: 'free', title: 'Old hangers', expiresAt: '2026-09-01T00:00:00Z' });
+    expect((await store.listListings(now)).map((entry) => entry.id)).toEqual([fridge.id]);
+    expect(await store.closeListing(fridge.id, 'wrong-key-00', false)).toBe(false);
+    expect(await store.closeListing(fridge.id, 'key-1234567', false)).toBe(true);
+    expect(await store.listListings(now)).toEqual([]);
+    expect((await store.listListingsByPoster('key-1234567')).map((entry) => entry.status)).toContain('done');
+    expect(await store.closeListing(fridge.id, 'key-1234567', true)).toBe(true);
+  });
+});

@@ -159,6 +159,46 @@ export interface Offer {
   createdAt: string;
 }
 
+export type ListingKind = 'sell' | 'want' | 'free' | 'ride' | 'lost' | 'found';
+
+export interface Listing {
+  id: string;
+  kind: ListingKind;
+  title: string;
+  body: string;
+  price: number | null;
+  place: string;
+  destination: string;
+  happensAt?: string;
+  seats: number | null;
+  contactKind: ContactKind;
+  contact: string;
+  posterName: string;
+  status: 'open' | 'done';
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface ListingDraft {
+  kind: ListingKind;
+  title?: string;
+  body?: string;
+  price?: number;
+  place?: string;
+  destination?: string;
+  happensAt?: string;
+  seats?: number;
+  contactKind: ContactKind;
+  contact: string;
+}
+
+export interface SearchResult {
+  total: number;
+  page: number;
+  terms: string[];
+  results: PostSummary[];
+}
+
 export interface MarketSummary {
   open: number;
   selling: number;
@@ -175,7 +215,6 @@ export interface LeaderboardEntry {
   major: string;
   year: Standing;
   answers: number;
-  streak: number;
   lastAnswerAt: string;
 }
 
@@ -274,9 +313,14 @@ function post<T>(path: string, body: unknown): Promise<T> {
 export const api = {
   health: () => request<Health>('/api/health'),
   home: () => request<HomePayload>('/api/home'),
+  search: (params: { q?: string; topic?: string; sort?: string; page?: number }) => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) if (value) query.set(key, String(value));
+    return request<SearchResult>(`/api/search?${query}`);
+  },
   post: (id: string) => request<{ post: PostDetail; related: PostSummary[] }>(`/api/post?id=${encodeURIComponent(id)}`),
   board: {
-    stats: () => request<{ open: number; answered: number; answers: number; helpers: number }>('/api/board?op=stats'),
+    recent: () => request<{ questions: QuestionWithAnswers[] }>('/api/board?op=recent'),
     question: (id: string) => request<{ question: Question; answers: Answer[] }>(`/api/board?op=question&id=${encodeURIComponent(id)}`),
     mine: (key: string) => request<{ questions: QuestionWithAnswers[] }>(`/api/board?op=mine&key=${encodeURIComponent(key)}`),
     announcements: () => request<{ announcements: Announcement[] }>('/api/board?op=announcements'),
@@ -291,6 +335,10 @@ export const api = {
     offer: (body: { netId: string; key: string; side: OfferSide; amount: number; rate: number; contactKind: ContactKind; contact: string; note?: string }) => post<{ offer: Offer }>('/api/board', { op: 'offer', ...body }),
     offerDone: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'offer_done', ...body }),
     unoffer: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unoffer', ...body }),
+    listings: (key: string) => request<{ listings: Listing[]; mine: Listing[] }>(`/api/board?op=listings&key=${encodeURIComponent(key)}`),
+    listing: (body: ListingDraft & { netId: string; key: string }) => post<{ listing: Listing }>('/api/board', { op: 'listing', ...body }),
+    listingDone: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'listing_done', ...body }),
+    unlisting: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unlisting', ...body }),
     leaderboard: () => request<{ helpers: LeaderboardEntry[] }>('/api/board?op=leaderboard'),
   },
   guide: {

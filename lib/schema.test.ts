@@ -30,8 +30,9 @@ describe('supabase/schema.sql', () => {
     expect(Object.fromEntries(Object.entries(stats.rows[0]!).map(([key, value]) => [key, Number(value)]))).toEqual({ open: 0, answered: 1, answers: 1, helpers: 1 });
     const rls = await db.query<{ relname: string; relrowsecurity: boolean }>(`select relname, relrowsecurity from pg_class where relname like 'board_%' and relkind = 'r' order by relname`);
     expect(rls.rows.every((row) => row.relrowsecurity)).toBe(true);
-    expect(rls.rows.map((row) => row.relname)).toEqual(['board_announcements', 'board_answers', 'board_events', 'board_offers', 'board_profiles', 'board_questions']);
+    expect(rls.rows.map((row) => row.relname)).toEqual(['board_announcements', 'board_answers', 'board_events', 'board_listings', 'board_offers', 'board_profiles', 'board_questions']);
     await db.query(`insert into board_offers (side, amount, rate, contact_kind, contact, poster_key, poster_net_id, poster_name, expires_at) values ('sell', 100, 0.85, 'whatsapp', '+971', 'k', 'abc1234', 'Sara', now() + interval '5 days')`);
+    await db.query(`insert into board_listings (kind, title, price, contact_kind, contact, poster_key, poster_net_id, poster_name, expires_at) values ('sell', 'Mini fridge', 150, 'whatsapp', '+971', 'k', 'abc1234', 'Sara', now() + interval '21 days')`);
     await db.query(`insert into guide_summaries (key, payload) values ('course:CS-UH 1001', '{"overview":"x"}')`);
     const summaries = await db.query<{ relrowsecurity: boolean }>(`select relrowsecurity from pg_class where relname = 'guide_summaries'`);
     expect(summaries.rows[0]!.relrowsecurity).toBe(true);

@@ -146,7 +146,7 @@ describe('api', () => {
   });
 
   it('serves every route without any credentials', async () => {
-    for (const path of ['/api/home', '/api/search?q=calculus', '/api/post?id=p1', '/api/courses']) {
+    for (const path of ['/api/home', '/api/search?q=calculus', '/api/post?id=p1']) {
       const response = await fetch(`${apiUrl}${path}`);
       expect(response.status, path).toBe(200);
     }
@@ -154,13 +154,9 @@ describe('api', () => {
     expect(ask.status).toBe(200);
   });
 
-  it('serves the home payload', async () => {
+  it('serves the starter questions', async () => {
     const home = await getJson(`${apiUrl}/api/home`, { headers });
-    expect(home.stats.posts).toBe(4);
-    expect(home.stats.semantic).toBe(true);
     expect(home.suggestions).toHaveLength(3);
-    expect(home.courses.map((c: { code: string }) => c.code).sort()).toEqual(['CS-UH 1001', 'MATH-UH 1012']);
-    expect(home.topics.find((t: { id: string }) => t.id === 'housing')).toBeTruthy();
   });
 
   it('searches with hybrid retrieval and filters', async () => {
@@ -188,14 +184,6 @@ describe('api', () => {
     expect(result.post.courses).toEqual(['MATH-UH 1012']);
     expect(result.related.map((r: { id: string }) => r.id)).toContain('p4');
     expect((await fetch(`${apiUrl}/api/post?id=nope`, { headers })).status).toBe(404);
-  });
-
-  it('lists courses and their posts', async () => {
-    const list = await getJson(`${apiUrl}/api/courses?q=MATH`, { headers });
-    expect(list.courses).toEqual([{ code: 'MATH-UH 1012', department: 'MATH', count: 1, latest: '2026-04-01' }]);
-    const detail = await getJson(`${apiUrl}/api/courses?code=cs-uh1001`, { headers });
-    expect(detail.code).toBe('CS-UH 1001');
-    expect(detail.posts.map((p: { id: string }) => p.id)).toEqual(['p4']);
   });
 
   it('answers with streaming events', async () => {

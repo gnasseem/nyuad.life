@@ -125,8 +125,10 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
     else if (token.startsWith('`')) nodes.push(<code key={key++}>{token.slice(1, -1)}</code>);
     else if ((token.startsWith('*') || token.startsWith('_')) && token.length > 2) nodes.push(<em key={key++}>{inline(token.slice(1, -1), options)}</em>);
     else if (/^\[\d/.test(token)) {
-      const numbers = token.match(/\d+/g)?.map(Number) ?? [];
-      numbers.forEach((n) => {
+      const numbers = [...new Set(token.match(/\d+/g)?.map(Number) ?? [])];
+      // A long run of citations reads as noise: show the first two and fold the rest into "+n".
+      const shown = numbers.length > 3 ? numbers.slice(0, 2) : numbers;
+      shown.forEach((n) => {
         nodes.push(
           <button
             key={key++}
@@ -141,6 +143,14 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
           </button>,
         );
       });
+      if (numbers.length > shown.length) {
+        const rest = numbers.slice(shown.length);
+        nodes.push(
+          <button key={key++} type="button" className="cite more" aria-label={`Sources ${rest.join(', ')}`} title={`Sources ${rest.join(', ')}`} onClick={() => options.onCitation?.(rest[0]!)}>
+            +{rest.length}
+          </button>,
+        );
+      }
     } else if (token.startsWith('[')) {
       const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
       if (link) nodes.push(<a key={key++} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>);
@@ -153,3 +163,18 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
 }
 
 /** Wraps matching terms in <mark> for search snippets. */
+export function highlight(text: string, terms: string[]): ReactNode[] {
+  const words = terms.filter((term) => term.length > 1).map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (words.length === 0) return [text];
+  const pattern = new RegExp(`\\b(${words.join('|')})\\w*`, 'gi');
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    if (start > cursor) nodes.push(text.slice(cursor, start));
+    nodes.push(<mark key={start}>{match[0]}</mark>);
+    cursor = start + match[0].length;
+  }
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return nodes;
+}

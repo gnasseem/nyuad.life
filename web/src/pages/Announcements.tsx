@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type Announcement, type AnnouncementKind } from '../api';
+import { EmptyState } from '../components/EmptyState';
 import { Modal } from '../components/Modal';
 import { useApp } from '../context';
-import { formatWhen, relativeDate } from '../format';
-import { IconPlus } from '../icons';
+import { formatWhen, groupByDay, relativeDate, startsIn } from '../format';
+import { IconCalendar, IconMegaphone, IconPlus } from '../icons';
 import { askerKey, loadAnnounced, saveAnnounced } from '../store';
 
 const KINDS: Array<{ id: AnnouncementKind; label: string }> = [
@@ -14,49 +15,40 @@ const KINDS: Array<{ id: AnnouncementKind; label: string }> = [
   { id: 'notice', label: 'General' },
 ];
 
-function startOfDay(date: Date): Date {
-  const copy = new Date(date);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
+/** A one-event calendar file for a dated notice; an hour long unless it is a whole-day deadline. */
+function calendarFile(entry: Announcement): string {
+  const start = new Date(entry.startsAt!);
+  const allDay = start.getHours() === 0 && start.getMinutes() === 0;
+  const stamp = (date: Date) => date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const day = (date: Date) => `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+  const escape = (text: string) => text.replace(/[\\;,]/g, (match) => `\\${match}`).replace(/\n/g, '\\n');
+  const end = new Date(start.getTime() + (allDay ? 86_400_000 : 3_600_000));
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//nyuad.life//notices//EN',
+    'BEGIN:VEVENT',
+    `UID:${entry.id}@nyuad.life`,
+    `DTSTAMP:${stamp(new Date())}`,
+    allDay ? `DTSTART;VALUE=DATE:${day(start)}` : `DTSTART:${stamp(start)}`,
+    allDay ? `DTEND;VALUE=DATE:${day(end)}` : `DTEND:${stamp(end)}`,
+    `SUMMARY:${escape(entry.title)}`,
+    entry.location ? `LOCATION:${escape(entry.location)}` : '',
+    entry.body || entry.link ? `DESCRIPTION:${escape([entry.body, entry.link].filter(Boolean).join('\n\n'))}` : '',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ]
+    .filter(Boolean)
+    .join('\r\n');
 }
 
-function dayDiff(when: Date, now: Date): number {
-  return Math.round((startOfDay(when).getTime() - startOfDay(now).getTime()) / 86_400_000);
-}
-
-interface Group {
-  key: string;
-  label: string;
-  sub?: string;
-  items: Announcement[];
-}
-
-/** Dated notices by day for the coming week, then "Next week" and "Later"; the input is already soonest first. */
-function groupByDay(items: Announcement[], now: Date): Group[] {
-  const groups: Group[] = [];
-  for (const entry of items) {
-    const when = new Date(entry.startsAt!);
-    const diff = dayDiff(when, now);
-    const key = diff <= 0 ? 'today' : diff === 1 ? 'tomorrow' : diff < 7 ? `day-${diff}` : diff < 14 ? 'next-week' : 'later';
-    let group = groups.find((candidate) => candidate.key === key);
-    if (!group) {
-      const label = diff <= 0 ? 'Today' : diff === 1 ? 'Tomorrow' : diff < 7 ? when.toLocaleDateString('en-GB', { weekday: 'long' }) : diff < 14 ? 'Next week' : 'Later';
-      const sub = diff < 7 ? when.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : undefined;
-      group = { key, label, sub, items: [] };
-      groups.push(group);
-    }
-    group.items.push(entry);
-  }
-  return groups;
-}
-
-/** "In 40 min", "In 3 h", or "Now" for the first three hours after the start. */
-function startsIn(when: Date, now: Date): { text: string; live: boolean } | null {
-  const minutes = Math.round((when.getTime() - now.getTime()) / 60_000);
-  if (minutes <= 0) return minutes > -180 ? { text: 'Now', live: true } : null;
-  if (minutes < 60) return { text: `In ${minutes} min`, live: false };
-  const hours = Math.round(minutes / 60);
-  return hours < 24 ? { text: `In ${hours} h`, live: false } : null;
+function addToCalendar(entry: Announcement): void {
+  const url = URL.createObjectURL(new Blob([calendarFile(entry)], { type: 'text/calendar' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${entry.title.replace(/[^\w\s-]/g, '').trim().slice(0, 60) || 'event'}.ics`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function AnnouncementsPage() {
@@ -105,6 +97,7 @@ export function AnnouncementsPage() {
   const shown = (items ?? []).filter((entry) => !filter || entry.kind === filter);
   const dated = groupByDay(
     shown.filter((entry) => entry.startsAt),
+    (entry) => new Date(entry.startsAt!),
     now,
   );
   const undated = shown.filter((entry) => !entry.startsAt);
@@ -140,17 +133,15 @@ export function AnnouncementsPage() {
           <div className="skeleton" style={{ height: 64 }} />
         </div>
       )}
-      {items && shown.length === 0 && !error && (
-        <div className="empty">
-          Nothing on right now.
-          <br />
-          <button type="button" className="btn" onClick={() => void startPosting()}>
+      {items && items.length === 0 && !error && (
+        <EmptyState icon={<IconMegaphone />} title="Nothing on right now" text="Events, deadlines, openings and club news from students show up here, soonest first.">
+          <button type="button" className="btn primary" onClick={() => void startPosting()}>
             Post a notice
           </button>
-        </div>
+        </EmptyState>
       )}
       {dated.map((group) => (
-        <section key={group.key} className="ann-group">
+        <section key={group.key} className="day-group">
           <h2 className="section-title">
             {group.label}
             {group.sub && <span>{group.sub}</span>}
@@ -163,7 +154,7 @@ export function AnnouncementsPage() {
         </section>
       ))}
       {undated.length > 0 && (
-        <section className="ann-group">
+        <section className="day-group">
           <h2 className="section-title">Undated</h2>
           <div className="list">
             {undated.map((entry) => (
@@ -236,6 +227,11 @@ function Item({ entry, now, mine, onRemove }: { entry: Announcement; now: Date; 
           <a href={entry.link} target="_blank" rel="noreferrer">
             Link
           </a>
+        )}
+        {when && (
+          <button type="button" onClick={() => addToCalendar(entry)}>
+            <IconCalendar /> Add to calendar
+          </button>
         )}
         {mine && (
           <button type="button" onClick={onRemove}>

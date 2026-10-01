@@ -1,5 +1,5 @@
-/** Per-device state in localStorage: theme, past conversations, the helper profile and the anonymous asker key. */
-import type { ChatTurn, Confidence, Profile, Redirect, SourceCard } from './api';
+/** Per-device state in localStorage: theme, past conversations, the helper profile, the anonymous asker key and the contact last used. */
+import type { ChatTurn, Confidence, ContactKind, Profile, Redirect, SourceCard } from './api';
 
 export interface Message {
   id: string;
@@ -27,6 +27,7 @@ const THEME_KEY = 'room.theme';
 const PROFILE_KEY = 'room.profile';
 const KEY_KEY = 'room.key';
 const ANNOUNCED_KEY = 'room.announced';
+const CONTACT_KEY = 'room.contact';
 const MAX_CONVERSATIONS = 60;
 
 function read<T>(key: string, fallback: T): T {
@@ -138,9 +139,18 @@ export function saveAnnounced(ids: string[]): void {
   write(ANNOUNCED_KEY, ids.slice(-50));
 }
 
-/** Removes everything this site keeps in the browser: profile, conversations, the anonymous key and the theme. */
+/** The contact method from the last offer or listing, so the next one starts filled in. */
+export function loadContact(): { contactKind: ContactKind; contact: string } {
+  return read(CONTACT_KEY, { contactKind: 'whatsapp' as ContactKind, contact: '' });
+}
+
+export function saveContact(value: { contactKind: ContactKind; contact: string }): void {
+  write(CONTACT_KEY, value);
+}
+
+/** Removes everything this site keeps in the browser: profile, conversations, the anonymous key, the contact and the theme. */
 export function forgetDevice(): void {
-  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, KEY_KEY, ANNOUNCED_KEY]) {
+  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, KEY_KEY, ANNOUNCED_KEY, CONTACT_KEY]) {
     try {
       localStorage.removeItem(key);
     } catch {
