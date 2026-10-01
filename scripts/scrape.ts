@@ -127,6 +127,11 @@ interface State {
   feedCursorOldest?: string;
   /** How often each thread was opened for comments; threads that still look incomplete after two visits are left alone. */
   commentTries?: Record<string, number>;
+  /**
+   * Facebook's comment count when each thread was last read to the end. The archive can still look short afterwards,
+   * because identical comments by one author (a second "bump") collapse into one; such threads wait for the count to rise.
+   */
+  commentsRead?: Record<string, number>;
   /** Months (YYYY-MM) an --all-time walk has fully searched; the next --all-time run skips them. */
   monthsDone?: string[];
 }
@@ -865,9 +870,10 @@ const EXPANDERS = /^(view|see|show) (\d+ |all \d+ |more |previous )?(more )?(com
 async function collectComments(walk: WalkContext, archive: SourcePost[], known: Map<string, SourcePost>): Promise<void> {
   const { state } = walk;
   const tries = (state.commentTries ??= {});
+  const read = (state.commentsRead ??= {});
   const queue = new Set<string>(state.pendingComments);
   for (const post of archive) if (needsComments(post)) queue.add(post.id);
-  const wanted = sortNewestFirst(archive).filter((post) => queue.has(post.id));
+  const wanted = sortNewestFirst(archive).filter((post) => queue.has(post.id) && !((read[post.id] ?? -1) >= (post.commentCount ?? 0)));
   const ordered = wanted.filter((post) => ONLY_COMMENTS || (tries[post.id] ?? 0) < 2).map((post) => post.id);
   const skipped = wanted.length - ordered.length;
   log(`${ordered.length} threads need comments${skipped ? ` (${skipped} more were already opened twice and still look incomplete; --only-comments retries them)` : ''}.`);
@@ -892,7 +898,10 @@ async function collectComments(walk: WalkContext, archive: SourcePost[], known: 
       if (replayed === 'unavailable') complete = await fetchComments(walk.page, post);
       else complete = replayed === 'complete' || (post.commentCount ?? 0) <= countCommentsFor(post.id);
       failures = 0;
-      if (complete) delete tries[id];
+      if (complete) {
+        delete tries[id];
+        read[id] = Math.max(post.commentCount ?? 0, stories.get(id)?.commentCount ?? 0);
+      }
       // Every page was read, but Facebook's count includes comments it no longer shows: opening it again will not help.
       else if (replayed === 'exhausted') tries[id] = 2;
       else tries[id] = (tries[id] ?? 0) + 1;
