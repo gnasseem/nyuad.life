@@ -2,12 +2,10 @@ import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, us
 import { api, boardProblem as describeBoardProblem, type Health, type HomePayload, type Profile } from './api';
 import { APP_NAME } from './brand';
 import { Wordmark } from './components/Logo';
-import { Network } from './components/Network';
-import { Palette } from './components/Palette';
 import { ProfileModal } from './components/ProfileForm';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
 import { initials, relativeDate } from './format';
-import { IconAsk, IconAuto, IconBag, IconClock, IconMap, IconMegaphone, IconMoon, IconQuestions, IconSearch, IconSun, IconTrash, IconUser } from './icons';
+import { IconAsk, IconAuto, IconBag, IconClock, IconMap, IconMegaphone, IconMoon, IconQuestions, IconSun, IconTrash, IconUser } from './icons';
 import { AnnouncementsPage } from './pages/Announcements';
 import { AskPage } from './pages/Ask';
 import { GuidePage } from './pages/Guide';
@@ -48,7 +46,6 @@ export function App() {
   const [toastState, setToastState] = useState<{ message: string; leaving: boolean; id: number } | null>(null);
   const [askPrefill, setAskPrefillState] = useState<(Prefill & { token: number }) | null>(null);
   const [boardPrefill, setBoardPrefill] = useState('');
-  const [palette, setPalette] = useState(false);
   const [history, setHistory] = useState(false);
   const [profileAsk, setProfileAsk] = useState<{ title: string; reason: string } | null>(null);
   const profileRequest = useRef<((saved: boolean) => void) | null>(null);
@@ -82,7 +79,6 @@ export function App() {
 
   useEffect(() => {
     setHistory(false);
-    setPalette(false);
   }, [route, search]);
 
   useEffect(() => {
@@ -95,33 +91,6 @@ export function App() {
   useEffect(() => {
     document.documentElement.dataset.line = line;
   }, [line]);
-
-  // ⌘K or Ctrl+K anywhere, or "/" when not typing, opens the palette; G then a letter jumps to a line.
-  useEffect(() => {
-    let pendingG = 0;
-    const jumps: Record<string, Route> = { a: { name: 'ask' }, q: { name: 'questions' }, n: { name: 'announcements' }, m: { name: 'market', tab: 'items' }, g: { name: 'guide' }, s: { name: 'settings' } };
-    const onKey = (event: KeyboardEvent) => {
-      const typing = event.target instanceof HTMLElement && (event.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName));
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        setPalette((open) => !open);
-        return;
-      }
-      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
-      const key = event.key.toLowerCase();
-      if (pendingG && Date.now() - pendingG < 1200 && jumps[key]) {
-        event.preventDefault();
-        pendingG = 0;
-        navigate(jumps[key]!);
-      } else if (key === 'g') pendingG = Date.now();
-      else if (event.key === '/') {
-        event.preventDefault();
-        setPalette(true);
-      } else pendingG = 0;
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, []);
 
   const toastTimers = useRef<number[]>([]);
   const toast = useCallback((message: string) => {
@@ -168,7 +137,6 @@ export function App() {
   const cycleTheme = () => setThemeState(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');
   const ThemeIcon = theme === 'light' ? IconSun : theme === 'dark' ? IconMoon : IconAuto;
   const currentConversation = route.name === 'ask' ? search.get('c') : null;
-  const closePalette = useCallback(() => setPalette(false), []);
 
   const page = (() => {
     switch (route.name) {
@@ -211,18 +179,12 @@ export function App() {
     <AppContext.Provider value={context}>
       <div className="app">
         <div className="ground" aria-hidden="true" />
-        <Network />
         <header className="appbar">
           <a href="/" className="brand" onClick={onLinkClick} aria-label={`${APP_NAME}, home`}>
             <Wordmark />
           </a>
           <LineNav activeIndex={activeIndex} />
           <div className="bar-tools">
-            <button type="button" className="where-to" onClick={() => setPalette(true)} aria-label="Search">
-              <IconSearch />
-              <span>Search</span>
-              <kbd>⌘K</kbd>
-            </button>
             <HistoryMenu open={history} setOpen={setHistory} conversations={conversations} current={currentConversation} />
             <button type="button" className="icon-btn" onClick={cycleTheme} title={THEME_LABEL[theme]} aria-label={THEME_LABEL[theme]}>
               <ThemeIcon key={theme} className="turn-in" />
@@ -249,7 +211,6 @@ export function App() {
           {toastState.message}
         </div>
       )}
-      <Palette open={palette} onClose={closePalette} />
       <ProfileModal open={profileAsk !== null} title={profileAsk?.title ?? ''} reason={profileAsk?.reason ?? ''} onClose={() => finishProfile(false)} onDone={() => finishProfile(true)} />
     </AppContext.Provider>
   );

@@ -7,11 +7,10 @@ import { SourceRow } from '../components/SourceRow';
 import { useApp } from '../context';
 import { formatTime, plural, relativeDate, startsIn } from '../format';
 import { IconArrow, IconCheck, IconChevron, IconCopy, IconPlus, IconStop } from '../icons';
-import { Mark } from '../components/Logo';
 import { Markdown } from '../markdown';
 import { useNow } from '../motion';
 import { navigate, onLinkClick } from '../router';
-import { askerKey, loadConversations, onConversationsChange, saveConversation, toHistory, uid, type Conversation, type Message } from '../store';
+import { askerKey, loadConversations, saveConversation, toHistory, uid, type Conversation, type Message } from '../store';
 
 interface Props {
   resumeId?: string;
@@ -486,77 +485,53 @@ function useHomeData(): HomeData {
 function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: ReactNode; suggestions: Array<{ topic: string; question: string }>; onSuggestion(question: string): void; answersOff: boolean }) {
   const { boardProblem } = useApp();
   const data = useHomeData();
-  const [recent, setRecent] = useState(() => loadConversations().slice(0, 3));
-  const [hotLine, setHotLine] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  useEffect(() => onConversationsChange(() => setRecent(loadConversations().slice(0, 3))), []);
-  useEffect(() => {
-    document.documentElement.setAttribute('data-home', '');
-    return () => document.documentElement.removeAttribute('data-home');
-  }, []);
-
   const now = useNow();
-  const upcoming = (data.notices ?? []).filter((entry) => !entry.startsAt || Date.parse(entry.startsAt) > now.getTime() - 3 * 3_600_000).slice(0, 4);
+  const upcoming = (data.notices ?? []).filter((entry) => !entry.startsAt || Date.parse(entry.startsAt) > now.getTime() - 3 * 3_600_000).slice(0, 3);
   const offline = boardProblem ? <p className="stops-note">Unavailable right now.</p> : null;
 
   return (
     <div className="home" ref={rootRef}>
-      <section className="home-center">
-        <div className="central" data-anchor="hub">
-          <div className="central-head">
-            <span className="central-ring" aria-hidden="true">
-              <Mark />
-            </span>
-            <h1 className="central-name">Central</h1>
-            <span className="central-ar" lang="ar" dir="rtl">
-              المركز
-            </span>
-          </div>
-          {composer}
+      <section className="central">
+        <div className="central-sign">
+          <h1>Central</h1>
+          <span lang="ar" dir="rtl">
+            المركز
+          </span>
         </div>
-        {answersOff && <p className="ask-note">Answers are paused right now.</p>}
+        <div className="central-ask">
+          {composer}
+          {answersOff && <p className="central-note">Answers are paused right now.</p>}
+        </div>
         {suggestions.length > 0 && (
           <div className="journeys">
-            <h2>Try asking</h2>
             {suggestions.slice(0, 3).map((suggestion) => (
               <button key={suggestion.question} type="button" className="journey" onClick={() => onSuggestion(suggestion.question)}>
                 {suggestion.question}
-                <IconArrow />
               </button>
-            ))}
-          </div>
-        )}
-        {recent.length > 0 && (
-          <div className="home-recent">
-            <h2>Recent</h2>
-            {recent.map((conversation) => (
-              <a key={conversation.id} href={`/?c=${conversation.id}`} onClick={onLinkClick}>
-                <span>{conversation.title}</span>
-                <small>{relativeDate(conversation.updatedAt)}</small>
-              </a>
             ))}
           </div>
         )}
       </section>
 
-      <aside className="home-rail left" aria-label="On campus">
-        <RailSection line="notices" title="On campus" href="/notices" onHot={setHotLine}>
+      <div className="line-cards">
+        <LineCard line="notices" title="Notices" ar="الإعلانات" href="/notices">
           {offline ??
             (data.notices === null ? (
               <Loading />
             ) : upcoming.length === 0 ? (
-              <p className="stops-note">Nothing yet.</p>
+              <p className="stops-note">Nothing coming up.</p>
             ) : (
-              upcoming.map((entry, index) => (
-                <a key={entry.id} className="stn" href="/notices" onClick={onLinkClick} style={{ '--i': index } as React.CSSProperties}>
+              upcoming.map((entry) => (
+                <a key={entry.id} className="stn" href="/notices" onClick={onLinkClick}>
                   <span className="when">{noticeWhen(entry, now)}</span>
                   <span className="what">{entry.title}</span>
                   {entry.location && <span className="where">{entry.location}</span>}
                 </a>
               ))
             ))}
-        </RailSection>
-        <RailSection line="market" title="Market" href="/market/rides" onHot={setHotLine}>
+        </LineCard>
+        <LineCard line="market" title="Market" ar="السوق" href="/market/rides">
           {offline ??
             (data.rides === null ? (
               <Loading />
@@ -565,72 +540,62 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
                 {data.rides.length === 0 ? (
                   <p className="stops-note">No rides yet.</p>
                 ) : (
-                  data.rides.slice(0, 3).map((ride, index) => {
+                  data.rides.slice(0, 3).map((ride) => {
                     const soon = startsIn(new Date(ride.happensAt!), now, 60);
                     return (
-                      <a key={ride.id} className="stn" href="/market/rides" onClick={onLinkClick} style={{ '--i': index } as React.CSSProperties}>
-                        <span className="when">{soon?.live ? 'Leaving now' : formatTime(ride.happensAt!)}</span>
+                      <a key={ride.id} className="stn" href="/market/rides" onClick={onLinkClick}>
+                        <span className="when">{soon?.live ? 'Leaving now' : rideWhen(ride.happensAt!, now)}</span>
                         <span className="what">To {ride.destination}</span>
                       </a>
                     );
                   })
                 )}
                 {data.market && data.market.open > 0 && (
-                  <a href="/market/falcons" onClick={onLinkClick} style={{ '--i': 4, paddingTop: 10 } as React.CSSProperties}>
-                    <div className="rate-board" title="Falcons, AED per Falcon">
-                      <div>
-                        <b>
-                          <Flap text={data.market.bestAsk === null ? '–' : data.market.bestAsk.toFixed(2)} />
-                        </b>
-                        <span>Falcons · sell</span>
-                      </div>
-                      <div>
-                        <b>
-                          <Flap text={data.market.bestBid === null ? '–' : data.market.bestBid.toFixed(2)} />
-                        </b>
-                        <span>Falcons · buy</span>
-                      </div>
-                    </div>
+                  <a className="rate-board" href="/market/falcons" onClick={onLinkClick} title="Falcons, AED per Falcon">
+                    <span>Falcons</span>
+                    <b className="sell">
+                      <Flap text={data.market.bestAsk === null ? '–' : data.market.bestAsk.toFixed(2)} />
+                    </b>
+                    <b className="buy">
+                      <Flap text={data.market.bestBid === null ? '–' : data.market.bestBid.toFixed(2)} />
+                    </b>
                   </a>
                 )}
               </>
             ))}
-        </RailSection>
-      </aside>
-
-      <aside className="home-rail right" aria-label="Students and the guide">
-        <RailSection line="questions" title="Students asking" href="/questions?tab=help" onHot={setHotLine}>
+        </LineCard>
+        <LineCard line="questions" title="Questions" ar="الأسئلة" href="/questions">
           {offline ??
             (data.answered === null ? (
               <Loading />
             ) : data.answered.length === 0 ? (
               <p className="stops-note">{data.open ? `${plural(data.open, 'question')} waiting` : 'Nothing yet.'}</p>
             ) : (
-              data.answered.slice(0, 3).map((question, index) => (
-                <a key={question.id} className="stn" href={`/questions/${question.id}`} onClick={onLinkClick} style={{ '--i': index } as React.CSSProperties}>
-                  <span className="when">{plural(question.answers.length, 'answer')}</span>
+              data.answered.slice(0, 3).map((question) => (
+                <a key={question.id} className="stn" href={`/questions/${question.id}`} onClick={onLinkClick}>
+                  <span className="when">{question.answers[0] ? `${question.answers[0].helperName.split(' ')[0]} answered` : relativeDate(question.createdAt)}</span>
                   <span className="what">{question.text}</span>
                 </a>
               ))
             ))}
-        </RailSection>
-        <RailSection line="guide" title="Popular courses" href="/guide/courses" onHot={setHotLine}>
+        </LineCard>
+        <LineCard line="guide" title="Guide" ar="الدليل" href="/guide">
           {data.courses === null ? (
             <Loading />
           ) : data.courses.length === 0 ? (
             <p className="stops-note">Nothing yet.</p>
           ) : (
-            data.courses.map((course, index) => (
-              <a key={course.code} className="stn" href={`/guide/courses/${encodeURIComponent(course.code)}`} onClick={onLinkClick} style={{ '--i': index } as React.CSSProperties}>
+            data.courses.slice(0, 3).map((course) => (
+              <a key={course.code} className="stn" href={`/guide/courses/${encodeURIComponent(course.code)}`} onClick={onLinkClick}>
                 <span className="when">{course.code}</span>
                 <span className="what">{course.title || course.code}</span>
               </a>
             ))
           )}
-        </RailSection>
-      </aside>
+        </LineCard>
+      </div>
 
-      <HomeLines root={rootRef} hot={hotLine} deps={[data, recent.length, suggestions.length]} />
+      <HomeLines root={rootRef} deps={[data, suggestions.length, answersOff]} />
     </div>
   );
 }
@@ -648,81 +613,94 @@ function noticeWhen(entry: Announcement, now: Date): string {
   const when = new Date(entry.startsAt);
   const soon = startsIn(when, now);
   if (soon?.live) return 'Now';
-  const day = when.toDateString() === now.toDateString() ? 'Today' : when.toDateString() === new Date(now.getTime() + 86_400_000).toDateString() ? 'Tomorrow' : when.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
   const allDay = when.getHours() === 0 && when.getMinutes() === 0;
-  return allDay ? day : `${day} ${formatTime(entry.startsAt)}`;
+  return allDay ? dayName(when, now) : `${dayName(when, now)} ${formatTime(entry.startsAt)}`;
 }
 
-function RailSection({ line, title, href, onHot, children }: { line: string; title: string; href: string; onHot(line: string | null): void; children: ReactNode }) {
+function rideWhen(iso: string, now: Date): string {
+  const when = new Date(iso);
+  return when.toDateString() === now.toDateString() ? formatTime(iso) : `${dayName(when, now)} ${formatTime(iso)}`;
+}
+
+function dayName(when: Date, now: Date): string {
+  if (when.toDateString() === now.toDateString()) return 'Today';
+  if (when.toDateString() === new Date(now.getTime() + 86_400_000).toDateString()) return 'Tomorrow';
+  return when.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+/** One line's card under Central: its ring, where the line from Central comes in, and the next stops on it. */
+function LineCard({ line, title, ar, href, children }: { line: string; title: string; ar: string; href: string; children: ReactNode }) {
   return (
-    <section className="rail-sec" data-line={line} onMouseEnter={() => onHot(line)} onMouseLeave={() => onHot(null)}>
-      <div className="rail-head">
-        <span className="rail-ring" data-ring={line} />
-        <h2>
-          <a href={href} onClick={onLinkClick}>
-            {title}
-          </a>
-        </h2>
-      </div>
-      <div className="stations in-plate grow">{children}</div>
+    <section className="line-card" data-line={line}>
+      <a className="line-card-head" href={href} onClick={onLinkClick}>
+        <span className="line-ring" data-ring={line} />
+        <h2>{title}</h2>
+        <span className="ar" lang="ar" dir="rtl">
+          {ar}
+        </span>
+        <IconArrow />
+      </a>
+      <div className="stations in-plate">{children}</div>
     </section>
   );
 }
 
+const LINE_ORDER = ['notices', 'market', 'questions', 'guide'];
+
 /**
- * The lines from the interchange to each rail section, measured from the page so they meet the rings exactly. Lines
- * leave the hub in pairs, the nearer section's line runs straight across and the further one drops down the gap
- * between the columns, bending at 45° like a printed diagram. Trains run in towards the hub now and then.
+ * The four lines leaving Central, drawn as one bundle: out of the right end of the ask box, down the right of the
+ * board, back along its foot, and each one peeling off into its card. The line for the rightmost card rides on the
+ * outside of every bend, so no two lines ever cross. Measured from the page; only drawn while the cards sit in a row.
  */
-function HomeLines({ root, hot, deps }: { root: React.RefObject<HTMLDivElement | null>; hot: string | null; deps: unknown[] }) {
-  const [paths, setPaths] = useState<Array<{ line: string; d: string; dur: number; delay: number }>>([]);
+function HomeLines({ root, deps }: { root: React.RefObject<HTMLDivElement | null>; deps: unknown[] }) {
+  const [paths, setPaths] = useState<Array<{ line: string; d: string }>>([]);
 
   useLayoutEffect(() => {
     const element = root.current;
     if (!element) return;
     const measure = () => {
-      if (!window.matchMedia('(min-width: 1241px)').matches) return setPaths([]);
+      if (!window.matchMedia('(min-width: 1100px)').matches) return setPaths([]);
       const box = element.getBoundingClientRect();
       const rect = (selector: string) => element.querySelector(selector)?.getBoundingClientRect();
-      const hub = rect('[data-anchor="hub"]');
-      const head = rect('.central-head');
-      const center = rect('.home-center');
-      if (!hub || !head || !center) return;
-      const hy = head.top + head.height / 2 - box.top;
-      const edge = { left: hub.left - box.left, right: hub.right - box.left };
-      const next: Array<{ line: string; d: string; dur: number; delay: number }> = [];
-      const sides: Array<{ dir: -1 | 1; lines: string[]; rail: DOMRect | undefined }> = [
-        { dir: -1, lines: ['notices', 'market'], rail: rect('.home-rail.left') },
-        { dir: 1, lines: ['questions', 'guide'], rail: rect('.home-rail.right') },
-      ];
-      for (const side of sides) {
-        if (!side.rail) continue;
-        const gap = side.dir < 0 ? (side.rail.right + center.left) / 2 - box.left : (center.right + side.rail.left) / 2 - box.left;
-        side.lines.forEach((line, index) => {
-          const ring = rect(`[data-ring="${line}"]`);
-          if (!ring) return;
-          const rx = ring.left + ring.width / 2 - box.left;
-          const ry = ring.top + ring.height / 2 - box.top;
-          const y0 = hy + (index === 0 ? -5 : 5);
-          const sx = side.dir < 0 ? edge.left : edge.right;
-          const c = 22;
-          let points: Array<[number, number]>;
-          if (index === 0) {
-            const dy = ry - y0;
-            const jogStart = rx - side.dir * (Math.abs(dy) + 28);
-            points = Math.abs(dy) < 2 ? [[sx, y0], [rx, y0]] : [[sx, y0], [jogStart, y0], [jogStart + side.dir * Math.abs(dy), ry], [rx, ry]];
-          } else {
-            points = [[sx, y0], [gap - side.dir * c, y0], [gap, y0 + c], [gap, ry - c], [gap + side.dir * c, ry], [rx, ry]];
-          }
-          next.push({ line, d: `M ${points.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(' L ')}`, dur: 6 + index * 2.5 + (side.dir > 0 ? 1.3 : 0), delay: 1.4 + next.length * 0.9 });
-        });
-      }
+      const board = rect('.central');
+      const composer = rect('.central .composer');
+      if (!board || !composer) return;
+      const gap = 11;
+      const big = 30;
+      const hubY = composer.top + composer.height / 2 - box.top;
+      const hubX = composer.right - box.left;
+      const downX = board.right - box.left - 64;
+      const footY = board.bottom - box.top - 44;
+      const next: Array<{ line: string; d: string }> = [];
+      LINE_ORDER.forEach((line, i) => {
+        const ring = rect(`[data-ring="${line}"]`);
+        if (!ring) return;
+        const offset = (i - 1.5) * gap;
+        const r = big + offset;
+        const y0 = hubY - offset;
+        const x1 = downX + offset;
+        const y2 = footY + offset;
+        const rx = ring.left + ring.width / 2 - box.left;
+        const ry = ring.top + ring.height / 2 - box.top;
+        const turn = 18;
+        const d = [
+          `M ${hubX} ${y0}`,
+          `H ${downX - big}`,
+          `A ${r} ${r} 0 0 1 ${x1} ${hubY + big}`,
+          `V ${footY - big}`,
+          `A ${r} ${r} 0 0 1 ${downX - big} ${y2}`,
+          `H ${rx + turn}`,
+          `A ${turn} ${turn} 0 0 0 ${rx} ${y2 + turn}`,
+          `V ${ry}`,
+        ].join(' ');
+        next.push({ line, d });
+      });
       setPaths(next);
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
-    element.querySelectorAll('.home-rail, .home-center').forEach((node) => observer.observe(node));
+    element.querySelectorAll('.central, .line-card').forEach((node) => observer.observe(node));
     void document.fonts?.ready.then(measure);
     return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -730,12 +708,12 @@ function HomeLines({ root, hot, deps }: { root: React.RefObject<HTMLDivElement |
 
   if (paths.length === 0) return null;
   return (
-    <svg className="home-lines" aria-hidden="true" data-hot={hot ?? undefined}>
+    <svg className="home-lines" aria-hidden="true">
       {paths.map((path, index) => (
-        <path key={path.line} className="hl draw" data-line={path.line} d={path.d} pathLength={1} style={{ animationDelay: `${index * 0.12}s` }} />
+        <path key={path.line} className="hl draw" data-line={path.line} d={path.d} pathLength={1} style={{ animationDelay: `${0.2 + index * 0.12}s` }} />
       ))}
-      {paths.map((path) => (
-        <path key={`t-${path.line}`} className="hl-train" d={path.d} pathLength={1} style={{ '--dur': `${path.dur}s`, '--delay': `${path.delay}s` } as React.CSSProperties} />
+      {paths.map((path, index) => (
+        <path key={`t-${path.line}`} className="hl-train" d={path.d} pathLength={1} style={{ '--dur': `${7 + index * 1.7}s`, '--delay': `${1.4 + index * 1.1}s` } as React.CSSProperties} />
       ))}
     </svg>
   );

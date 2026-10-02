@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, type GuideCourse, type GuideSection, type PostSummary } from '../api';
 import { useApp } from '../context';
 import { formatDate, relativeDate } from '../format';
-import { IconAsk, IconChat, IconClock, IconMoon, IconSearch, IconSun } from '../icons';
+import { IconAsk, IconChat, IconClock, IconSearch } from '../icons';
 import { navigate, type Route } from '../router';
 import { loadConversations } from '../store';
 
@@ -18,21 +17,6 @@ export interface SearchItem {
   run(): void;
 }
 
-const PLACES: Array<{ title: string; line: string; route: Route; search?: string; words: string }> = [
-  { title: 'Ask', line: 'ask', route: { name: 'ask' }, words: 'ask question answer home central' },
-  { title: 'Ask students', line: 'questions', route: { name: 'questions' }, words: 'questions ask students board post' },
-  { title: 'Answer questions', line: 'questions', route: { name: 'questions' }, search: 'tab=help', words: 'answer help questions flashcards leaderboard' },
-  { title: 'Notices', line: 'notices', route: { name: 'announcements' }, words: 'notices events deadlines announcements calendar clubs' },
-  { title: 'For sale, wanted and free', line: 'market', route: { name: 'market', tab: 'items' }, words: 'market sell buy for sale wanted free listings' },
-  { title: 'Falcons', line: 'market', route: { name: 'market', tab: 'falcons' }, words: 'falcons dirhams exchange rate buy sell meal' },
-  { title: 'Rides', line: 'market', route: { name: 'market', tab: 'rides' }, words: 'rides taxi careem airport dubai share' },
-  { title: 'Lost and found', line: 'market', route: { name: 'market', tab: 'lost' }, words: 'lost found missing' },
-  { title: 'Guide', line: 'guide', route: { name: 'guide' }, words: 'guide map official pages' },
-  { title: 'Group threads', line: 'guide', route: { name: 'guide', section: 'threads' }, words: 'threads archive group facebook room of requirement search' },
-  { title: 'Courses', line: 'guide', route: { name: 'guide', section: 'courses' }, words: 'courses bulletin classes catalog' },
-  { title: 'Settings', line: 'ask', route: { name: 'settings' }, words: 'settings theme details profile data' },
-];
-
 function score(haystack: string, needle: string): number {
   const text = haystack.toLowerCase();
   if (!needle) return 1;
@@ -44,9 +28,9 @@ function score(haystack: string, needle: string): number {
 
 const squash = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-/** Everything a search box can take you to: places, guide sections, courses, past conversations and, optionally, threads. */
+/** Everything the guide's search box can take you to: Ask, guide sections, courses, past conversations and, optionally, threads. */
 export function useSearchItems(query: string, done: () => void, options: { threads?: boolean } = {}): SearchItem[] {
-  const { setAskPrefill, theme, setTheme } = useApp();
+  const { setAskPrefill } = useApp();
   const [sections, setSections] = useState<GuideSection[]>([]);
   const [courses, setCourses] = useState<GuideCourse[]>([]);
   const [threads, setThreads] = useState<PostSummary[]>([]);
@@ -97,12 +81,6 @@ export function useSearchItems(query: string, done: () => void, options: { threa
       items.push({ id: 'threads', group: 'Ask', title: <>Search threads for <q>{question}</q></>, hint: 'Threads', line: 'guide', icon: <IconSearch />, run: go({ name: 'guide', section: 'threads' }, `q=${encodeURIComponent(question)}`) });
     }
 
-    const places = PLACES.map((place) => ({ place, s: Math.max(score(place.title, needle), score(place.words, needle) ? 1 : 0) }))
-      .filter((entry) => entry.s > 0)
-      .sort((a, b) => b.s - a.s)
-      .slice(0, needle ? 4 : PLACES.length);
-    for (const { place } of places) items.push({ id: `place-${place.title}`, group: 'Go to', title: place.title, line: place.line, run: go(place.route, place.search) });
-
     if (needle) {
       const sectionHits = sections.filter((section) => section.count > 0 && score(section.label, needle) > 0).slice(0, 4);
       for (const section of sectionHits) items.push({ id: `section-${section.id}`, group: 'Guide', title: section.label, line: 'guide', run: go({ name: 'guide', section: section.id }) });
@@ -118,20 +96,11 @@ export function useSearchItems(query: string, done: () => void, options: { threa
       for (const post of threads) items.push({ id: `post-${post.id}`, group: 'From the group', title: post.preview.replace(/\s+/g, ' ').slice(0, 110), hint: formatDate(post.date), line: 'guide', icon: <IconChat />, run: go({ name: 'post', id: post.id }) });
     }
 
-    const conversations = loadConversations()
-      .filter((conversation) => !needle || score(conversation.title, needle) > 0)
-      .slice(0, needle ? 4 : 5);
-    for (const conversation of conversations) items.push({ id: `c-${conversation.id}`, group: needle ? 'Your questions' : 'Recent', title: conversation.title, hint: relativeDate(conversation.updatedAt), line: 'ask', icon: <IconClock />, run: go({ name: 'ask' }, `c=${conversation.id}`) });
+    const conversations = needle ? loadConversations().filter((conversation) => score(conversation.title, needle) > 0).slice(0, 4) : [];
+    for (const conversation of conversations) items.push({ id: `c-${conversation.id}`, group: 'Your questions', title: conversation.title, hint: relativeDate(conversation.updatedAt), line: 'ask', icon: <IconClock />, run: go({ name: 'ask' }, `c=${conversation.id}`) });
 
-    if (!needle || score('night day theme dark light service', needle) > 0) {
-      const next = theme === 'dark' ? 'light' : 'dark';
-      items.push({ id: 'theme', group: 'Settings', title: next === 'dark' ? 'Switch to dark' : 'Switch to light', line: 'ask', icon: next === 'dark' ? <IconMoon /> : <IconSun />, run: () => {
-        setTheme(next);
-        done();
-      } });
-    }
     return items;
-  }, [needle, query, sections, courses, threads, theme, done, setAskPrefill, setTheme]);
+  }, [needle, query, sections, courses, threads, done, setAskPrefill]);
 }
 
 /** Moves a highlighted index through results with the arrow keys and runs the highlighted one on Enter. */
@@ -159,9 +128,9 @@ export function SearchList({ items, active, setActive }: { items: SearchItem[]; 
   }, [active, items]);
   let group = '';
   return (
-    <div className="palette-list" role="listbox">
+    <div className="search-list" role="listbox">
       {items.map((item, index) => {
-        const head = item.group !== group ? <div className="palette-group">{(group = item.group)}</div> : null;
+        const head = item.group !== group ? <div className="search-group">{(group = item.group)}</div> : null;
         return (
           <div key={item.id}>
             {head}
@@ -170,7 +139,7 @@ export function SearchList({ items, active, setActive }: { items: SearchItem[]; 
               type="button"
               role="option"
               aria-selected={index === active}
-              className="palette-item"
+              className="search-item"
               data-line={item.line}
               onMouseMove={() => index !== active && setActive(index)}
               onClick={() => item.run()}
@@ -183,41 +152,6 @@ export function SearchList({ items, active, setActive }: { items: SearchItem[]; 
           </div>
         );
       })}
-    </div>
-  );
-}
-
-/** ⌘K: one box that goes anywhere, asks anything, or finds a course. */
-export function Palette({ open, onClose }: { open: boolean; onClose(): void }) {
-  if (!open) return null;
-  return createPortal(<PaletteBody onClose={onClose} />, document.body);
-}
-
-function PaletteBody({ onClose }: { onClose(): void }) {
-  const [query, setQuery] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-  const items = useSearchItems(query, onClose);
-  const { active, setActive, onKeyDown } = useListKeys(items, onClose);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-    const { overflow } = document.body.style;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = overflow;
-    };
-  }, []);
-
-  return (
-    <div className="palette-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()} role="presentation">
-      <div className="palette" role="dialog" aria-modal="true" aria-label="Search">
-        <div className="palette-input">
-          <IconSearch />
-          <input ref={inputRef} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={onKeyDown} placeholder="Search or ask" aria-label="Search" role="combobox" aria-expanded="true" />
-          <kbd>esc</kbd>
-        </div>
-        {items.length ? <SearchList items={items} active={active} setActive={setActive} /> : <div className="palette-empty">Nothing matches.</div>}
-      </div>
     </div>
   );
 }

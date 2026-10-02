@@ -158,7 +158,7 @@ function AskStudents() {
             aria-label="Your question"
           />
           <div className="ask-card-foot">
-            <input className="input" value={name} onChange={(event) => setName(event.target.value)} placeholder="Name (optional)" maxLength={40} aria-label="Your name" />
+            <input className="input" value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" maxLength={40} aria-label="Your name" />
             <button type="button" className="btn primary" onClick={() => void submit()} disabled={!ready}>
               {posting ? 'Posting' : 'Post question'}
             </button>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api, type GuideCourse, type GuideDetail, type GuideItem, type GuideSection } from '../api';
-import { SearchList, useListKeys, useSearchItems } from '../components/Palette';
+import { SearchList, useListKeys, useSearchItems } from '../components/Search';
 import { PostRow } from '../components/PostRow';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
@@ -151,7 +151,7 @@ function GuideSearch() {
     setOpen(false);
     setQuery('');
   }, []);
-  const items = useSearchItems(query, done, { threads: true }).filter((item) => item.group !== 'Go to' && item.group !== 'Settings' && item.group !== 'Recent');
+  const items = useSearchItems(query, done, { threads: true });
   const { active, setActive, onKeyDown } = useListKeys(items, () => setOpen(false));
 
   useEffect(() => {
