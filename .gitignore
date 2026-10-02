@@ -6,6 +6,7 @@ dist/
 .env.*.local
 .scraper-profile/
 .scraper-debug/
+.albert-profile/
 data/index/cache-*
 data/posts.jsonl.tmp
 data/scrape-state.json

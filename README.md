@@ -56,6 +56,21 @@ The login is kept in `.scraper-profile/`. Progress is saved every few minutes an
 skipped, `--restart-feed` forgets them. Other options: `--max-posts N`, `--no-comments`, `--only-comments`,
 `--delay 2`, `--chrome`, `--debug`. Commit `data/posts.jsonl` when a run finishes.
 
+## Scrape Albert
+
+Classes come from Albert's Course Search, read with your own NetID in a Chromium window on your laptop.
+
+```bash
+npm run scrape:albert                       # the newest academic year
+npm run scrape:albert -- --year 2025-2026   # an earlier year Albert still lists
+```
+
+Sign in when the window asks; the login is kept in `.albert-profile/`. Every NYU Abu Dhabi subject is searched once,
+and each course and term becomes a line of `data/classes.jsonl` with its sections' class numbers, times, rooms,
+professors, seven-week sessions and open, closed or waitlist status. A subject's rows replace its earlier rows for the
+same term and everything else is kept. The run stops if Albert ever shows a reCAPTCHA. Commit `data/classes.jsonl`
+when a run finishes.
+
 ## Index
 
 Indexing drops feed ads, Falcon trades, bare listings and noise comments (`lib/filters.ts`), then embeds what is left.
