@@ -168,7 +168,7 @@ body { margin: 0; min-height: 100dvh; background: var(--ground); color: var(--in
 ::selection { background: color-mix(in srgb, var(--line) 30%, transparent); color: inherit; }
 html[data-line='ask'] ::selection { background: var(--hilite); }
 :focus-visible { outline: 2px solid var(--line-ink); outline-offset: 2px; }
-a { color: inherit; text-decoration: none; }
+a { color: inherit; text-decoration: none; -webkit-tap-highlight-color: transparent; }
 button { font: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 button:disabled { cursor: default; opacity: 0.45; }
 input, textarea, select { font: inherit; color: inherit; }
@@ -202,7 +202,7 @@ html[data-line='ask'] .ground { --glow: var(--cobalt); }
 
 /* ---------- Shell ---------- */
 .app { position: relative; display: flex; flex-direction: column; min-height: 100dvh; isolation: isolate; }
-.appbar { position: sticky; top: 0; z-index: 40; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; height: var(--bar); padding: 0 20px; background: color-mix(in srgb, var(--ground) 80%, transparent); -webkit-backdrop-filter: saturate(1.5) blur(18px); backdrop-filter: saturate(1.5) blur(18px); border-bottom: 1px solid color-mix(in srgb, var(--rule) 70%, transparent); }
+.appbar { position: sticky; top: 0; z-index: 40; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; height: calc(var(--bar) + env(safe-area-inset-top)); padding: env(safe-area-inset-top) 20px 0; background: color-mix(in srgb, var(--ground) 80%, transparent); -webkit-backdrop-filter: saturate(1.5) blur(18px); backdrop-filter: saturate(1.5) blur(18px); border-bottom: 1px solid color-mix(in srgb, var(--rule) 70%, transparent); }
 .brand { justify-self: start; display: inline-flex; align-items: center; gap: 10px; height: 42px; padding: 0 10px 0 6px; border-radius: var(--r); }
 .brand-mark { width: 28px; height: 28px; color: var(--ink); transition: transform 0.7s var(--ease); }
 @media (hover: hover) { .brand:hover .brand-mark { transform: rotate(45deg); } }
@@ -987,7 +987,7 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
   .sign-ar { font-size: 18px; }
   .sign-line { order: 3; flex-basis: 100%; height: 5px; }
   .sign-line::after { width: 18px; height: 18px; border-width: 5px; }
-  .sign-name { flex: 1 1 130px; flex-wrap: wrap; row-gap: 6px; }
+  .sign-name { flex: 1 0 auto; flex-wrap: wrap; row-gap: 6px; }
   .sign-actions { margin-left: auto; }
   .central { padding: 22px 16px 18px; border-radius: 22px; outline-offset: -7px; }
   .central-sign { margin-bottom: 18px; padding: 0 4px; }
@@ -1047,6 +1047,68 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; animation-delay: 0ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
   .home-lines .hl-train { display: none; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+}
+
+/* ---------- Phones ---------- */
+/* On a phone the content is the page: headers shrink to a title bar, filters and tabs scroll in one row instead of
+   stacking, the tab bar steps aside while you type, and no field is under 16px, which iOS would zoom into. */
+@media (max-width: 640px) {
+  .page { padding-top: 14px; }
+  .home { padding-top: 14px; }
+  .sign { min-height: 0; gap: 8px 12px; margin-bottom: 14px; padding: 13px 16px; border-radius: 16px; outline-offset: -5px; box-shadow: inset 0 1px 0 var(--gloss), inset 0 -2px 0 rgba(0, 0, 0, 0.12), 0 10px 24px -18px color-mix(in srgb, var(--line-fill) 90%, transparent); }
+  .sign h1 { font-size: 30px; }
+  .sign-ar { font-size: 15px; }
+  .sign-line { display: none; }
+  .sign-name { flex: 1 0 auto; flex-wrap: nowrap; align-items: baseline; gap: 10px; }
+  .sign-actions { gap: 6px; }
+  .sign .btn { height: 36px; padding: 0 12px; }
+  .central { padding: 16px 14px 14px; border-radius: 20px; outline-offset: -6px; }
+  .central-sign { margin-bottom: 12px; }
+  .central-sign h1 { font-size: 34px; }
+  .central-sign span { font-size: 19px; }
+  .line-cards { margin-top: 16px; gap: 12px; }
+  .line-card { padding: 14px 16px 8px; border-radius: 16px; }
+  .tabs-wrap { margin: -2px -16px 18px; }
+  .tabs { gap: 22px; padding: 0 16px; scroll-padding: 0 16px; -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
+  .tabs::after { content: ''; flex: none; width: 12px; }
+  .tabs button { font-size: 14.5px; }
+  .filter-row { flex-wrap: nowrap; margin: 0 -16px; padding: 0 16px 2px; overflow-x: auto; scrollbar-width: none; -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
+  .filter-row::-webkit-scrollbar { display: none; }
+  .filter-row::after { content: ''; flex: none; width: 12px; }
+  .filter-row > * { flex: none; }
+  .search-field.big .input { height: 48px; border-radius: 12px; }
+  .course-list .course-item { padding: 12px 14px; }
+  .taught-row { grid-template-columns: 96px minmax(0, 1fr); }
+  .conv { padding: 12px 16px 0; }
+  .thread { gap: 30px; }
+  .turn.user { font-size: 19px; line-height: 1.3; padding-left: 26px; }
+  .turn.user::before { left: 0; top: 4px; width: 16px; height: 16px; border-width: 4.5px; }
+  .turn.model { padding-left: 22px; gap: 14px; }
+  .turn.model::before { left: 5px; width: 4px; }
+  .answer { font-size: 15.5px; line-height: 1.65; }
+  .route-stop { font-size: 12px; }
+  .route-seg { width: 14px; margin: 0 5px; }
+  .composer { padding: 8px 8px 8px 16px; border-radius: 16px; }
+  .send { width: 44px; height: 44px; border-radius: 12px; }
+  .composer-wrap { padding: 18px 0 12px; }
+  .popover { position: fixed; top: calc(var(--bar) + env(safe-area-inset-top) + 6px); left: 8px; right: 8px; width: auto; max-height: min(70dvh, 520px); }
+  .ticker > div { padding: 14px 16px; }
+  .currency-note { margin-top: -4px; }
+  .empty, .terminus { padding-left: 16px; padding-right: 16px; }
+}
+@media (max-width: 900px) {
+  .input, select.input, textarea.input, .composer textarea, .ask-card textarea, .ask-card-foot .input { font-size: 16px; }
+  /* While a field has focus the keyboard is up: the tab bar would sit on top of it, so it steps aside. */
+  html:has(:is(input, textarea, select):focus) .tabbar { display: none; }
+  html:has(:is(input, textarea, select):focus) .composer-wrap { bottom: 0; }
+}
+/* Touch screens keep the last hover until the next tap; only real pointers get hover states. */
+@media (hover: none) {
+  a.row:hover, button.row:hover, .post-row:hover { background: none; }
+  a.row:active, button.row:active, .post-row:active { background: var(--plate-2); }
+  .btn:not(.primary):not(.ghost):hover { border-color: var(--rule-2); }
+  .btn.ghost:hover { background: transparent; color: var(--ink-2); }
+  .chip:not(.on):hover { border-color: var(--rule); color: var(--ink-2); }
 }
 
 /* Tap targets of at least 40px on phones. Last, so it wins over the component rules above. */

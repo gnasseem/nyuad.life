@@ -22,6 +22,13 @@ export function Segmented<T extends string>({ value, options, onChange, label, v
     const measure = () => {
       const active = element.querySelector<HTMLElement>('[aria-selected="true"]');
       setThumb(active ? { left: active.offsetLeft, width: active.offsetWidth } : null);
+      // Tabs scroll sideways on a phone: keep the chosen one in view, clear of the fade at the edge.
+      if (active && variant === 'tabs' && element.scrollWidth > element.clientWidth) {
+        const left = active.offsetLeft - 16;
+        const right = active.offsetLeft + active.offsetWidth + 32;
+        if (left < element.scrollLeft) element.scrollLeft = left;
+        else if (right > element.scrollLeft + element.clientWidth) element.scrollLeft = right - element.clientWidth;
+      }
     };
     measure();
     const observer = new ResizeObserver(measure);
