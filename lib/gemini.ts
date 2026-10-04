@@ -352,6 +352,9 @@ async function fetchWithRetry(cfg: GeminiConfig, path: string, body: unknown, op
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const onAbort = () => controller.abort();
     options.signal?.addEventListener('abort', onAbort, { once: true });
+    // A streamed body arrives after this returns; the caller's signal has to stay wired to it, or stopping (the
+    // student pressing Stop, the answer deadline) would wait for the model to finish.
+    let streaming = false;
     try {
       const response = await fetch(`${cfg.baseUrl}/${path}`, {
         method: 'POST',
@@ -360,8 +363,7 @@ async function fetchWithRetry(cfg: GeminiConfig, path: string, body: unknown, op
         signal: controller.signal,
       });
       if (response.ok) {
-        clearTimeout(timer);
-        options.signal?.removeEventListener('abort', onAbort);
+        streaming = true;
         return response;
       }
       const error = await toError(response);
@@ -380,7 +382,7 @@ async function fetchWithRetry(cfg: GeminiConfig, path: string, body: unknown, op
       }
     } finally {
       clearTimeout(timer);
-      options.signal?.removeEventListener('abort', onAbort);
+      if (!streaming) options.signal?.removeEventListener('abort', onAbort);
     }
     attempt++;
   }

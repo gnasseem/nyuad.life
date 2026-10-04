@@ -90,6 +90,15 @@ beforeAll(async () => {
       }
       res.setHeader('content-type', 'text/event-stream');
       const prompt = body.contents.at(-1).parts[0].text as string;
+      if (prompt.includes('Question: take your time')) {
+        // A model that writes slower than the deadline allows.
+        for (let i = 0; i < 20 && !res.destroyed; i++) {
+          res.write(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: `part ${i}. ` }] } }] })}\n\n`);
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        res.end();
+        return;
+      }
       expect(prompt).toContain('Sources:');
       expect(body.systemInstruction.parts[0].text).toContain('Room of Requirement');
       const pieces = ['**Dania** is the favourite', ' [1][4].', '\n\n- 3 of 3 commenters recommend her [1][4].', '\n\nConfidence: high – three people agree, all this year.'];
@@ -271,6 +280,15 @@ describe('api', () => {
     const prompt = geminiCalls.filter((call) => call.url.includes(':streamGenerateContent')).at(-1)!.prompt;
     expect(prompt).toContain('Albert class schedule: MATH-UH 1012 Calculus (4 credits)');
     expect(prompt).toContain('Lecture 001: Mon/Wed 10:00–11:15, Social Science C2 Room 001 · Rana Dania · open');
+  });
+
+  it('ends a slow answer at the deadline and says it was cut short', async () => {
+    const archive = await loadArchive();
+    const started = Date.now();
+    const result = await ask(archive, geminiConfig()!, { question: 'take your time with the calculus professor', stream: false }, {}, undefined, { catalog: null, reranker: null, deadline: Date.now() + 1_500 });
+    expect(Date.now() - started).toBeLessThan(4_000);
+    expect(result.truncated).toBe(true);
+    expect(result.answer).toMatch(/^part 0\. part 1\./);
   });
 
   it('orders threads by the cross-encoder when there is one', async () => {

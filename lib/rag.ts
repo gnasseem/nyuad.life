@@ -564,7 +564,8 @@ interface AskContext {
   catalog?: Catalog | null;
   /** The cross-encoder; taken from the environment when not given. Null switches it off. */
   reranker?: Reranker | null;
-  /** When to stop writing, in ms since the epoch; defaults to ANSWER_DEADLINE_MS after the call starts. */
+  /** When to stop writing, in ms since the epoch; defaults to ANSWER_DEADLINE_MS after the call starts. The route
+   * passes one counted from the request, since loading the archive on a cold start eats into the same 60 s. */
   deadline?: number;
 }
 

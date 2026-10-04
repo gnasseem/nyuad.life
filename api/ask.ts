@@ -8,7 +8,11 @@ import type { AskRequest } from '../lib/types.ts';
 
 export const config = { maxDuration: 60 };
 
+/** Vercel stops the function at 60 s from the request, cold start included; the answer has to end before that. */
+const DEADLINE_MS = 54_000;
+
 export default route(['POST'], async (req, res) => {
+  const deadline = Date.now() + DEADLINE_MS;
   rateLimit(req, 12, 10, 'ask');
   const cfg = geminiConfig();
   if (!cfg) throw new ApiError(503, 'GEMINI_API_KEY is not set on the server.', 'no_model');
@@ -21,7 +25,7 @@ export default route(['POST'], async (req, res) => {
   const board = boardStore();
 
   if (!request.stream) {
-    sendJson(res, 200, await ask(archive, cfg, request, {}, undefined, { board, official }));
+    sendJson(res, 200, await ask(archive, cfg, request, {}, undefined, { board, official, deadline }));
     return;
   }
 
@@ -45,7 +49,7 @@ export default route(['POST'], async (req, res) => {
         followups: (questions) => sse.send('followups', { questions }),
       },
       controller.signal,
-      { board, official },
+      { board, official, deadline },
     );
     sse.send('done', { model: result.model, confidence: result.confidence, truncated: result.truncated ?? false, retrieval: result.retrieval });
   } catch (error) {
