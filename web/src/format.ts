@@ -95,11 +95,12 @@ export function groupByDay<T>(items: T[], when: (item: T) => Date, now: Date): A
   for (const item of items) {
     const date = when(item);
     const diff = dayDiff(date, now);
-    const key = diff <= 0 ? 'today' : diff === 1 ? 'tomorrow' : diff < 7 ? `day-${diff}` : diff < 14 ? 'next-week' : 'later';
+    // Things still listed from yesterday (an event keeps for a day after it starts) are "Earlier", not "Today".
+    const key = diff < 0 ? 'earlier' : diff === 0 ? 'today' : diff === 1 ? 'tomorrow' : diff < 7 ? `day-${diff}` : diff < 14 ? 'next-week' : 'later';
     let group = groups.find((candidate) => candidate.key === key);
     if (!group) {
-      const label = diff <= 0 ? 'Today' : diff === 1 ? 'Tomorrow' : diff < 7 ? date.toLocaleDateString('en-GB', { weekday: 'long' }) : diff < 14 ? 'Next week' : 'Later';
-      const sub = diff < 7 ? date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : undefined;
+      const label = diff < 0 ? 'Earlier' : diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : diff < 7 ? date.toLocaleDateString('en-GB', { weekday: 'long' }) : diff < 14 ? 'Next week' : 'Later';
+      const sub = diff >= 0 && diff < 7 ? date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : undefined;
       group = { key, label, sub, items: [] };
       groups.push(group);
     }

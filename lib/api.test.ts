@@ -281,6 +281,21 @@ describe('api', () => {
     expect(result.sources.map((source) => source.postId).slice(0, 2)).toEqual(['p4', 'p1']);
   });
 
+  it('keeps contacts out of the lists and hands them out one post at a time', async () => {
+    const post = (body: Record<string, unknown>) => getJson(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
+    await post({ op: 'profile', netId: 'abc1234', name: 'Sara Ali', major: 'Computer Science', classOf: 2027 });
+    const { listing } = await post({ op: 'listing', netId: 'abc1234', key: 'key-12345678', kind: 'sell', title: 'Mini fridge', price: 150, contactKind: 'instagram', contact: '@sara' });
+    const { offer } = await post({ op: 'offer', netId: 'abc1234', key: 'key-12345678', currency: 'campus', side: 'sell', amount: 360, rate: 0.5, contactKind: 'instagram', contact: '@sara' });
+    const listings = await getJson(`${apiUrl}/api/board?op=listings`);
+    const offers = await getJson(`${apiUrl}/api/board?op=offers`);
+    expect(JSON.stringify([listings, offers])).not.toContain('@sara');
+    expect(offers.markets.campus).toMatchObject({ open: 1, bestAsk: 0.5 });
+    expect(await getJson(`${apiUrl}/api/board?op=contact&type=listing&id=${listing.id}`)).toEqual({ contactKind: 'instagram', contact: '@sara' });
+    expect(await getJson(`${apiUrl}/api/board?op=contact&type=offer&id=${offer.id}`)).toEqual({ contactKind: 'instagram', contact: '@sara' });
+    expect((await fetch(`${apiUrl}/api/board?op=contact&type=offer&id=nope`)).status).toBe(404);
+    expect((await fetch(`${apiUrl}/api/board?op=contact&type=user&id=${offer.id}`)).status).toBe(400);
+  });
+
   it('validates questions', async () => {
     const empty = await fetch(`${apiUrl}/api/ask`, { method: 'POST', headers, body: JSON.stringify({ question: '  ' }) });
     expect(empty.status).toBe(400);

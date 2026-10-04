@@ -354,7 +354,7 @@ function ListingActions({ listing, mine, onClose }: { listing: Listing; mine: bo
           </button>
         </>
       ) : (
-        <ContactReveal kind={listing.contactKind} contact={listing.contact} about={listing.title} />
+        <ContactReveal type="listing" id={listing.id} kind={listing.contactKind} about={listing.title || `the ride to ${listing.destination}`} />
       )}
     </div>
   );
@@ -512,7 +512,8 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
         price: (kind === 'sell' || kind === 'want') && price ? Number(price) : undefined,
         place: place.trim(),
         destination: destination.trim(),
-        happensAt: when ? new Date(when).toISOString() : undefined,
+        // A date input ("2026-10-04") parses as UTC midnight, four hours ahead of Abu Dhabi; a date and time parses as local.
+        happensAt: when ? new Date(when.includes('T') ? when : `${when}T00:00`).toISOString() : undefined,
         seats: kind === 'ride' && seats ? Number(seats) : undefined,
         contactKind,
         contact: contact.trim(),

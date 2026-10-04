@@ -1,6 +1,6 @@
 /**
  * The student board, the announcements feed and the market, on one route so the function count stays small:
- *   GET  /api/board?op=stats | question&id= | recent | mine&key= | announcements | offers[&key=] | listings[&key=] | leaderboard
+ *   GET  /api/board?op=stats | question&id= | recent | mine&key= | announcements | offers[&key=] | listings[&key=] | contact&type=offer|listing&id= | leaderboard[&netId=]
  *   (offers covers both currencies, Falcons and Campus Dirhams; each offer says which)
  *   POST /api/board { op: profile | ask | next | answer | skip | announce | unannounce | offer | offer_done | unoffer
  *                       | listing | listing_done | unlisting, ... }
@@ -81,9 +81,21 @@ export default route(['GET', 'POST'], async (req, res) => {
       });
       return;
     }
+    case 'contact': {
+      // A handful a minute is plenty for a person and slow for a scraper.
+      rateLimit(req, 12, 4, 'board-contact');
+      const id = queryString(req, 'id').trim();
+      const type = queryString(req, 'type').trim();
+      if (type !== 'offer' && type !== 'listing') throw new ApiError(400, 'type must be offer or listing.', 'bad_type');
+      const now = new Date();
+      const found = type === 'offer' ? (await store.listOffers(now)).find((entry) => entry.id === id) : (await store.listListings(now)).find((entry) => entry.id === id);
+      if (!found) throw new ApiError(404, 'That post is closed or gone.', 'not_found');
+      sendJson(res, 200, { contactKind: found.contactKind, contact: found.contact });
+      return;
+    }
     case 'leaderboard': {
       rateLimit(req, 60, 60, 'board-read');
-      sendJson(res, 200, { helpers: leaderboard(await store.listRecentAnswers(3000), new Date(), 10) });
+      sendJson(res, 200, { helpers: leaderboard(await store.listRecentAnswers(3000), new Date(), 10, queryString(req, 'netId').trim().toLowerCase()) });
       return;
     }
     case 'question': {
@@ -154,8 +166,9 @@ export default route(['GET', 'POST'], async (req, res) => {
       rateLimit(req, 40, 30, 'board-help');
       const profile = await requireProfile(store, body.netId);
       const [questions, events] = await Promise.all([store.listOpen(300), store.listEventsByHelper(profile.netId)]);
-      const question = pickNext(questions, { profile, events });
-      const remaining = eligibleQuestions(questions, { profile, events }).length;
+      const askerKey = typeof body.key === 'string' && /^[a-z0-9-]{8,64}$/i.test(body.key) ? body.key : undefined;
+      const question = pickNext(questions, { profile, events, askerKey });
+      const remaining = eligibleQuestions(questions, { profile, events, askerKey }).length;
       if (question) {
         await Promise.all([store.recordEvent({ questionId: question.id, netId: profile.netId, kind: 'view' }), store.bump(question.id, { views: 1 }), store.touchProfile(profile.netId, false)]);
       }
@@ -246,13 +259,14 @@ function publicProfile(profile: Profile) {
   return { netId: profile.netId, name: profile.name, major: profile.major, classOf: profile.classOf, year: standingFor(profile.classOf), answers: profile.answers };
 }
 
+/** Lists leave the contact out; it is fetched one post at a time (op=contact), so the board cannot be scraped in one call. */
 function publicOffer(offer: Offer) {
-  const { posterKey: _key, posterNetId: _netId, ...rest } = offer;
+  const { posterKey: _key, posterNetId: _netId, contact: _contact, ...rest } = offer;
   return rest;
 }
 
 function publicListing(listing: Listing) {
-  const { posterKey: _key, posterNetId: _netId, ...rest } = listing;
+  const { posterKey: _key, posterNetId: _netId, contact: _contact, ...rest } = listing;
   return rest;
 }
 

@@ -123,7 +123,7 @@ function OfferRow({ currency, offer, depth, mine, onClose }: { currency: OfferCu
             </button>
           </>
         ) : (
-          <ContactReveal kind={offer.contactKind} contact={offer.contact} about={`${offer.amount} ${info.name} at ${offer.rate.toFixed(2)}`} />
+          <ContactReveal type="offer" id={offer.id} kind={offer.contactKind} about={`${offer.amount} ${info.name} at ${offer.rate.toFixed(2)}`} />
         )}
       </div>
     </div>

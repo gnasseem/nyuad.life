@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ContactKind } from '../api';
+import { api, type ContactKind } from '../api';
 
 export const CONTACTS: Array<{ id: ContactKind; label: string; placeholder: string }> = [
   { id: 'whatsapp', label: 'WhatsApp', placeholder: '+971 50 123 4567' },
@@ -27,14 +27,27 @@ export function contactHref(kind: ContactKind, contact: string, about: string): 
   }
 }
 
-/** Contact details stay hidden until someone asks for them, so they are not scraped off the page in bulk. */
-export function ContactReveal({ kind, contact, about }: { kind: ContactKind; contact: string; about: string }) {
-  const [revealed, setRevealed] = useState(false);
+/**
+ * Contact details stay off the page until someone asks for them: the lists do not carry them, and this fetches one
+ * post's, so the board cannot be scraped in one go.
+ */
+export function ContactReveal({ type, id, kind, about }: { type: 'offer' | 'listing'; id: string; kind: ContactKind; about: string }) {
+  const [contact, setContact] = useState<string | null>(null);
+  const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
   const label = contactLabel(kind);
-  if (!revealed) {
+  const reveal = async () => {
+    setState('loading');
+    try {
+      setContact((await api.board.contact(type, id)).contact);
+      setState('idle');
+    } catch {
+      setState('error');
+    }
+  };
+  if (contact === null) {
     return (
-      <button type="button" className="btn sm" onClick={() => setRevealed(true)}>
-        Show {label}
+      <button type="button" className="btn sm" onClick={() => void reveal()} disabled={state === 'loading'}>
+        {state === 'error' ? 'Try again' : state === 'loading' ? 'Loading' : `Show ${label}`}
       </button>
     );
   }

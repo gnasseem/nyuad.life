@@ -114,7 +114,7 @@ interface InlineOptions {
   citeKind?(n: number): string | undefined;
 }
 
-const INLINE = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*\s][^*]*\*|_[^_\s][^_]*_|\[(?:\d+)(?:\]\[\d+)*\]|\[\d+(?:,\s*\d+)+\]|\[[^\]]+\]\((?:https?:\/\/)[^)\s]+\)|https?:\/\/[^\s)]+)/g;
+const INLINE = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*\s][^*]*\*|_[^_\s][^_]*_|\[(?:\d+)(?:\]\[\d+)*\]|\[\d+(?:,\s*\d+)+\]|\[[^\]]+\]\((?:https?:\/\/)[^)\s]+\)|https?:\/\/[^\s)\[\]<>"]*[^\s)\[\].,;:!?'"<>])/g;
 
 function inline(text: string, options: InlineOptions): ReactNode[] {
   const nodes: ReactNode[] = [];

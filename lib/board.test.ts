@@ -86,13 +86,17 @@ describe('pickNext', () => {
     expect(pickNext(questions, { profile: { ...profile, major: 'Economics', classOf: 2027 }, events: [], now, random })?.id).toBe('anyone');
   });
   it('never repeats what the helper answered or skipped, nor their own question', () => {
-    const questions = [question({ id: 'done' }), question({ id: 'skipped' }), question({ id: 'mine', askerKey: profile.netId }), question({ id: 'full', answers: 3 })];
+    // Questions carry the asker's browser key (a random id), not a NetID: that key is what marks one as the helper's own.
+    const questions = [question({ id: 'done' }), question({ id: 'skipped' }), question({ id: 'mine', askerKey: 'b1c0e8d2-3f4a-4b5c-9d6e-7f8091a2b3c4' }), question({ id: 'full', answers: 3 })];
     const events = [
       { questionId: 'done', netId: profile.netId, kind: 'answer' as const, createdAt: now.toISOString() },
       { questionId: 'skipped', netId: profile.netId, kind: 'skip' as const, createdAt: now.toISOString() },
     ];
-    expect(eligibleQuestions(questions, { profile, events })).toEqual([]);
-    expect(pickNext(questions, { profile, events, now, random })).toBeNull();
+    const askerKey = 'b1c0e8d2-3f4a-4b5c-9d6e-7f8091a2b3c4';
+    expect(eligibleQuestions(questions, { profile, events, askerKey })).toEqual([]);
+    expect(pickNext(questions, { profile, events, askerKey, now, random })).toBeNull();
+    // Without the key the server cannot tell, which is why the client always sends it.
+    expect(eligibleQuestions(questions, { profile, events }).map((entry) => entry.id)).toEqual(['mine']);
   });
 });
 
@@ -273,13 +277,16 @@ describe('Falcon and Campus Dirham offers, and the leaderboard', () => {
     expect(weekOf('2026-09-29T12:00:00Z')).toBe(weekOf('2026-10-04T23:00:00Z')); // Tuesday and Sunday, same Monday-based week
     expect(weekOf('2026-10-05T00:00:00Z')).toBe(weekOf('2026-09-29T12:00:00Z') + 7);
     const answer = (helper: string, daysAgo: number): Answer => ({ id: `${helper}-${daysAgo}`, questionId: 'q', text: 'x', helperNetId: helper, helperName: helper.toUpperCase(), helperMajor: 'Physics', helperYear: 'junior', createdAt: new Date(now.getTime() - daysAgo * 86_400_000).toISOString() });
-    const board = leaderboard([answer('a', 1), answer('a', 8), answer('a', 15), answer('b', 1), answer('b', 2), answer('b', 3), answer('b', 30), answer('c', 40)], now);
+    const board = leaderboard([answer('a', 1), answer('a', 8), answer('a', 15), answer('b', 1), answer('b', 2), answer('b', 3), answer('b', 30), answer('c', 40)], now, 10, 'a');
     // b answered on Monday (this week) and Saturday/Sunday (last week): two consecutive weeks.
-    expect(board.map((entry) => [entry.netId, entry.answers, entry.streak])).toEqual([
-      ['b', 4, 2],
-      ['a', 3, 3],
-      ['c', 1, 0],
+    expect(board.map((entry) => [entry.name, entry.answers, entry.streak, entry.me])).toEqual([
+      ['B', 4, 2, false],
+      ['A', 3, 3, true],
+      ['C', 1, 0, false],
     ]);
+    // NetIDs work as a login on the board, so the leaderboard never carries them.
+    expect(JSON.stringify(board)).not.toMatch(/"netId"/);
+    expect(new Set(board.map((entry) => entry.id)).size).toBe(3);
   });
 });
 

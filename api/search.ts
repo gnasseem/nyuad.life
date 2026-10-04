@@ -1,5 +1,5 @@
 import { detectRedirect } from '../lib/domains.ts';
-import { ApiError, queryInt, queryString, route, sendJson } from '../lib/http.ts';
+import { ApiError, queryInt, queryString, rateLimit, route, sendJson } from '../lib/http.ts';
 import { retrieve } from '../lib/rag.ts';
 import { loadArchive, summarizePost } from '../lib/store.ts';
 import { bestWindow, dayNumber, tokenize } from '../lib/text.ts';
@@ -8,6 +8,8 @@ import type { IndexedPost } from '../lib/types.ts';
 type Sort = 'relevance' | 'newest' | 'oldest' | 'discussed';
 
 export default route(['GET'], async (req, res) => {
+  // Each query can cost an embedding call, which shares its quota with Ask; thread search runs as people type.
+  rateLimit(req, 60, 30, 'search');
   const archive = await loadArchive();
   const q = queryString(req, 'q').trim().slice(0, 300);
   const topic = queryString(req, 'topic').trim();

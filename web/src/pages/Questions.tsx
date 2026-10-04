@@ -60,7 +60,7 @@ function Leaderboard() {
   const [helpers, setHelpers] = useState<LeaderboardEntry[]>([]);
   useEffect(() => {
     api.board
-      .leaderboard()
+      .leaderboard(profile?.netId)
       .then((result) => setHelpers(result.helpers))
       .catch(() => setHelpers([]));
   }, [profile?.answers]);
@@ -70,7 +70,7 @@ function Leaderboard() {
       <h2>Top helpers</h2>
       <div className="lb">
         {helpers.map((entry, index) => (
-          <div key={entry.netId} className={`lb-row${profile?.netId === entry.netId ? ' me' : ''}`}>
+          <div key={entry.id} className={`lb-row${entry.me ? ' me' : ''}`}>
             <span className="rank">{index + 1}</span>
             <span className="who">
               <b>{entry.name}</b>
@@ -283,14 +283,16 @@ function HelpOut() {
     if (!profile) return;
     setError('');
     try {
-      const next = await api.board.next(profile.netId);
+      const next = await api.board.next(profile.netId, askerKey());
       setCard(next);
       setText('');
     } catch (err) {
       if (err instanceof ApiError && err.code === 'no_profile') setProfile(null);
       else setError(err instanceof Error ? err.message : 'Could not load a question.');
     }
-  }, [profile, setProfile]);
+    // Keyed on the NetID, not the profile: answering bumps the profile's count, which must not fetch a second card.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.netId, setProfile]);
 
   useEffect(() => {
     void load();

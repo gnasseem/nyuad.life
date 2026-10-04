@@ -155,7 +155,8 @@ export interface Offer {
   amount: number;
   rate: number;
   contactKind: ContactKind;
-  contact: string;
+  /** Only on your own posts; anyone else's is fetched with board.contact. */
+  contact?: string;
   note: string;
   posterName: string;
   status: 'open' | 'done';
@@ -176,7 +177,8 @@ export interface Listing {
   happensAt?: string;
   seats: number | null;
   contactKind: ContactKind;
-  contact: string;
+  /** Only on your own posts; anyone else's is fetched with board.contact. */
+  contact?: string;
   posterName: string;
   status: 'open' | 'done';
   expiresAt: string;
@@ -214,7 +216,9 @@ export interface MarketSummary {
 }
 
 export interface LeaderboardEntry {
-  netId: string;
+  id: string;
+  /** This row is the helper who asked. */
+  me: boolean;
   name: string;
   major: string;
   year: Standing;
@@ -358,7 +362,7 @@ export const api = {
     announcements: () => request<{ announcements: Announcement[] }>('/api/board?op=announcements'),
     profile: (body: { netId: string; name: string; major: string; classOf: number }) => post<{ profile: Profile }>('/api/board', { op: 'profile', ...body }),
     ask: (body: { text: string; key: string; name?: string }) => post<{ question?: Question; similar?: QuestionWithAnswers[]; related?: PostSummary[]; redirect?: Redirect }>('/api/board', { op: 'ask', ...body }),
-    next: (netId: string) => post<{ question: Question | null; remaining: number; answered: number }>('/api/board', { op: 'next', netId }),
+    next: (netId: string, key: string) => post<{ question: Question | null; remaining: number; answered: number }>('/api/board', { op: 'next', netId, key }),
     answer: (body: { netId: string; questionId: string; text: string }) => post<{ answer: Answer; answered: number }>('/api/board', { op: 'answer', ...body }),
     skip: (body: { netId: string; questionId: string }) => post<{ ok: true }>('/api/board', { op: 'skip', ...body }),
     announce: (body: { netId: string; key: string; title: string; body: string; kind: AnnouncementKind; startsAt?: string; location?: string; link?: string }) => post<{ announcement: Announcement }>('/api/board', { op: 'announce', ...body }),
@@ -371,7 +375,8 @@ export const api = {
     listing: (body: ListingDraft & { netId: string; key: string }) => post<{ listing: Listing }>('/api/board', { op: 'listing', ...body }),
     listingDone: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'listing_done', ...body }),
     unlisting: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unlisting', ...body }),
-    leaderboard: () => request<{ helpers: LeaderboardEntry[] }>('/api/board?op=leaderboard'),
+    leaderboard: (netId?: string) => request<{ helpers: LeaderboardEntry[] }>(`/api/board?op=leaderboard${netId ? `&netId=${encodeURIComponent(netId)}` : ''}`),
+    contact: (type: 'offer' | 'listing', id: string) => request<{ contactKind: ContactKind; contact: string }>(`/api/board?op=contact&type=${type}&id=${encodeURIComponent(id)}`),
   },
   courses: {
     terms: () => cached('terms', () => request<{ terms: Term[]; current: string; scraped: string }>('/api/courses')),

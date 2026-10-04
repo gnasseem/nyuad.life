@@ -1,18 +1,23 @@
 # nyuad.life
 
-Answers for NYU Abu Dhabi students. A question is answered from three sources, with citations and a confidence
-level: threads from the Room of Requirement Facebook group, official NYUAD pages, and answers other students wrote here.
+Answers for NYU Abu Dhabi students. A question is answered from four sources, with citations and a confidence
+level: threads from the Room of Requirement Facebook group, official NYUAD pages, the Albert class schedule, and answers
+other students wrote here.
 
-- **Ask.** Hybrid keyword and vector search over the archive and the official pages, reranked and written up by Gemini.
+- **Ask.** Hybrid keyword and vector search over the archive and the official pages, reranked by Voyage's cross-encoder
+  and written up by Gemini. A question that names a course or a professor also gets their Albert schedule as a source.
 - **Questions.** When the archive falls short, a question goes to students. Helpers give a name, NetID, major and class
   year once, then get questions one at a time, matched by major and year. Answered questions are cited by Ask.
 - **Notices.** Events, deadlines and opportunities posted by students, by day, with a calendar file for dated ones.
   Dated notices drop off the day after, undated ones after two weeks.
-- **Market.** What the group is mostly used for besides questions: things for sale, wanted or free (up for three weeks),
-  Falcons (offers to buy or sell campus dirhams, five days), shared rides by day (gone three hours after they leave) and
-  lost and found. Contact details are revealed on tap. Ask sends listings, rides and lost items here.
-- **Guide.** The group's threads, searchable by keyword, topic and course with no model involved; official pages by
-  section; and every course with a code, each with a cached summary written from the official text and the threads.
+- **Market.** What the group is mostly used for besides questions: things for sale (up for three weeks), wanted (two)
+  or free (one), offers to buy or sell Falcons and Campus Dirhams (two separate balances, each with its own order book;
+  five days), shared rides by day (gone three hours after they leave) and lost and found (three weeks). Contact details
+  are fetched one post at a time, on tap. Ask sends listings, trades, rides and lost items here.
+- **Courses.** Every course in Albert's schedule, searchable by code, title, professor or topic and filtered by term,
+  subject, open seats, Core and time of day, with each course's sections, who taught it in earlier terms, the group's
+  threads about it and a cached summary of what students say. The group's threads are a second tab, searchable by
+  keyword and topic with no model involved.
 
 Everything is TypeScript in one repository: `api/` and `lib/` are Vercel serverless functions, `web/` is a Vite and
 React app, `scripts/` holds the scraper, the crawler and the indexer, and `supabase/schema.sql` is the board schema.
@@ -24,19 +29,23 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
 
    | Variable | Needed for |
    | --- | --- |
-   | `GEMINI_API_KEY` | Answers, reranking, question tagging, follow-ups, guide summaries. |
-   | `VOYAGE_API_KEY` | Semantic search. Must be the provider that built the index. |
-   | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | The board: questions, notices, offers, guide summaries. |
+   | `GEMINI_API_KEY` | Answers, question tagging, follow-ups, course summaries. |
+   | `VOYAGE_API_KEY` | Semantic search (must be the provider that built the index) and the reranker. |
+   | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | The board: questions, notices, offers, listings, course summaries. |
    | `ROR_GROUP_URL` | Where listings and rides are sent. Defaults to the group. |
 
 3. Deploy. `GET /api/health` reports what is active. `board.ok` comes from a real probe of the database and
    `board.problem` says what is wrong when it is false.
 
 Routes: `GET /api/health`, `/api/home`, `/api/search` (`q=`, `topic=`, `sort=`, `page=`), `/api/post?id=`,
-`/api/guide` (`section=`, `item=`, `course=`); `POST /api/ask` (server-sent events); `GET|POST /api/board`
-(`op=stats|question|recent|mine|announcements|offers|listings|leaderboard` on GET,
+`/api/courses` (`term=`, `code=`, `code=&threads=1`, `code=&summary=1`); `POST /api/ask` (server-sent events);
+`GET|POST /api/board` (`op=stats|question|recent|mine|announcements|offers|listings|contact|leaderboard` on GET,
 `profile|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer|listing|listing_done|unlisting` on POST). Ask,
-the guide and the board are rate-limited per IP.
+search, courses and the board are rate-limited per IP.
+
+Gemini models are tried newest first (3.5 Flash, 3 Flash, 2.5 Flash for answers; 3.1 Flash-Lite, 2.5 Flash-Lite for
+the small calls), and a model that is shut down or out of quota is skipped for a while, so a retirement or a spent free
+tier degrades to the next model instead of breaking Ask. `GET /api/health` shows the lists.
 
 ## Scrape the group
 
@@ -65,7 +74,7 @@ npm run scrape:albert                       # the newest academic year
 npm run scrape:albert -- --year 2025-2026   # an earlier year Albert still lists
 ```
 
-Sign in when the window asks; the login is kept in `.albert-profile/`. Every NYU Abu Dhabi subject is searched once,
+Sign in when the window asks; the login is kept in `.albert-profile/`. The course search and Ask read the file directly. Every NYU Abu Dhabi subject is searched once,
 and each course and term becomes a line of `data/classes.jsonl` with its sections' class numbers, times, rooms,
 professors, seven-week sessions and open, closed or waitlist status. A subject's rows replace its earlier rows for the
 same term and everything else is kept. The run stops if Albert ever shows a reCAPTCHA. Commit `data/classes.jsonl`
@@ -73,7 +82,8 @@ when a run finishes.
 
 ## Index
 
-Indexing drops feed ads, Falcon trades, bare listings and noise comments (`lib/filters.ts`), then embeds what is left.
+Indexing drops feed ads, Falcon and Campus Dirham trades, bare listings and noise comments (`lib/filters.ts`), then
+embeds what is left.
 
 | Provider | Keys |
 | --- | --- |
@@ -90,7 +100,8 @@ Manual: `cp .env.example .env`, add the key, `npm run index`, commit `data/index
 
 ## The board
 
-1. Create a Supabase project and run the whole of `supabase/schema.sql` in its SQL editor. It is safe to run again.
+1. Create a Supabase project and run the whole of `supabase/schema.sql` in its SQL editor. It is safe to run again, and
+   running it again is how an existing project gets new columns (Campus Dirham offers need the `currency` column).
    Row level security is on with no policies, so only the service role, which the API holds, can read or write.
 2. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on Vercel and in `.env`, then redeploy.
 
@@ -98,7 +109,8 @@ If the pages say the board tables are missing, the schema was not run in the pro
 say the key was rejected, the anon key was pasted instead of the service role key. Locally, with nothing set, the board
 runs in memory.
 
-How questions are handed out (`lib/board.ts`): a helper never sees their own question or one they answered or skipped,
+How questions are handed out (`lib/board.ts`): a helper never sees their own question (matched by their browser key) or
+one they answered or skipped,
 or one that already has three answers. Unanswered questions come first, then the least seen; a question tagged for the
 helper's major or year gets a lift, and one many people skipped sinks.
 

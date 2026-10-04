@@ -3,6 +3,7 @@
  * Storage is behind BoardStore (lib/board-store.ts); this file holds the rules: validation, who counts as which
  * year, how a question is tagged for the right helpers, and which question a helper sees next.
  */
+import { createHash } from 'node:crypto';
 import { generateJson, type GeminiConfig } from './gemini.ts';
 import { ApiError } from './http.ts';
 import { bm25Query, buildBm25 } from './search.ts';
@@ -208,6 +209,8 @@ export async function tagQuestion(cfg: GeminiConfig | null, text: string): Promi
 
 interface HelperContext {
   profile: Profile;
+  /** The helper's browser key, which is what their own questions carry, so they are never handed back to them. */
+  askerKey?: string;
   /** Everything this helper has already done, so nothing is shown twice. */
   events: BoardEvent[];
   now?: Date;
@@ -220,9 +223,10 @@ interface HelperContext {
  * skipped. A little randomness keeps two helpers who open the page together from getting the same card.
  */
 /** Questions this helper may still be shown: not closed, not answered enough, not their own, not already acted on. */
-export function eligibleQuestions(questions: Question[], context: Pick<HelperContext, 'profile' | 'events'>): Question[] {
+export function eligibleQuestions(questions: Question[], context: Pick<HelperContext, 'profile' | 'events' | 'askerKey'>): Question[] {
   const done = new Set(context.events.filter((event) => event.kind !== 'view').map((event) => event.questionId));
-  return questions.filter((question) => question.status !== 'closed' && question.answers < ENOUGH_ANSWERS && !done.has(question.id) && question.askerKey !== context.profile.netId);
+  const own = (question: Question) => question.askerKey === context.profile.netId || (context.askerKey !== undefined && question.askerKey === context.askerKey);
+  return questions.filter((question) => question.status !== 'closed' && question.answers < ENOUGH_ANSWERS && !done.has(question.id) && !own(question));
 }
 
 export function pickNext(questions: Question[], context: HelperContext): Question | null {
@@ -341,7 +345,10 @@ export function searchAnnouncements(announcements: Announcement[], query: string
 /* ---------- Leaderboard ---------- */
 
 export interface LeaderboardEntry {
-  netId: string;
+  /** A stable handle for the row; not the NetID, which works as a login on this board. */
+  id: string;
+  /** Set when the entry is the helper who asked. */
+  me: boolean;
   name: string;
   major: string;
   year: Standing;
@@ -359,7 +366,7 @@ export function weekOf(iso: string): number {
 }
 
 /** Ranks helpers by answers written, with a streak of consecutive weeks; the most recent answer breaks ties. */
-export function leaderboard(answers: Answer[], now = new Date(), limit = 10): LeaderboardEntry[] {
+export function leaderboard(answers: Answer[], now = new Date(), limit = 10, viewerNetId = ''): LeaderboardEntry[] {
   const byHelper = new Map<string, Answer[]>();
   for (const answer of answers) byHelper.set(answer.helperNetId, [...(byHelper.get(answer.helperNetId) ?? []), answer]);
   const thisWeek = weekOf(now.toISOString());
@@ -374,7 +381,7 @@ export function leaderboard(answers: Answer[], now = new Date(), limit = 10): Le
       week -= 7;
     }
     const latest = sorted[0]!;
-    entries.push({ netId, name: latest.helperName, major: latest.helperMajor, year: latest.helperYear, answers: list.length, streak, lastAnswerAt: latest.createdAt });
+    entries.push({ id: createHash('sha256').update(`helper:${netId}`).digest('hex').slice(0, 12), me: netId === viewerNetId, name: latest.helperName, major: latest.helperMajor, year: latest.helperYear, answers: list.length, streak, lastAnswerAt: latest.createdAt });
   }
   return entries.sort((a, b) => b.answers - a.answers || b.streak - a.streak || b.lastAnswerAt.localeCompare(a.lastAnswerAt)).slice(0, limit);
 }

@@ -318,6 +318,9 @@ export function storageError(status: number, body: string, what = 'request'): Ap
 
 type Row = Record<string, unknown>;
 
+/** Ids are uuid columns: anything else would make Postgres answer 400 instead of "not found". */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export class SupabaseBoardStore implements BoardStore {
   readonly persistent = true;
   constructor(private readonly cfg: SupabaseConfig) {}
@@ -368,6 +371,7 @@ export class SupabaseBoardStore implements BoardStore {
     return questionFrom(rows[0]!);
   }
   async getQuestion(id: string): Promise<Question | null> {
+    if (!UUID.test(id)) return null;
     const rows = await this.select('board_questions', `id=eq.${enc(id)}&limit=1`);
     return rows[0] ? questionFrom(rows[0]) : null;
   }
@@ -437,6 +441,7 @@ export class SupabaseBoardStore implements BoardStore {
     return sortAnnouncements((await this.select('board_announcements', `expires_at=gt.${enc(now.toISOString())}&order=created_at.desc&limit=200`)).map(announcementFrom));
   }
   async deleteAnnouncement(id: string, posterKey: string): Promise<boolean> {
+    if (!UUID.test(id)) return false;
     const rows = (await this.call(`board_announcements?id=eq.${enc(id)}&poster_key=eq.${enc(posterKey)}`, { method: 'DELETE', headers: this.headers('return=representation') })) as Row[] | null;
     return Array.isArray(rows) && rows.length > 0;
   }
@@ -465,6 +470,7 @@ export class SupabaseBoardStore implements BoardStore {
     return (await this.select('board_offers', `poster_key=eq.${enc(posterKey)}&order=created_at.desc&limit=50`)).map(offerFrom);
   }
   async closeOffer(id: string, posterKey: string, remove: boolean): Promise<boolean> {
+    if (!UUID.test(id)) return false;
     const path = `board_offers?id=eq.${enc(id)}&poster_key=eq.${enc(posterKey)}`;
     const rows = remove
       ? ((await this.call(path, { method: 'DELETE', headers: this.headers('return=representation') })) as Row[] | null)
@@ -498,6 +504,7 @@ export class SupabaseBoardStore implements BoardStore {
     return (await this.select('board_listings', `poster_key=eq.${enc(posterKey)}&order=created_at.desc&limit=50`)).map(listingFrom);
   }
   async closeListing(id: string, posterKey: string, remove: boolean): Promise<boolean> {
+    if (!UUID.test(id)) return false;
     const path = `board_listings?id=eq.${enc(id)}&poster_key=eq.${enc(posterKey)}`;
     const rows = remove
       ? ((await this.call(path, { method: 'DELETE', headers: this.headers('return=representation') })) as Row[] | null)
