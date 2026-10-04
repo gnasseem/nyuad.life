@@ -21,6 +21,8 @@ const rows = [
   offering('Fall 2026', 'MATH-UH 1021', 'Multivariable Calculus', ['Rossi, Marco']),
   offering('Fall 2026', 'MATH-UH 1012', 'Calculus', ['Dania, Rana'], 'Cancelled'),
   offering('Fall 2026', 'CCEA-UH 1001X', 'Cities', ['Smith, Jo']),
+  offering('Fall 2026', 'ENGR-UH 4010', 'Capstone Project', ['Ali, Omar']),
+  offering('Fall 2026', 'PHYS-UH 4010', 'Capstone Project', ['Chen, Li']),
 ];
 const catalog = buildCatalog(rows, new Date('2026-10-04T08:00:00Z'));
 
@@ -50,7 +52,7 @@ describe('seat status', () => {
 describe('course rows', () => {
   it('lists one term with display names and core flags', () => {
     const list = courseRows(catalog, 'Fall 2026');
-    expect(list.map((row) => row.code)).toEqual(['CCEA-UH 1001X', 'CS-UH 1001', 'MATH-UH 1012', 'MATH-UH 1021']);
+    expect(list.map((row) => row.code)).toEqual(['CCEA-UH 1001X', 'CS-UH 1001', 'ENGR-UH 4010', 'MATH-UH 1012', 'MATH-UH 1021', 'PHYS-UH 4010']);
     expect(list[0]!.core).toBe(true);
     expect(list[1]).toMatchObject({ subject: 'CS', credits: '4' });
     expect(list[1]!.sections[0]).toMatchObject({ instructors: ['Thomas Pötsch'], status: 'open', meetings: [{ days: ['Tue', 'Thu'], start: '09:55', end: '11:10', room: 'A6 Room 001' }] });
@@ -66,6 +68,10 @@ describe('matching a question', () => {
   it('finds full titles, longest first, without the shorter title inside them', () => {
     expect(matchSchedule(catalog, 'Is Multivariable Calculus hard?').courses).toEqual(['MATH-UH 1021']);
     expect(matchSchedule(catalog, 'introduction to computer science or data structures first?').courses.sort()).toEqual(['CS-UH 1001', 'CS-UH 1050']);
+  });
+  it('does not pick one course for a title several share', () => {
+    expect(matchSchedule(catalog, 'how hard is the capstone project?').courses).toEqual([]);
+    expect(matchSchedule(catalog, 'how hard is ENGR 4010?').courses).toEqual(['ENGR-UH 4010']);
   });
   it('finds professors by full name, or by surname next to a teaching word', () => {
     expect(matchSchedule(catalog, 'is professor potsch good').instructors).toEqual(['Thomas Pötsch']);

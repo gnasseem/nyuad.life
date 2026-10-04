@@ -23,7 +23,7 @@ describe('model availability', () => {
     markUnavailable('spent', new GeminiError('Gemini 429: limit: 250 per day', 429), now);
     markUnavailable('busy', new GeminiError('Gemini 429: per minute', 429, 5_000), now);
     expect(usableModels(['gone', 'spent', 'busy', 'ok'], now + 1)).toEqual(['ok']);
-    expect(usableModels(['gone', 'spent', 'busy', 'ok'], now + 61_000)).toEqual(['busy', 'ok']);
+    expect(usableModels(['gone', 'spent', 'busy', 'ok'], now + 11_000)).toEqual(['busy', 'ok']);
     expect(usableModels(['gone', 'spent', 'busy', 'ok'], now + 3_600_001)).toEqual(['spent', 'busy', 'ok']);
     // With nothing left, everything is tried again rather than nothing.
     expect(usableModels(['gone'], now + 1)).toEqual(['gone']);

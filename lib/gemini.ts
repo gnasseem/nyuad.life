@@ -74,9 +74,14 @@ export function isModelUnavailable(error: unknown): error is GeminiError {
   return error instanceof GeminiError && (error.status === 404 || error.status === 429);
 }
 
+/** Whether a 429 means the day's quota is gone rather than a short per-minute limit. */
+export function isDailyQuota(error: GeminiError): boolean {
+  return error.status === 429 && /per ?day|perday|daily/i.test(error.message);
+}
+
 /** Skips a model for a while: hours when it no longer exists, an hour when its daily quota is spent, else its retry delay. */
 export function markUnavailable(model: string, error: GeminiError, now = Date.now()): void {
-  const ms = error.status === 404 ? 6 * 3_600_000 : /per ?day|perday|daily/i.test(error.message) ? 3_600_000 : Math.max(60_000, error.retryAfterMs ?? 60_000);
+  const ms = error.status === 404 ? 6 * 3_600_000 : isDailyQuota(error) ? 3_600_000 : Math.max(10_000, error.retryAfterMs ?? 30_000);
   unavailable.set(model, now + ms);
 }
 
@@ -368,17 +373,17 @@ async function fetchWithRetry(cfg: GeminiConfig, path: string, body: unknown, op
       }
       const error = await toError(response);
       if (!error.retryable || attempt >= retries || (error.status === 429 && options.waitOutQuota === false)) throw error;
-      await sleep(error.retryAfterMs ?? backoff(attempt));
+      await sleep(error.retryAfterMs ?? backoff(attempt), options.signal);
     } catch (thrown) {
       if (thrown instanceof GeminiError) {
         if (!thrown.retryable || attempt >= retries || (thrown.status === 429 && options.waitOutQuota === false)) throw thrown;
-        await sleep(thrown.retryAfterMs ?? backoff(attempt));
+        await sleep(thrown.retryAfterMs ?? backoff(attempt), options.signal);
       } else if (options.signal?.aborted) {
         throw new GeminiError('Request cancelled.', 499);
       } else if (attempt >= retries) {
         throw new GeminiError(`Gemini request failed: ${(thrown as Error).message}`, 503);
       } else {
-        await sleep(backoff(attempt));
+        await sleep(backoff(attempt), options.signal);
       }
     } finally {
       clearTimeout(timer);
@@ -409,8 +414,18 @@ function backoff(attempt: number): number {
   return Math.min(30_000, 1_000 * 2 ** attempt) + Math.random() * 500;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** Waits, but no longer than the caller is willing to: an abort ends the wait at once. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    }
+    signal?.addEventListener('abort', done, { once: true });
+  });
 }
 
 export function normalize(vector: Float32Array): Float32Array {

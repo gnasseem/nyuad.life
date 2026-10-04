@@ -33,6 +33,8 @@ export default route(['GET'], async (req, res) => {
   if (code) {
     const normalized = normalizeCode(code);
     const official = await loadOfficial().catch(() => null);
+    // Threads and summaries cost embedding and model calls and are cached per code: only real courses get them.
+    if (!catalog.byCode.has(normalized) && !bulletinEntry(official, normalized)) throw new ApiError(404, 'No course with that code.', 'not_found');
     if (queryString(req, 'threads')) {
       const archive = await loadArchive();
       const hits = await courseThreads(archive, catalog, official, normalized);

@@ -314,6 +314,20 @@ describe('api', () => {
     expect((await fetch(`${apiUrl}/api/board?op=contact&type=user&id=${offer.id}`)).status).toBe(400);
   });
 
+  it('serves the course search and spends nothing on codes that are not courses', async () => {
+    const terms = await getJson(`${apiUrl}/api/courses`);
+    expect(terms.terms.map((term: { name: string }) => term.name)).toEqual(['Fall 2026']);
+    const list = await getJson(`${apiUrl}/api/courses?term=Fall%202026`);
+    expect(list.courses.map((row: { code: string }) => row.code)).toEqual(['MATH-UH 1012']);
+    const detail = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012`);
+    expect(detail).toMatchObject({ code: 'MATH-UH 1012', title: 'Calculus', credits: '4' });
+    const calls = geminiCalls.length;
+    for (const suffix of ['', '&threads=1', '&summary=1']) expect((await fetch(`${apiUrl}/api/courses?code=ZZ-UH%209999${suffix}`)).status).toBe(404);
+    expect(geminiCalls.length).toBe(calls);
+    const threads = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012&threads=1`);
+    expect(threads.threads.map((post: { id: string }) => post.id)).toContain('p1');
+  });
+
   it('validates questions', async () => {
     const empty = await fetch(`${apiUrl}/api/ask`, { method: 'POST', headers, body: JSON.stringify({ question: '  ' }) });
     expect(empty.status).toBe(400);

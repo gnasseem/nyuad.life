@@ -304,9 +304,9 @@ export function matchSchedule(catalog: Catalog, question: string, limits = { cou
   }
   const folded = ` ${fold(question)} `;
   const titled: Array<{ code: string; length: number }> = [];
-  for (const [code, offerings] of catalog.byCode) {
-    const title = fold(offerings[0]!.title);
-    if (title.length >= 8 && folded.includes(` ${title} `)) titled.push({ code, length: title.length });
+  for (const [title, codes] of titleIndex(catalog)) {
+    // "Capstone Project" is eight courses: naming it does not say which, so it picks none.
+    if (codes.length === 1 && title.length >= 8 && folded.includes(` ${title} `)) titled.push({ code: codes[0]!, length: title.length });
   }
   // The longest titles first: "Multivariable Calculus" before "Calculus".
   titled.sort((a, b) => b.length - a.length);
@@ -327,6 +327,22 @@ export function matchSchedule(catalog: Catalog, question: string, limits = { cou
     if (full || bySurname) instructors.push(name);
   }
   return { courses: courses.slice(0, limits.courses), instructors };
+}
+
+const titleIndexes = new WeakMap<Catalog, Map<string, string[]>>();
+
+/** Folded title -> the codes that carry it now. */
+function titleIndex(catalog: Catalog): Map<string, string[]> {
+  let index = titleIndexes.get(catalog);
+  if (!index) {
+    index = new Map();
+    for (const [code, offerings] of catalog.byCode) {
+      const title = fold(offerings[0]!.title);
+      index.set(title, [...(index.get(title) ?? []), code]);
+    }
+    titleIndexes.set(catalog, index);
+  }
+  return index;
 }
 
 /* ---------- What the answer model reads ---------- */

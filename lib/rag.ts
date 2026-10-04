@@ -8,7 +8,7 @@ import type { BoardStore } from './board-store.ts';
 import { detectRedirect } from './domains.ts';
 import { embedderForIndex, type Embedder } from './embeddings.ts';
 import { abuDhabiDate, courseScheduleText, instructorScheduleText, loadCatalog, matchSchedule, type Catalog } from './courses.ts';
-import { generateJson, generateStream, generateText, isModelUnavailable, markUnavailable, usableModels, type GeminiConfig, type Message } from './gemini.ts';
+import { generateJson, generateStream, generateText, isDailyQuota, isModelUnavailable, markUnavailable, usableModels, type GeminiConfig, type Message } from './gemini.ts';
 import { ApiError } from './http.ts';
 import { officialCards, officialSourceBlock, retrieveOfficial, type OfficialCorpus } from './official.ts';
 import { rerankerFromEnv, type Reranker } from './rerank.ts';
@@ -647,6 +647,7 @@ async function withStatus<T>(events: AskEvents, message: string, work: Promise<T
 }
 
 const QUOTA_MESSAGE = 'Answers are paused: the free model quota is used up for now. Try again in a while, or search the threads in the meantime.';
+const BUSY_MESSAGE = 'Answers are busy right now. Try again in a minute.';
 
 /**
  * Streams the answer, moving down the model list when a model is gone or out of quota (free tiers are per model and
@@ -670,7 +671,8 @@ async function writeAnswer(cfg: GeminiConfig, messages: Message[], events: AskEv
     let answer = '';
     let truncated = false;
     try {
-      for await (const event of generateStream(cfg, { model, system, messages, temperature: 0.2, maxOutputTokens: 8192, thinking: 'low' }, { retries: last ? 1 : 0, signal: controller.signal, waitOutQuota: false })) {
+      // The last model may wait out a short per-minute limit (until the deadline); the others move on at once.
+      for await (const event of generateStream(cfg, { model, system, messages, temperature: 0.2, maxOutputTokens: 8192, thinking: 'low' }, { retries: last ? 1 : 0, signal: controller.signal, waitOutQuota: last })) {
         if (event.text) {
           answer += event.text;
           events.delta?.(event.text);
@@ -687,7 +689,7 @@ async function writeAnswer(cfg: GeminiConfig, messages: Message[], events: AskEv
       }
       if (!isModelUnavailable(error) || answer) throw error;
       markUnavailable(model, error);
-      if (last) throw new ApiError(503, QUOTA_MESSAGE, 'quota');
+      if (last) throw error.status === 429 && !isDailyQuota(error) ? new ApiError(503, BUSY_MESSAGE, 'busy') : new ApiError(503, QUOTA_MESSAGE, 'quota');
       console.warn(`[ask] ${model} unavailable (${error.message.slice(0, 100)}); trying ${models[i + 1]}.`);
       events.status?.('Switching to a backup model');
     } finally {

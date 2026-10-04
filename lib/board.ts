@@ -3,7 +3,6 @@
  * Storage is behind BoardStore (lib/board-store.ts); this file holds the rules: validation, who counts as which
  * year, how a question is tagged for the right helpers, and which question a helper sees next.
  */
-import { createHash } from 'node:crypto';
 import { generateJson, type GeminiConfig } from './gemini.ts';
 import { ApiError } from './http.ts';
 import { bm25Query, buildBm25 } from './search.ts';
@@ -345,7 +344,7 @@ export function searchAnnouncements(announcements: Announcement[], query: string
 /* ---------- Leaderboard ---------- */
 
 export interface LeaderboardEntry {
-  /** A stable handle for the row; not the NetID, which works as a login on this board. */
+  /** The row's rank as a handle. Never derived from the NetID: NetIDs are short enough that a hash of one is reversible. */
   id: string;
   /** Set when the entry is the helper who asked. */
   me: boolean;
@@ -381,9 +380,12 @@ export function leaderboard(answers: Answer[], now = new Date(), limit = 10, vie
       week -= 7;
     }
     const latest = sorted[0]!;
-    entries.push({ id: createHash('sha256').update(`helper:${netId}`).digest('hex').slice(0, 12), me: netId === viewerNetId, name: latest.helperName, major: latest.helperMajor, year: latest.helperYear, answers: list.length, streak, lastAnswerAt: latest.createdAt });
+    entries.push({ id: '', me: netId === viewerNetId, name: latest.helperName, major: latest.helperMajor, year: latest.helperYear, answers: list.length, streak, lastAnswerAt: latest.createdAt });
   }
-  return entries.sort((a, b) => b.answers - a.answers || b.streak - a.streak || b.lastAnswerAt.localeCompare(a.lastAnswerAt)).slice(0, limit);
+  return entries
+    .sort((a, b) => b.answers - a.answers || b.streak - a.streak || b.lastAnswerAt.localeCompare(a.lastAnswerAt))
+    .slice(0, limit)
+    .map((entry, index) => ({ ...entry, id: String(index + 1) }));
 }
 
 /* ---------- Exchanges: Falcons and Campus Dirhams ---------- */

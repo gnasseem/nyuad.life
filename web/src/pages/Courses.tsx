@@ -250,7 +250,8 @@ function CourseSearch({ code }: { code?: string }) {
           </div>
         </div>
         {error && <div className="alert error">{error}</div>}
-        {!rows && !error && (
+        {terms && !term && !error && <div className="empty">The class schedule has not been loaded on this server yet.</div>}
+        {!rows && !error && (!terms || term) && (
           <div className="stack" aria-busy="true">
             <div className="skeleton" style={{ height: 92 }} />
             <div className="skeleton" style={{ height: 92 }} />
