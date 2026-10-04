@@ -743,7 +743,8 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .reveal { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; animation: reveal 0.35s var(--ease); }
 @keyframes reveal { from { opacity: 0; clip-path: inset(0 100% 0 0); } to { opacity: 1; clip-path: inset(0 0 0 0); } }
 
-/* Falcons: the board up top, then the order book with depth behind each order. */
+/* Falcons and Campus Dirhams: the board up top, then the order book with depth behind each order. */
+.currency-note { margin: -8px 0 16px; color: var(--ink-3); font-size: 13.5px; }
 .ticker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-bottom: 26px; overflow: hidden; border: 1px solid rgba(240, 242, 250, 0.06); border-radius: 18px; background: rgba(255, 255, 255, 0.07); box-shadow: var(--shadow-2); }
 .ticker > div { display: grid; gap: 8px; padding: 18px 20px; background: var(--board); }
 .ticker b { font: 820 44px/0.9 var(--sign); font-stretch: 74%; font-variant-numeric: tabular-nums; color: #ffc21a; letter-spacing: 0.01em; }

@@ -143,10 +143,14 @@ export interface Announcement {
 }
 
 export type OfferSide = 'sell' | 'buy';
+/** falcon: Falcon Dirhams, the Personal Support award. campus: Campus Dirhams, the meal-plan money. */
+export type OfferCurrency = 'falcon' | 'campus';
 export type ContactKind = 'whatsapp' | 'instagram' | 'email' | 'phone';
 
 export interface Offer {
   id: string;
+  /** Missing on servers from before Campus Dirhams, where every offer is Falcons. */
+  currency?: OfferCurrency;
   side: OfferSide;
   amount: number;
   rate: number;
@@ -359,8 +363,8 @@ export const api = {
     skip: (body: { netId: string; questionId: string }) => post<{ ok: true }>('/api/board', { op: 'skip', ...body }),
     announce: (body: { netId: string; key: string; title: string; body: string; kind: AnnouncementKind; startsAt?: string; location?: string; link?: string }) => post<{ announcement: Announcement }>('/api/board', { op: 'announce', ...body }),
     unannounce: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unannounce', ...body }),
-    offers: (key: string) => request<{ offers: Offer[]; mine: Offer[]; market: MarketSummary }>(`/api/board?op=offers&key=${encodeURIComponent(key)}`),
-    offer: (body: { netId: string; key: string; side: OfferSide; amount: number; rate: number; contactKind: ContactKind; contact: string; note?: string }) => post<{ offer: Offer }>('/api/board', { op: 'offer', ...body }),
+    offers: (key: string) => request<{ offers: Offer[]; mine: Offer[]; market: MarketSummary; markets?: Record<OfferCurrency, MarketSummary> }>(`/api/board?op=offers&key=${encodeURIComponent(key)}`),
+    offer: (body: { netId: string; key: string; currency: OfferCurrency; side: OfferSide; amount: number; rate: number; contactKind: ContactKind; contact: string; note?: string }) => post<{ offer: Offer }>('/api/board', { op: 'offer', ...body }),
     offerDone: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'offer_done', ...body }),
     unoffer: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unoffer', ...body }),
     listings: (key: string) => request<{ listings: Listing[]; mine: Listing[] }>(`/api/board?op=listings&key=${encodeURIComponent(key)}`),

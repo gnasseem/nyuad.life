@@ -230,30 +230,35 @@ describe('SupabaseBoardStore', () => {
   });
 });
 
-describe('Falcons offers and the leaderboard', () => {
+describe('Falcon and Campus Dirham offers, and the leaderboard', () => {
   it('validates offers and summarises the market', async () => {
     const { validateOffer, summarizeMarket } = await import('./board.ts');
     const sell = validateOffer({ side: 'sell', amount: '500', rate: '0.85', contactKind: 'whatsapp', contact: '+971 50 123 4567', note: 'today only' }, now);
-    expect(sell).toMatchObject({ side: 'sell', amount: 500, rate: 0.85, contactKind: 'whatsapp' });
+    expect(sell).toMatchObject({ currency: 'falcon', side: 'sell', amount: 500, rate: 0.85, contactKind: 'whatsapp' });
+    expect(validateOffer({ currency: 'campus', side: 'sell', amount: 360, rate: 0.5, contactKind: 'instagram', contact: '@sara' }, now).currency).toBe('campus');
+    expect(() => validateOffer({ currency: 'bitcoin', side: 'sell', amount: 360, rate: 0.5, contactKind: 'instagram', contact: '@sara' }, now)).toThrow(/Falcons or Campus Dirhams/);
+    expect(() => validateOffer({ currency: 'campus', side: 'sell', amount: 360, rate: 5, contactKind: 'instagram', contact: '@sara' }, now)).toThrow(/per Campus Dirham/);
     expect(sell.expiresAt).toBe('2026-10-04T12:00:00.000Z');
     expect(() => validateOffer({ side: 'lend', amount: 100, rate: 0.8, contact: '+97150' }, now)).toThrow();
     expect(() => validateOffer({ side: 'buy', amount: 2, rate: 0.8, contact: '+971501234567' }, now)).toThrow();
     expect(() => validateOffer({ side: 'buy', amount: 100, rate: 5, contact: '+971501234567' }, now)).toThrow();
     expect(() => validateOffer({ side: 'buy', amount: 100, rate: 0.8, contactKind: 'email', contact: 'nope' }, now)).toThrow();
     expect(validateOffer({ side: 'buy', amount: 100, rate: 0.8, contactKind: 'instagram', contact: '@sara' }, now).contact).toBe('@sara');
-    const base: Omit<Offer, 'id' | 'side' | 'rate' | 'amount'> = { contactKind: 'instagram', contact: '@x', note: '', posterKey: 'k', posterNetId: 'p', posterName: 'P', status: 'open', expiresAt: '2030-01-01T00:00:00Z', createdAt: now.toISOString() };
+    const base: Omit<Offer, 'id' | 'side' | 'rate' | 'amount'> = { currency: 'falcon', contactKind: 'instagram', contact: '@x', note: '', posterKey: 'k', posterNetId: 'p', posterName: 'P', status: 'open', expiresAt: '2030-01-01T00:00:00Z', createdAt: now.toISOString() };
     const market = summarizeMarket([
       { ...base, id: '1', side: 'sell', rate: 0.9, amount: 100 },
       { ...base, id: '2', side: 'sell', rate: 0.8, amount: 300 },
       { ...base, id: '3', side: 'buy', rate: 0.7, amount: 200 },
       { ...base, id: '4', side: 'buy', rate: 0.75, amount: 50, status: 'done' },
+      { ...base, id: '5', side: 'sell', rate: 0.5, amount: 360, currency: 'campus' },
     ]);
     expect(market).toEqual({ open: 3, selling: 2, buying: 1, bestAsk: 0.8, bestBid: 0.7, medianRate: 0.8, volume: 600 });
+    expect(summarizeMarket([{ ...base, id: '5', side: 'sell', rate: 0.5, amount: 360, currency: 'campus' }], 'campus')).toMatchObject({ open: 1, bestAsk: 0.5, volume: 360 });
   });
 
   it('keeps offers in the memory store', async () => {
     const store = new MemoryBoardStore();
-    const offer = await store.createOffer({ side: 'sell', amount: 100, rate: 0.8, contactKind: 'phone', contact: '+971', note: '', posterKey: 'key-1234567', posterNetId: 'abc1234', posterName: 'Sara', status: 'open', expiresAt: '2030-01-01T00:00:00Z' });
+    const offer = await store.createOffer({ currency: 'falcon', side: 'sell', amount: 100, rate: 0.8, contactKind: 'phone', contact: '+971', note: '', posterKey: 'key-1234567', posterNetId: 'abc1234', posterName: 'Sara', status: 'open', expiresAt: '2030-01-01T00:00:00Z' });
     expect((await store.listOffers(now)).map((entry) => entry.id)).toEqual([offer.id]);
     expect(await store.closeOffer(offer.id, 'wrong-key-00', false)).toBe(false);
     expect(await store.closeOffer(offer.id, 'key-1234567', false)).toBe(true);

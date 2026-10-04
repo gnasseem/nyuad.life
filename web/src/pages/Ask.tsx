@@ -464,7 +464,7 @@ interface HomeData {
   notices: Announcement[] | null;
   rides: Listing[] | null;
   listings: number;
-  market: MarketSummary | null;
+  markets: Array<{ currency: 'falcon' | 'campus'; label: string; summary: MarketSummary }>;
   answered: QuestionWithAnswers[] | null;
   open: number | null;
   courses: { term: string; open: number; total: number } | null;
@@ -472,7 +472,7 @@ interface HomeData {
 
 function useHomeData(): HomeData {
   const { boardProblem } = useApp();
-  const [data, setData] = useState<HomeData>({ notices: null, rides: null, listings: 0, market: null, answered: null, open: null, courses: null });
+  const [data, setData] = useState<HomeData>({ notices: null, rides: null, listings: 0, markets: [], answered: null, open: null, courses: null });
   useEffect(() => {
     const set = (patch: Partial<HomeData>) => setData((current) => ({ ...current, ...patch }));
     if (!boardProblem) {
@@ -492,8 +492,16 @@ function useHomeData(): HomeData {
         .catch(() => set({ rides: [] }));
       api.board
         .offers(askerKey())
-        .then((result) => set({ market: result.market }))
-        .catch(() => set({ market: null }));
+        .then((result) => {
+          const markets = result.markets ?? { falcon: result.market, campus: undefined };
+          set({
+            markets: [
+              { currency: 'falcon' as const, label: 'Falcons', summary: markets.falcon },
+              { currency: 'campus' as const, label: 'Campus Dh', summary: markets.campus! },
+            ].filter((entry) => entry.summary && entry.summary.open > 0),
+          });
+        })
+        .catch(() => set({ markets: [] }));
       api.board
         .recent()
         .then((result) => set({ answered: result.questions }))
@@ -580,17 +588,17 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
                     );
                   })
                 )}
-                {data.market && data.market.open > 0 && (
-                  <a className="rate-board" href="/market/falcons" onClick={onLinkClick} title="Falcons, AED per Falcon">
-                    <span>Falcons</span>
+                {data.markets.map(({ currency, label, summary }) => (
+                  <a key={currency} className="rate-board" href={currency === 'falcon' ? '/market/falcons' : '/market/campus'} onClick={onLinkClick} title={`${label}: lowest sell and highest buy, AED each`}>
+                    <span>{label}</span>
                     <b className="sell">
-                      <Flap text={data.market.bestAsk === null ? '–' : data.market.bestAsk.toFixed(2)} />
+                      <Flap text={summary.bestAsk === null ? '–' : summary.bestAsk.toFixed(2)} />
                     </b>
                     <b className="buy">
-                      <Flap text={data.market.bestBid === null ? '–' : data.market.bestBid.toFixed(2)} />
+                      <Flap text={summary.bestBid === null ? '–' : summary.bestBid.toFixed(2)} />
                     </b>
                   </a>
-                )}
+                ))}
               </>
             ))}
         </LineCard>

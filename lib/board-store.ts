@@ -284,6 +284,10 @@ export function storageError(status: number, body: string, what = 'request'): Ap
   }
   console.error(`[board] Supabase ${status} on ${what}: ${code ? `${code} ` : ''}${message}`);
   const missingTable = code === 'PGRST205' || code === '42P01' || /could not find the table|relation .* does not exist/i.test(message);
+  const missingColumn = code === 'PGRST204' || code === '42703' || /could not find the '[^']+' column|column .* does not exist/i.test(message);
+  if (missingColumn && !missingTable) {
+    return new ApiError(503, 'The board schema is out of date: run supabase/schema.sql again in this Supabase project.', 'board_schema_outdated');
+  }
   const missingFunction = code === 'PGRST202' || code === '42883' || /could not find the function/i.test(message);
   if (missingTable || missingFunction) {
     return new ApiError(
@@ -438,6 +442,8 @@ export class SupabaseBoardStore implements BoardStore {
   }
   async createOffer(offer: Omit<Offer, 'id' | 'createdAt'>): Promise<Offer> {
     const rows = await this.write('POST', 'board_offers', {
+      // Only sent when it is not the column's default, so Falcon offers still work on a database without the column.
+      ...(offer.currency !== 'falcon' ? { currency: offer.currency } : {}),
       side: offer.side,
       amount: offer.amount,
       rate: offer.rate,
@@ -568,6 +574,8 @@ function profileFrom(row: Row): Profile {
 function offerFrom(row: Row): Offer {
   return {
     id: String(row.id),
+    // A database not yet migrated has no currency column: everything in it is Falcons.
+    currency: row.currency === 'campus' ? 'campus' : 'falcon',
     side: String(row.side) as Offer['side'],
     amount: Number(row.amount),
     rate: Number(row.rate),

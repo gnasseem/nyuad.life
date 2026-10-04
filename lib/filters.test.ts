@@ -15,6 +15,13 @@ describe('classifyPost', () => {
     expect(classifyPost(post({ text: 'Looking for Falcons - Urgent Need' }))).toBe('falcons');
     expect(classifyPost(post({ text: 'Can I use falcons at the gym or only at the dining halls?' }))).toBeNull();
     expect(classifyPost(post({ text: 'Does the Falcon Team at Nirvana have a phone number?' }))).toBeNull();
+    // The currency's own name is not a trade word.
+    expect(classifyPost(post({ text: 'Can I spend falcon dirhams at the bookstore?' }))).toBeNull();
+  });
+  it('drops Campus Dirham trades too, but keeps questions about them', () => {
+    expect(classifyPost(post({ text: "I'm selling 360 campus dirhams at 50%. DM if you're interested." }))).toBe('falcons');
+    expect(classifyPost(post({ text: 'hiii i’m looking to buy 300 campus dirhams, pls dm me if you’re selling' }))).toBe('falcons');
+    expect(classifyPost(post({ text: 'when do campus dirhams expire? and when do falcons?' }))).toBeNull();
   });
   it('drops bare listings and keeps housing requests', () => {
     expect(classifyPost(post({ text: 'Selling 2 commencement tickets! PM w offers.' }))).toBe('listing');

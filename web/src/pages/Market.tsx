@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, ApiError, type ContactKind, type Listing, type ListingKind, type Offer, type OfferSide } from '../api';
+import { api, ApiError, type ContactKind, type Listing, type ListingKind, type Offer, type OfferCurrency, type OfferSide } from '../api';
 import { ContactFields, ContactReveal } from '../components/Contact';
 import { EmptyState } from '../components/EmptyState';
 import { Flap } from '../components/Flap';
@@ -12,13 +12,14 @@ import { IconArrow, IconBag, IconPin, IconPlus, IconQuestions, IconSearch } from
 import { useNow } from '../motion';
 import { navigate, type MarketTab } from '../router';
 import { askerKey, loadContact, saveContact } from '../store';
-import { FalconCompose, FalconsTab, type OffersData } from './Falcons';
+import { CURRENCIES, OfferCompose, OffersTab, type OffersData } from './Offers';
 
-type Composer = { kind: ListingKind } | { side: OfferSide };
+type Composer = { kind: ListingKind } | { side: OfferSide; currency: OfferCurrency };
 
 const TABS: Array<{ id: MarketTab; label: string }> = [
   { id: 'items', label: 'Items' },
   { id: 'falcons', label: 'Falcons' },
+  { id: 'campus', label: 'Campus Dirhams' },
   { id: 'rides', label: 'Rides' },
   { id: 'lost', label: 'Lost & found' },
 ];
@@ -40,7 +41,7 @@ function tabOf(kind: ListingKind): MarketTab {
   return kind === 'ride' ? 'rides' : kind === 'lost' || kind === 'found' ? 'lost' : 'items';
 }
 
-/** Things for sale, wanted or free, Falcons, shared rides, and lost and found: what students post to each other. */
+/** Things for sale, wanted or free, Falcons and Campus Dirhams, shared rides, and lost and found: what students post to each other. */
 export function MarketPage({ tab }: { tab: MarketTab }) {
   const { boardProblem, profile, requestProfile, toast } = useApp();
   const [listings, setListings] = useState<{ listings: Listing[]; mine: Listing[] } | null>(null);
@@ -65,7 +66,9 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
     api.board
       .offers(askerKey())
       .then((result) => {
-        setOffers(result);
+        // A server from before Campus Dirhams only sends the Falcon book.
+        const empty = { open: 0, selling: 0, buying: 0, bestAsk: null, bestBid: null, medianRate: null, volume: 0 };
+        setOffers({ offers: result.offers, mine: result.mine, markets: result.markets ?? { falcon: result.market, campus: empty } });
         setOfferError('');
       })
       .catch((err) => setOfferError(err instanceof Error ? err.message : 'Could not load offers.'));
@@ -110,11 +113,12 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
   const defaultKind: ListingKind = tab === 'rides' ? 'ride' : tab === 'lost' ? 'lost' : 'sell';
   const notReady = listingError instanceof ApiError && listingError.code === 'board_schema_missing';
 
+  const currency: OfferCurrency | null = tab === 'falcons' ? 'falcon' : tab === 'campus' ? 'campus' : null;
   const body = (() => {
-    if (tab === 'falcons') {
+    if (currency) {
       if (offerError) return <div className="alert error">{offerError}</div>;
       if (!offers) return <Loading />;
-      return <FalconsTab data={offers} onClose={(offer, remove) => void closeOffer(offer, remove)} onPost={(side) => void startPosting({ side })} />;
+      return <OffersTab key={currency} currency={currency} data={offers} onClose={(offer, remove) => void closeOffer(offer, remove)} onPost={(side) => void startPosting({ side, currency })} />;
     }
     if (notReady) return <EmptyState icon={<IconBag />} title="Not open yet" />;
     if (listingError) return <div className="alert error">{listingError.message}</div>;
@@ -129,13 +133,13 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
     <div className="page">
       <Sign title="Market" ar="السوق">
         {!boardProblem &&
-          (tab === 'falcons' ? (
+          (currency ? (
             <>
-              <button type="button" className="btn" onClick={() => void startPosting({ side: 'buy' })}>
-                Buy Falcons
+              <button type="button" className="btn" onClick={() => void startPosting({ side: 'buy', currency })}>
+                Buy
               </button>
-              <button type="button" className="btn primary" onClick={() => void startPosting({ side: 'sell' })}>
-                <IconPlus /> Sell Falcons
+              <button type="button" className="btn primary" onClick={() => void startPosting({ side: 'sell', currency })}>
+                <IconPlus /> Sell
               </button>
             </>
           ) : (
@@ -165,14 +169,15 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
       <Modal
         open={composer !== null}
         onClose={() => setComposer(null)}
-        title={composer && 'side' in composer ? (composer.side === 'buy' ? 'Buy Falcons' : 'Sell Falcons') : composer?.kind === 'ride' ? 'Offer or find a ride' : composer && tabOf(composer.kind) === 'lost' ? 'Lost or found something' : 'New listing'}
+        title={composer && 'side' in composer ? `${composer.side === 'buy' ? 'Buy' : 'Sell'} ${CURRENCIES[composer.currency].name}` : composer?.kind === 'ride' ? 'Offer or find a ride' : composer && tabOf(composer.kind) === 'lost' ? 'Lost or found something' : 'New listing'}
         width={520}
       >
         {composer &&
           ('side' in composer ? (
-            <FalconCompose
+            <OfferCompose
+              currency={composer.currency}
               side={composer.side}
-              market={offers?.market ?? null}
+              market={offers?.markets[composer.currency] ?? null}
               onDone={() => {
                 setComposer(null);
                 loadOffers();

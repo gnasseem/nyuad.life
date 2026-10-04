@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api, type ContactKind, type MarketSummary, type Offer, type OfferSide } from '../api';
+import { api, type ContactKind, type MarketSummary, type Offer, type OfferCurrency, type OfferSide } from '../api';
 import { ContactFields, ContactReveal } from '../components/Contact';
 import { Flap } from '../components/Flap';
 import { EmptyState } from '../components/EmptyState';
@@ -10,25 +10,37 @@ import { askerKey, loadContact, saveContact } from '../store';
 export interface OffersData {
   offers: Offer[];
   mine: Offer[];
-  market: MarketSummary;
+  markets: Record<OfferCurrency, MarketSummary>;
 }
 
-/** Offers to sell or buy Falcons: the board up top, then the order book, cheapest sell and best buy first, each order with its depth behind it. */
-export function FalconsTab({ data, onClose, onPost }: { data: OffersData; onClose(offer: Offer, remove: boolean): void; onPost(side: OfferSide): void }) {
-  const mineIds = new Set(data.mine.map((offer) => offer.id));
-  const selling = data.offers.filter((offer) => offer.side === 'sell').sort((a, b) => a.rate - b.rate || b.amount - a.amount);
-  const buying = data.offers.filter((offer) => offer.side === 'buy').sort((a, b) => b.rate - a.rate || b.amount - a.amount);
-  const { market } = data;
-  const deepest = Math.max(1, ...data.offers.map((offer) => offer.amount));
+/** What each currency is called, what it is, and the rate people usually ask, for an empty composer. */
+export const CURRENCIES: Record<OfferCurrency, { name: string; one: string; short: string; about: string; typicalRate: number }> = {
+  falcon: { name: 'Falcons', one: 'Falcon', short: 'Falcons', about: 'Falcon Dirhams: the Personal Support award, spent on campus.', typicalRate: 0.8 },
+  campus: { name: 'Campus Dirhams', one: 'Campus Dirham', short: 'Campus Dh', about: 'Campus Dirhams: the meal-plan money for the Library Cafe, the Marketplace and other dining spots. A separate balance from Falcons.', typicalRate: 0.5 },
+};
 
-  if (data.offers.length === 0) {
+export function currencyOf(offer: Offer): OfferCurrency {
+  return offer.currency ?? 'falcon';
+}
+
+/** One currency's offers: the board up top, then the order book, cheapest sell and best buy first, each with its depth behind it. */
+export function OffersTab({ currency, data, onClose, onPost }: { currency: OfferCurrency; data: OffersData; onClose(offer: Offer, remove: boolean): void; onPost(side: OfferSide): void }) {
+  const info = CURRENCIES[currency];
+  const offers = data.offers.filter((offer) => currencyOf(offer) === currency);
+  const mineIds = new Set(data.mine.map((offer) => offer.id));
+  const selling = offers.filter((offer) => offer.side === 'sell').sort((a, b) => a.rate - b.rate || b.amount - a.amount);
+  const buying = offers.filter((offer) => offer.side === 'buy').sort((a, b) => b.rate - a.rate || b.amount - a.amount);
+  const market = data.markets[currency];
+  const deepest = Math.max(1, ...offers.map((offer) => offer.amount));
+
+  if (offers.length === 0) {
     return (
-      <EmptyState icon={<IconCoins />} title="No offers yet">
+      <EmptyState icon={<IconCoins />} title="No offers yet" text={info.about}>
         <button type="button" className="btn" onClick={() => onPost('buy')}>
-          Buy Falcons
+          Buy {info.name}
         </button>
         <button type="button" className="btn primary" onClick={() => onPost('sell')}>
-          Sell Falcons
+          Sell {info.name}
         </button>
       </EmptyState>
     );
@@ -36,29 +48,30 @@ export function FalconsTab({ data, onClose, onPost }: { data: OffersData; onClos
 
   return (
     <>
+      <p className="currency-note">{info.about}</p>
       <div className="ticker">
         <div className="sell">
           <b>
             <Flap text={market.bestAsk === null ? '–' : market.bestAsk.toFixed(2)} />
           </b>
-          <span>Lowest sell</span>
+          <span>Lowest sell, AED</span>
         </div>
         <div className="buy">
           <b>
             <Flap text={market.bestBid === null ? '–' : market.bestBid.toFixed(2)} />
           </b>
-          <span>Highest buy</span>
+          <span>Highest buy, AED</span>
         </div>
       </div>
       <div className="book">
-        <OfferColumn side="sell" title="Selling" offers={selling} deepest={deepest} mineIds={mineIds} onClose={onClose} />
-        <OfferColumn side="buy" title="Buying" offers={buying} deepest={deepest} mineIds={mineIds} onClose={onClose} />
+        <OfferColumn currency={currency} side="sell" title="Selling" offers={selling} deepest={deepest} mineIds={mineIds} onClose={onClose} />
+        <OfferColumn currency={currency} side="buy" title="Buying" offers={buying} deepest={deepest} mineIds={mineIds} onClose={onClose} />
       </div>
     </>
   );
 }
 
-function OfferColumn({ side, title, offers, deepest, mineIds, onClose }: { side: OfferSide; title: string; offers: Offer[]; deepest: number; mineIds: Set<string>; onClose(offer: Offer, remove: boolean): void }) {
+function OfferColumn({ currency, side, title, offers, deepest, mineIds, onClose }: { currency: OfferCurrency; side: OfferSide; title: string; offers: Offer[]; deepest: number; mineIds: Set<string>; onClose(offer: Offer, remove: boolean): void }) {
   return (
     <section className={`book-side ${side}`}>
       <h2>{title}</h2>
@@ -67,7 +80,7 @@ function OfferColumn({ side, title, offers, deepest, mineIds, onClose }: { side:
       ) : (
         <div className="list">
           {offers.map((offer) => (
-            <OfferRow key={offer.id} offer={offer} depth={(offer.amount / deepest) * 100} mine={mineIds.has(offer.id)} onClose={onClose} />
+            <OfferRow key={offer.id} currency={currency} offer={offer} depth={(offer.amount / deepest) * 100} mine={mineIds.has(offer.id)} onClose={onClose} />
           ))}
         </div>
       )}
@@ -75,7 +88,8 @@ function OfferColumn({ side, title, offers, deepest, mineIds, onClose }: { side:
   );
 }
 
-function OfferRow({ offer, depth, mine, onClose }: { offer: Offer; depth: number; mine: boolean; onClose(offer: Offer, remove: boolean): void }) {
+function OfferRow({ currency, offer, depth, mine, onClose }: { currency: OfferCurrency; offer: Offer; depth: number; mine: boolean; onClose(offer: Offer, remove: boolean): void }) {
+  const info = CURRENCIES[currency];
   return (
     <div className="order">
       <div className="order-main">
@@ -87,7 +101,7 @@ function OfferRow({ offer, depth, mine, onClose }: { offer: Offer; depth: number
       </div>
       <div className="qty">
         <i style={{ '--depth': `${depth.toFixed(1)}%` } as React.CSSProperties} aria-hidden="true" />
-        {offer.amount.toLocaleString()} Falcons
+        {offer.amount.toLocaleString()} {info.short}
       </div>
       {offer.note && <div className="note">{offer.note}</div>}
       <div className="meta">
@@ -109,16 +123,17 @@ function OfferRow({ offer, depth, mine, onClose }: { offer: Offer; depth: number
             </button>
           </>
         ) : (
-          <ContactReveal kind={offer.contactKind} contact={offer.contact} about={`${offer.amount} Falcons at ${offer.rate.toFixed(2)}`} />
+          <ContactReveal kind={offer.contactKind} contact={offer.contact} about={`${offer.amount} ${info.name} at ${offer.rate.toFixed(2)}`} />
         )}
       </div>
     </div>
   );
 }
 
-export function FalconCompose({ side, market, onDone, onCancel }: { side: OfferSide; market: MarketSummary | null; onDone(): void; onCancel(): void }) {
+export function OfferCompose({ currency, side, market, onDone, onCancel }: { currency: OfferCurrency; side: OfferSide; market: MarketSummary | null; onDone(): void; onCancel(): void }) {
   const { profile } = useApp();
-  const suggested = (side === 'sell' ? market?.bestBid : market?.bestAsk) ?? market?.medianRate ?? 0.8;
+  const info = CURRENCIES[currency];
+  const suggested = (side === 'sell' ? market?.bestBid : market?.bestAsk) ?? market?.medianRate ?? info.typicalRate;
   const saved = loadContact();
   const [amount, setAmount] = useState('');
   const [rate, setRate] = useState(suggested.toFixed(2));
@@ -134,7 +149,7 @@ export function FalconCompose({ side, market, onDone, onCancel }: { side: OfferS
     setBusy(true);
     setError('');
     try {
-      await api.board.offer({ netId: profile.netId, key: askerKey(), side, amount: Number(amount), rate: Number(rate), contactKind, contact: contact.trim(), note: note.trim() || undefined });
+      await api.board.offer({ netId: profile.netId, key: askerKey(), currency, side, amount: Number(amount), rate: Number(rate), contactKind, contact: contact.trim(), note: note.trim() || undefined });
       saveContact({ contactKind, contact: contact.trim() });
       onDone();
     } catch (err) {
@@ -145,19 +160,26 @@ export function FalconCompose({ side, market, onDone, onCancel }: { side: OfferS
   };
 
   return (
-    <div className="stack" style={{ gap: 14 }}>
+    <form
+      className="stack"
+      style={{ gap: 14 }}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
       <div className="form-grid">
         <div className="field">
-          <label htmlFor="of-amount">{side === 'sell' ? 'Falcons to sell' : 'Falcons wanted'}</label>
+          <label htmlFor="of-amount">{side === 'sell' ? `${info.name} to sell` : `${info.name} wanted`}</label>
           <div className="input-group">
-            <input id="of-amount" className="input" inputMode="numeric" value={amount} onChange={(event) => setAmount(event.target.value.replace(/[^\d]/g, ''))} placeholder="500" />
-            <span className="suffix">Falcons</span>
+            <input id="of-amount" className="input" inputMode="numeric" data-autofocus value={amount} onChange={(event) => setAmount(event.target.value.replace(/[^\d]/g, ''))} placeholder={currency === 'campus' ? '300' : '500'} />
+            <span className="suffix">{info.short}</span>
           </div>
         </div>
         <div className="field">
           <label htmlFor="of-rate">Rate</label>
           <div className="input-group">
-            <input id="of-rate" className="input" inputMode="decimal" value={rate} onChange={(event) => setRate(event.target.value.replace(/[^\d.]/g, ''))} placeholder="0.85" />
+            <input id="of-rate" className="input" inputMode="decimal" value={rate} onChange={(event) => setRate(event.target.value.replace(/[^\d.]/g, ''))} placeholder={info.typicalRate.toFixed(2)} />
             <span className="suffix">AED each</span>
           </div>
           <span className="hint">{total > 0 ? `${total.toLocaleString()} AED total` : ' '}</span>
@@ -174,10 +196,10 @@ export function FalconCompose({ side, market, onDone, onCancel }: { side: OfferS
           Cancel
         </button>
         <span className="spacer" />
-        <button type="button" className="btn primary" onClick={() => void submit()} disabled={busy || !amount || !rate || contact.trim().length < 3}>
+        <button type="submit" className="btn primary" disabled={busy || !amount || !rate || contact.trim().length < 3}>
           {busy ? 'Posting' : 'Post'}
         </button>
       </div>
-    </div>
+    </form>
   );
 }

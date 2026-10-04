@@ -36,6 +36,25 @@ describe('supabase/schema.sql', () => {
     await db.query(`insert into guide_summaries (key, payload) values ('course:CS-UH 1001', '{"overview":"x"}')`);
     const summaries = await db.query<{ relrowsecurity: boolean }>(`select relrowsecurity from pg_class where relname = 'guide_summaries'`);
     expect(summaries.rows[0]!.relrowsecurity).toBe(true);
+    const offers = await db.query<{ currency: string }>(`select currency from board_offers`);
+    expect(offers.rows).toEqual([{ currency: 'falcon' }]);
+    await expect(db.query(`insert into board_offers (currency, side, amount, rate, contact_kind, contact, poster_key, poster_net_id, poster_name, expires_at) values ('bitcoin', 'sell', 1, 1, 'whatsapp', '+971', 'k', 'abc1234', 'Sara', now())`)).rejects.toThrow();
+    await db.close();
+  });
+
+  it('adds the currency column to a project created before Campus Dirhams', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const db = new PGlite();
+    // The offers table as the previous schema created it, with a Falcon offer in it.
+    const before = schema.replace(/^\s*currency\s+text not null default 'falcon'.*\n/m, '').replace(/^alter table public\.board_offers add column if not exists currency.*\n/m, '');
+    expect(before).not.toContain('currency');
+    await db.exec(before);
+    await db.query(`insert into board_profiles (net_id, name, major, class_of) values ('abc1234', 'Sara', 'Mathematics', 2027)`);
+    await db.query(`insert into board_offers (side, amount, rate, contact_kind, contact, poster_key, poster_net_id, poster_name, expires_at) values ('sell', 100, 0.85, 'whatsapp', '+971', 'k', 'abc1234', 'Sara', now() + interval '5 days')`);
+    await db.exec(schema);
+    await db.query(`insert into board_offers (currency, side, amount, rate, contact_kind, contact, poster_key, poster_net_id, poster_name, expires_at) values ('campus', 'sell', 360, 0.5, 'whatsapp', '+971', 'k', 'abc1234', 'Sara', now() + interval '5 days')`);
+    const rows = await db.query<{ currency: string }>(`select currency from board_offers order by amount`);
+    expect(rows.rows.map((row) => row.currency)).toEqual(['falcon', 'campus']);
     await db.close();
   });
 });

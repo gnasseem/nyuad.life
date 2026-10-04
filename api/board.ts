@@ -1,6 +1,7 @@
 /**
  * The student board, the announcements feed and the market, on one route so the function count stays small:
  *   GET  /api/board?op=stats | question&id= | recent | mine&key= | announcements | offers[&key=] | listings[&key=] | leaderboard
+ *   (offers covers both currencies, Falcons and Campus Dirhams; each offer says which)
  *   POST /api/board { op: profile | ask | next | answer | skip | announce | unannounce | offer | offer_done | unoffer
  *                       | listing | listing_done | unlisting, ... }
  */
@@ -18,6 +19,7 @@ import {
   summarizeMarket,
   validateNetId,
   validateOffer,
+  CURRENCY_LABELS,
   validateProfile,
   validateQuestionText,
   type Announcement,
@@ -58,7 +60,8 @@ export default route(['GET', 'POST'], async (req, res) => {
       const key = queryString(req, 'key').trim();
       const open = await store.listOffers(new Date());
       const mine = key && /^[a-z0-9-]{8,64}$/i.test(key) ? await store.listOffersByPoster(key) : [];
-      sendJson(res, 200, { offers: open.map(publicOffer), mine: mine.map(publicOffer), market: summarizeMarket(open) });
+      // `market` is the Falcon book, which clients from before Campus Dirhams read; `markets` has both.
+      sendJson(res, 200, { offers: open.map(publicOffer), mine: mine.map(publicOffer), market: summarizeMarket(open, 'falcon'), markets: { falcon: summarizeMarket(open, 'falcon'), campus: summarizeMarket(open, 'campus') } });
       return;
     }
     case 'listings': {
@@ -110,9 +113,10 @@ export default route(['GET', 'POST'], async (req, res) => {
       rateLimit(req, 10, 4, 'board-offer');
       const profile = await requireProfile(store, body.netId);
       const posterKey = validateKey(body.key);
-      const open = (await store.listOffersByPoster(posterKey)).filter((offer) => offer.status === 'open' && Date.parse(offer.expiresAt) > Date.now());
-      if (open.length >= 3) throw new ApiError(400, 'You already have three open offers.', 'too_many_offers');
-      const offer = await store.createOffer({ ...validateOffer(body), posterKey, posterNetId: profile.netId, posterName: profile.name, status: 'open' });
+      const draft = validateOffer(body);
+      const open = (await store.listOffersByPoster(posterKey)).filter((offer) => offer.status === 'open' && offer.currency === draft.currency && Date.parse(offer.expiresAt) > Date.now());
+      if (open.length >= 3) throw new ApiError(400, `You already have three open ${CURRENCY_LABELS[draft.currency]} offers.`, 'too_many_offers');
+      const offer = await store.createOffer({ ...draft, posterKey, posterNetId: profile.netId, posterName: profile.name, status: 'open' });
       sendJson(res, 200, { offer: publicOffer(offer) });
       return;
     }

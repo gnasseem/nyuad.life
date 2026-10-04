@@ -379,19 +379,28 @@ export function leaderboard(answers: Answer[], now = new Date(), limit = 10): Le
   return entries.sort((a, b) => b.answers - a.answers || b.streak - a.streak || b.lastAnswerAt.localeCompare(a.lastAnswerAt)).slice(0, limit);
 }
 
-/* ---------- Falcons: the campus-dirham exchange ---------- */
+/* ---------- Exchanges: Falcons and Campus Dirhams ---------- */
 
 export type OfferSide = 'sell' | 'buy';
+/**
+ * falcon: Falcon Dirhams, the Personal Support award spent on campus, traded in the thousands.
+ * campus: Campus Dirhams, the meal-plan money for dining venues, a separate balance, often sold at about half price.
+ */
+export const OFFER_CURRENCIES = ['falcon', 'campus'] as const;
+export type OfferCurrency = (typeof OFFER_CURRENCIES)[number];
+export const CURRENCY_LABELS: Record<OfferCurrency, string> = { falcon: 'Falcons', campus: 'Campus Dirhams' };
 const CONTACT_KINDS = ['whatsapp', 'instagram', 'email', 'phone'] as const;
 export type ContactKind = (typeof CONTACT_KINDS)[number];
 
 export interface Offer {
   id: string;
-  /** sell: has Falcons, wants dirhams. buy: has dirhams, wants Falcons. */
+  /** Which balance is traded. Offers from before Campus Dirhams existed are Falcons. */
+  currency: OfferCurrency;
+  /** sell: has the currency, wants AED. buy: has AED, wants the currency. */
   side: OfferSide;
-  /** Falcons on offer or wanted. */
+  /** Units on offer or wanted. */
   amount: number;
-  /** Dirhams per Falcon, for example 0.85. */
+  /** AED per unit, for example 0.85. */
   rate: number;
   contactKind: ContactKind;
   contact: string;
@@ -409,16 +418,19 @@ const OFFER_MIN = 5;
 const OFFER_MAX = 20_000;
 
 export function validateOffer(body: Record<string, unknown>, now = new Date()): Omit<Offer, 'id' | 'createdAt' | 'posterKey' | 'posterNetId' | 'posterName' | 'status'> {
+  const currency = String(body.currency ?? 'falcon') as OfferCurrency;
+  if (!OFFER_CURRENCIES.includes(currency)) throw new ApiError(400, 'Choose Falcons or Campus Dirhams.', 'bad_currency');
+  const unit = CURRENCY_LABELS[currency];
   const side = String(body.side ?? '') as OfferSide;
   if (side !== 'sell' && side !== 'buy') throw new ApiError(400, 'Choose sell or buy.', 'bad_side');
   const amount = Math.round(Number(body.amount));
-  if (!Number.isFinite(amount) || amount < OFFER_MIN || amount > OFFER_MAX) throw new ApiError(400, `Amount must be between ${OFFER_MIN} and ${OFFER_MAX.toLocaleString()} Falcons.`, 'bad_amount');
+  if (!Number.isFinite(amount) || amount < OFFER_MIN || amount > OFFER_MAX) throw new ApiError(400, `Amount must be between ${OFFER_MIN} and ${OFFER_MAX.toLocaleString()} ${unit}.`, 'bad_amount');
   const rate = Math.round(Number(body.rate) * 100) / 100;
-  if (!Number.isFinite(rate) || rate < 0.1 || rate > 2) throw new ApiError(400, 'The rate must be between 0.10 and 2.00 AED per Falcon.', 'bad_rate');
+  if (!Number.isFinite(rate) || rate < 0.1 || rate > 2) throw new ApiError(400, `The rate must be between 0.10 and 2.00 AED per ${currency === 'falcon' ? 'Falcon' : 'Campus Dirham'}.`, 'bad_rate');
   const { contactKind, contact } = validateContact(body);
   const note = collapseWhitespace(String(body.note ?? '')).slice(0, 200);
   const expiresAt = new Date(now.getTime() + OFFER_DAYS * 86_400_000).toISOString();
-  return { side, amount, rate, contactKind, contact, note, expiresAt };
+  return { currency, side, amount, rate, contactKind, contact, note, expiresAt };
 }
 
 /** How to reach whoever posted an offer or a listing; shown only when someone asks for it. */
@@ -436,16 +448,17 @@ export interface MarketSummary {
   open: number;
   selling: number;
   buying: number;
-  /** Best rate for someone buying Falcons (lowest asking price) and for someone selling them (highest bid). */
+  /** Best rate for someone buying (the lowest asking price) and for someone selling (the highest bid). */
   bestAsk: number | null;
   bestBid: number | null;
   medianRate: number | null;
-  /** Falcons on offer in total. */
+  /** Units on offer in total. */
   volume: number;
 }
 
-export function summarizeMarket(offers: Offer[]): MarketSummary {
-  const open = offers.filter((offer) => offer.status === 'open');
+/** One currency's book in figures; with no currency given, Falcons, which is what older clients read. */
+export function summarizeMarket(offers: Offer[], currency: OfferCurrency = 'falcon'): MarketSummary {
+  const open = offers.filter((offer) => offer.status === 'open' && (offer.currency ?? 'falcon') === currency);
   const asks = open.filter((offer) => offer.side === 'sell').map((offer) => offer.rate);
   const bids = open.filter((offer) => offer.side === 'buy').map((offer) => offer.rate);
   const rates = open.map((offer) => offer.rate).sort((a, b) => a - b);

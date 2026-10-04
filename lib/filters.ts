@@ -1,5 +1,5 @@
 /**
- * Keeps the archive to what a student can learn from. Feed ads, Falcon-dirham trades and bare listings are dropped,
+ * Keeps the archive to what a student can learn from. Feed ads, Falcon and Campus Dirham trades and bare listings are dropped,
  * and so are the "bump", tag-a-friend and emoji comments under real threads. The same rules run before indexing and
  * again when an older index is loaded, so a stale data/index is cleaned on the way in.
  */
@@ -8,6 +8,10 @@ import type { SourceComment, SourcePost } from './types.ts';
 type DropReason = 'empty' | 'ad' | 'falcons' | 'listing';
 
 const FALCON = /\bfalcons?\b/i;
+/** Campus Dirhams: meal-plan money, traded like Falcons ("selling 360 campus dirhams at 50%"). */
+const CAMPUS = /\bcampus\s*(?:dirhams?|dhs?)\b/i;
+/** The currencies' own names, taken out before looking for trade words, since "dirhams" is one. */
+const CURRENCY_NAMES = /\b(?:falcons?|campus)\s*(?:dirhams?|dhs?)\b/gi;
 /** The bird, the airline lounge, the travel agency: not the campus currency. */
 const FALCON_NOT_CURRENCY = /\bfalcons?\s+(?:team|club|society|group|bird|show|hospital|lounge)|\bfalconry|\bfalconer/i;
 const TRADE = /\b(?:sell|selling|sold|buy|buying|exchange|exchanging|trade|trading|swap|rates?|offers?|dirhams?|aed|usd|cash|pm|dm)\b|\d{3,}|\d+(?:\.\d+)?k\b/i;
@@ -25,8 +29,8 @@ export function classifyPost(post: SourcePost): DropReason | null {
   // Posts Facebook injects into the feed carry neither a permalink nor a date.
   if (!post.url && !post.date) return 'ad';
   if (SPONSORED.test(text) && post.comments.length <= 1) return 'ad';
-  if (FALCON.test(text) && !FALCON_NOT_CURRENCY.test(text)) {
-    const genuineQuestion = text.includes('?') && !TRADE.test(text);
+  if ((FALCON.test(text) && !FALCON_NOT_CURRENCY.test(text)) || CAMPUS.test(text)) {
+    const genuineQuestion = text.includes('?') && !TRADE.test(text.replace(CURRENCY_NAMES, ''));
     if (!genuineQuestion) return 'falcons';
   }
   if (LISTING_START.test(text) || LISTING_ANY.test(text)) return 'listing';

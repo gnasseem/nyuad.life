@@ -12,7 +12,7 @@ interface Props {
   width?: number;
 }
 
-/** A centred sheet over a scrim. Escape closes it, focus goes to the first field, the page stops scrolling. */
+/** A centred sheet over a scrim. Escape closes it, focus goes to the first field and stays in the sheet, the page stops scrolling. */
 export function Modal({ open, onClose, title, subtitle, children, width = 520 }: Props) {
   const cardRef = useRef<HTMLDivElement>(null);
   // Callers pass a fresh onClose each render; the effect below should run once per opening, not on every render.
@@ -32,6 +32,9 @@ export function Modal({ open, onClose, title, subtitle, children, width = 520 }:
     document.addEventListener('keydown', onKey);
     const { overflow } = document.body.style;
     document.body.style.overflow = 'hidden';
+    // The page behind goes inert, so Tab and the screen reader stay in the dialog.
+    const app = document.querySelector<HTMLElement>('.app');
+    app?.setAttribute('inert', '');
     const timer = window.setTimeout(() => {
       const card = cardRef.current;
       (card?.querySelector<HTMLElement>('[data-autofocus]') ?? card?.querySelector<HTMLElement>('input, textarea, select, button.primary'))?.focus({ preventScroll: true });
@@ -39,6 +42,7 @@ export function Modal({ open, onClose, title, subtitle, children, width = 520 }:
     return () => {
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = overflow;
+      app?.removeAttribute('inert');
       window.clearTimeout(timer);
       previous?.focus?.({ preventScroll: true });
     };

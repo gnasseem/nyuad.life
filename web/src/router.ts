@@ -12,8 +12,8 @@ export type Route =
   | { name: 'threads' }
   | { name: 'settings' };
 
-export type MarketTab = 'items' | 'falcons' | 'rides' | 'lost';
-const MARKET_TABS: MarketTab[] = ['items', 'falcons', 'rides', 'lost'];
+export type MarketTab = 'items' | 'falcons' | 'campus' | 'rides' | 'lost';
+const MARKET_TABS: MarketTab[] = ['items', 'falcons', 'campus', 'rides', 'lost'];
 
 export function parseRoute(pathname: string): Route {
   const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent);

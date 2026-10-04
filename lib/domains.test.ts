@@ -7,6 +7,13 @@ describe('detectRedirect', () => {
       expect(detectRedirect(question, {})?.link.url, question).toBe(FALCONS_PATH);
     }
   });
+  it('sends Campus Dirham trades to their own page', () => {
+    for (const question of ['anyone selling campus dirhams?', 'buying 300 campus dirhams', 'selling campus dhs at 50%']) {
+      expect(detectRedirect(question, {})?.link.url, question).toBe('/market/campus');
+    }
+    expect(detectRedirect('where can I spend campus dirhams?', {})).toBeNull();
+    expect(detectRedirect('when do campus dirhams expire?', {})).toBeNull();
+  });
   it('lets the archive answer questions about how falcons work', () => {
     expect(detectRedirect('What are falcons and where can I spend them?', {})).toBeNull();
     expect(detectRedirect('Is the Falcon Team travel agency any good?', {})).toBeNull();

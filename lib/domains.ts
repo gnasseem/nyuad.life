@@ -1,10 +1,10 @@
 /**
- * Questions the archive should not try to answer, and where to send people instead. Falcon trades, listings, rides and
+ * Questions the archive should not try to answer, and where to send people instead. Falcon and Campus Dirham trades, listings, rides and
  * lost-and-found are live requests with their own pages in the market; anything else that needs someone right now goes
  * to the group.
  */
 
-type OffTopicDomain = 'falcons' | 'listing' | 'ride' | 'lost-found' | 'live';
+type OffTopicDomain = 'falcons' | 'campus' | 'listing' | 'ride' | 'lost-found' | 'live';
 
 export interface Redirect {
   domain: OffTopicDomain;
@@ -15,6 +15,7 @@ export interface Redirect {
 
 /** In-app pages are paths, so the web app routes them without a page load. */
 export const FALCONS_PATH = '/market/falcons';
+export const CAMPUS_PATH = '/market/campus';
 export const MARKET_PATH = '/market';
 export const RIDES_PATH = '/market/rides';
 export const LOST_PATH = '/market/lost';
@@ -26,6 +27,7 @@ function groupUrl(env: NodeJS.ProcessEnv = process.env): string {
 
 const FALCON = /\bfalcons?\b/i;
 const FALCON_NOT_CURRENCY = /\bfalcons?\s+(?:team|club|society|group|bird|show|hospital|lounge)|\bfalconry|\bfalconer/i;
+const CAMPUS = /\bcampus\s*(?:dirhams?|dhs?)\b/i;
 const FALCON_TRADE = /\b(?:sell|selling|buy|buying|exchange|exchanging|trade|trading|swap|rates?|offers?|cash|need|looking for|want|wanted|get rid of|convert)\b|\d/i;
 
 const LISTING = [
@@ -52,6 +54,9 @@ export function detectRedirect(question: string, env: NodeJS.ProcessEnv = proces
   const text = question.trim();
   if (!text) return null;
   const group = { url: groupUrl(env), label: 'Open the group' };
+  if (CAMPUS.test(text) && FALCON_TRADE.test(text.replace(CAMPUS, ''))) {
+    return { domain: 'campus', title: 'Trade Campus Dirhams in the market', message: 'Post what you have or want and people contact you directly.', link: { url: CAMPUS_PATH, label: 'Open Campus Dirhams' } };
+  }
   if (FALCON.test(text) && !FALCON_NOT_CURRENCY.test(text) && FALCON_TRADE.test(text)) {
     return { domain: 'falcons', title: 'Trade Falcons in the market', message: 'Post what you have or want and people contact you directly.', link: { url: FALCONS_PATH, label: 'Open Falcons' } };
   }

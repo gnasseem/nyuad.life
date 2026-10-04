@@ -81,9 +81,11 @@ create table if not exists public.board_announcements (
 
 create index if not exists board_announcements_expiry_idx on public.board_announcements (expires_at);
 
--- Falcons: offers to sell or buy campus dirhams. Rate is dirhams per Falcon.
+-- Exchanges: offers to sell or buy Falcons (Falcon Dirhams, the Personal Support award) or Campus Dirhams (the
+-- meal-plan money). They are separate balances. Rate is AED per unit.
 create table if not exists public.board_offers (
   id            uuid primary key default gen_random_uuid(),
+  currency      text not null default 'falcon' check (currency in ('falcon', 'campus')),
   side          text not null check (side in ('sell', 'buy')),
   amount        int  not null,
   rate          numeric(5, 2) not null,
@@ -97,6 +99,9 @@ create table if not exists public.board_offers (
   expires_at    timestamptz not null,
   created_at    timestamptz not null default now()
 );
+
+-- Projects created before Campus Dirhams: add the column (skipped when it is already there).
+alter table public.board_offers add column if not exists currency text not null default 'falcon' check (currency in ('falcon', 'campus'));
 
 create index if not exists board_offers_open_idx   on public.board_offers (status, expires_at);
 create index if not exists board_offers_poster_idx on public.board_offers (poster_key);
