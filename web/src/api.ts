@@ -25,7 +25,7 @@ export interface PostDetail extends PostSummary {
   comments: Comment[];
 }
 
-type SourceKind = 'archive' | 'board' | 'announcement' | 'official';
+type SourceKind = 'archive' | 'board' | 'announcement' | 'official' | 'schedule';
 
 export interface SourceCard {
   n: number;
@@ -218,54 +218,66 @@ export interface LeaderboardEntry {
   lastAnswerAt: string;
 }
 
-/* ---------- Guide ---------- */
+/* ---------- Courses ---------- */
 
-export interface GuideSection {
-  id: string;
-  label: string;
-  count: number;
+export type SeatStatus = 'open' | 'waitlist' | 'closed' | 'cancelled';
+
+export interface Meeting {
+  days: string[];
+  start: string;
+  end: string;
+  room: string;
 }
 
-export interface GuideItem {
-  id: string;
-  title: string;
-  url: string;
-  /** The page this one sits under, set when its title alone is ambiguous ("Courses"). */
-  parent: string;
+export interface Section {
+  classNumber: string;
+  section: string;
+  component: string;
+  topic: string;
+  status: SeatStatus;
+  waitlist?: number;
+  /** "First 7 weeks", "Second 7 weeks", a date range, or empty for the whole term. */
+  session: string;
+  meetings: Meeting[];
+  instructors: string[];
+  notes: string;
 }
 
-export interface GuideCourse {
+export interface Term {
+  name: string;
+  start: string;
+  end: string;
+}
+
+export interface CourseRow {
   code: string;
   title: string;
-  department: string;
-  credits?: number;
-  threads: number;
-  official: boolean;
+  subject: string;
+  credits: string;
+  core: boolean;
+  description: string;
+  sections: Section[];
 }
 
-interface GuideSummary {
+export interface CourseSummary {
   overview: string;
   facts: string[];
   students: string[];
   keepInMind: string[];
   confidence: 'high' | 'medium' | 'low';
-  model: string;
-  createdAt: string;
+  sources: Array<{ n: number; kind: SourceKind; title: string; url: string; postId?: string }>;
 }
 
-export interface GuideDetail {
-  kind: 'course' | 'page';
-  id: string;
-  code?: string;
+export interface CourseDetail {
+  code: string;
   title: string;
-  section: string;
-  breadcrumbs?: string[];
-  official: { url: string; text: string; fetchedAt: string; credits?: number } | null;
-  threads: PostSummary[];
-  threadCount: number;
-  related?: Array<{ id: string; title: string }>;
-  sources: Array<{ n: number; kind: SourceKind; title: string; url: string; postId?: string }>;
-  summary: GuideSummary | null;
+  credits: string;
+  core: boolean;
+  description: string;
+  /** Every term in the schedule, newest first. */
+  offerings: Array<{ term: string; sections: Section[] }>;
+  bulletin: { url: string; text: string } | null;
+  current: string;
 }
 
 export class ApiError extends Error {
@@ -308,7 +320,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const memo = new Map<string, Promise<unknown>>();
 
-/** One request per session for lists that rarely change (the guide index, the course list); a failure is forgotten. */
+/** One request per session for lists that rarely change (the terms, a term's courses); a failure is forgotten. */
 function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
   let hit = memo.get(key) as Promise<T> | undefined;
   if (!hit) {
@@ -357,12 +369,12 @@ export const api = {
     unlisting: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unlisting', ...body }),
     leaderboard: () => request<{ helpers: LeaderboardEntry[] }>('/api/board?op=leaderboard'),
   },
-  guide: {
-    sections: () => cached('guide', () => request<{ official: { available: boolean; pages: number; fetchedAt: string }; sections: GuideSection[] }>('/api/guide')),
-    section: (id: string) => request<{ section: string; label: string; items: GuideItem[] }>(`/api/guide?section=${encodeURIComponent(id)}`),
-    courses: () => cached('courses', () => request<{ section: 'courses'; items: GuideCourse[] }>('/api/guide?section=courses')),
-    item: (id: string) => request<GuideDetail>(`/api/guide?item=${encodeURIComponent(id)}`),
-    course: (code: string) => request<GuideDetail>(`/api/guide?course=${encodeURIComponent(code)}`),
+  courses: {
+    terms: () => cached('terms', () => request<{ terms: Term[]; current: string; scraped: string }>('/api/courses')),
+    list: (term: string) => cached(`courses:${term}`, () => request<{ term: string; courses: CourseRow[] }>(`/api/courses?term=${encodeURIComponent(term)}`)),
+    detail: (code: string) => request<CourseDetail>(`/api/courses?code=${encodeURIComponent(code)}`),
+    threads: (code: string) => cached(`threads:${code}`, () => request<{ threads: PostSummary[] }>(`/api/courses?code=${encodeURIComponent(code)}&threads=1`)),
+    summary: (code: string) => cached(`summary:${code}`, () => request<{ summary: CourseSummary | null }>(`/api/courses?code=${encodeURIComponent(code)}&summary=1`)),
   },
 };
 
@@ -372,11 +384,15 @@ interface AskHandlers {
   onSources?(sources: SourceCard[]): void;
   onDelta?(text: string): void;
   onFollowups?(questions: string[]): void;
-  onDone?(info: { model: string; confidence: Confidence | null }): void;
+  onDone?(info: { model: string; confidence: Confidence | null; truncated: boolean }): void;
 }
 
-/** Streams an answer; resolves with the full text once the server sends `done`. */
-export async function askStream(question: string, history: ChatTurn[], handlers: AskHandlers, signal?: AbortSignal): Promise<string> {
+/**
+ * Streams an answer. Resolves with the full text and whether it is complete: the server sent `done` and did not stop
+ * early. A stream that simply ends (the function was cut off, the connection dropped) resolves as incomplete, so a
+ * half answer is never saved as a whole one.
+ */
+export async function askStream(question: string, history: ChatTurn[], handlers: AskHandlers, signal?: AbortSignal): Promise<{ answer: string; complete: boolean }> {
   const response = await fetch(`${apiBase()}/api/ask`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -388,6 +404,8 @@ export async function askStream(question: string, history: ChatTurn[], handlers:
   const decoder = new TextDecoder();
   let buffer = '';
   let answer = '';
+  let finished = false;
+  let truncated = false;
   let streamError: Error | undefined;
   const handle = (event: string, data: string) => {
     let payload: Record<string, unknown> = {};
@@ -414,7 +432,9 @@ export async function askStream(question: string, history: ChatTurn[], handlers:
         handlers.onFollowups?.((payload.questions as string[]) ?? []);
         break;
       case 'done':
-        handlers.onDone?.({ model: String(payload.model ?? ''), confidence: (payload.confidence as Confidence | null) ?? null });
+        finished = true;
+        truncated = payload.truncated === true;
+        handlers.onDone?.({ model: String(payload.model ?? ''), confidence: (payload.confidence as Confidence | null) ?? null, truncated });
         break;
       case 'error':
         streamError = new ApiError(500, 'stream_error', String(payload.message ?? 'The answer failed.'));
@@ -440,5 +460,5 @@ export async function askStream(question: string, history: ChatTurn[], handlers:
     }
   }
   if (streamError) throw streamError;
-  return answer;
+  return { answer, complete: finished && !truncated };
 }

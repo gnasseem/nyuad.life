@@ -12,6 +12,8 @@ export interface Message {
   status?: string;
   error?: string;
   pending?: boolean;
+  /** The answer stopped before it finished: the time or length limit, or a dropped connection. */
+  truncated?: boolean;
 }
 
 export interface Conversation {

@@ -27,7 +27,11 @@ export default route(['POST'], async (req, res) => {
 
   const sse = startSse(req, res);
   const controller = new AbortController();
-  req.on('close', () => controller.abort());
+  // The response closing before it finished means the student stopped or left: stop generating. (The request's own
+  // 'close' fires as soon as its body has been read, so it cannot tell.)
+  res.on('close', () => {
+    if (!res.writableFinished) controller.abort();
+  });
   try {
     const result = await ask(
       archive,
@@ -43,7 +47,7 @@ export default route(['POST'], async (req, res) => {
       controller.signal,
       { board, official },
     );
-    sse.send('done', { model: result.model, confidence: result.confidence, retrieval: result.retrieval });
+    sse.send('done', { model: result.model, confidence: result.confidence, truncated: result.truncated ?? false, retrieval: result.retrieval });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!(error instanceof ApiError) || error.status >= 500) console.error('[ask]', error);

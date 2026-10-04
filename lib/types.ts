@@ -52,13 +52,13 @@ export interface IndexMeta {
   oldestPost: string;
 }
 
-export type SourceKind = 'archive' | 'board' | 'announcement' | 'official';
+export type SourceKind = 'archive' | 'board' | 'announcement' | 'official' | 'schedule';
 
-/** What the API returns as a citation: an archive thread, a board answer, an announcement, or an official NYUAD page. */
+/** What the API returns as a citation: an archive thread, a board answer, an announcement, an official NYUAD page, or a course's or professor's Albert schedule. */
 export interface SourceCard {
   n: number;
   kind: SourceKind;
-  /** Archive post id, board question id or announcement id, depending on kind. */
+  /** Archive post id, board question id, announcement id, page id, course code or "instructor:<name>", depending on kind. */
   postId: string;
   /** Board question or announcement title; empty for archive threads. */
   title: string;
@@ -100,6 +100,8 @@ export interface AskResponse {
   followups: string[];
   model: string;
   confidence: Confidence | null;
+  /** The answer stopped early, at the time or length limit. */
+  truncated?: boolean;
   /** Set when the question belongs somewhere else; then there is no answer to speak of. */
   redirect?: { domain: string; title: string; message: string; link: { url: string; label: string } };
   retrieval: {

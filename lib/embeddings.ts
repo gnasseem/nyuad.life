@@ -202,7 +202,8 @@ function toVectors(rows: Array<number[] | undefined>, count: number, dimensions:
   });
 }
 
-async function postJson(url: string, headers: Record<string, string>, body: unknown, options: EmbedOptions, label: string): Promise<unknown> {
+/** POSTs JSON with retries on 429 and 5xx; shared by the embedding providers and the reranker. */
+export async function postJson(url: string, headers: Record<string, string>, body: unknown, options: EmbedOptions, label: string): Promise<unknown> {
   const retries = options.retries ?? 3;
   const timeoutMs = options.timeoutMs ?? 60_000;
   for (let attempt = 0; ; attempt++) {

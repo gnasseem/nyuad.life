@@ -31,7 +31,7 @@ export function ThreadSearch() {
     if (query) search.set('q', query);
     if (topic) search.set('topic', topic);
     if (sort !== 'relevance') search.set('sort', sort);
-    navigate({ name: 'guide', section: 'threads' }, { replace: true, keepScroll: true, search: search.toString() });
+    navigate({ name: 'threads' }, { replace: true, keepScroll: true, search: search.toString() });
     if (query.length === 1) return;
     const id = ++request.current;
     const timer = window.setTimeout(

@@ -8,7 +8,8 @@ export type Route =
   | { name: 'announcements' }
   | { name: 'post'; id: string }
   | { name: 'market'; tab: MarketTab }
-  | { name: 'guide'; section?: string; id?: string }
+  | { name: 'courses'; code?: string }
+  | { name: 'threads' }
   | { name: 'settings' };
 
 export type MarketTab = 'items' | 'falcons' | 'rides' | 'lost';
@@ -22,22 +23,24 @@ export function parseRoute(pathname: string): Route {
     case 'announcements':
     case 'notices':
       return { name: 'announcements' };
-    // Old links to the archive and its course pages land in the guide.
+    case 'courses':
+      return { name: 'courses', code: parts[1] };
+    case 'threads':
+      return { name: 'threads' };
+    // Old links: the archive and the guide became the course search and the thread search.
     case 'archive':
     case 'browse':
-      return parts[1] === 'courses' ? { name: 'guide', section: 'courses', id: parts[2] } : { name: 'guide' };
-    case 'courses':
-      return { name: 'guide', section: 'courses', id: parts[1] };
+    case 'guide':
+      if (parts[1] === 'threads') return { name: 'threads' };
+      return parts[1] === 'courses' && parts[2] ? { name: 'courses', code: parts[2] } : { name: 'courses' };
     case 'post':
-      return parts[1] ? { name: 'post', id: parts[1] } : { name: 'guide' };
+      return parts[1] ? { name: 'post', id: parts[1] } : { name: 'threads' };
     case 'settings':
       return { name: 'settings' };
     case 'falcons':
       return { name: 'market', tab: 'falcons' };
     case 'market':
       return { name: 'market', tab: MARKET_TABS.includes(parts[1] as MarketTab) ? (parts[1] as MarketTab) : 'items' };
-    case 'guide':
-      return { name: 'guide', section: parts[1], id: parts[2] };
     default:
       return { name: 'ask' };
   }
@@ -59,18 +62,20 @@ export function routePath(route: Route): string {
       return '/settings';
     case 'market':
       return route.tab === 'items' ? '/market' : `/market/${route.tab}`;
-    case 'guide':
-      return route.section ? (route.id ? `/guide/${encodeURIComponent(route.section)}/${encodeURIComponent(route.id)}` : `/guide/${encodeURIComponent(route.section)}`) : '/guide';
+    case 'courses':
+      return route.code ? `/courses/${encodeURIComponent(route.code)}` : '/courses';
+    case 'threads':
+      return '/threads';
   }
 }
 
 const listeners = new Set<() => void>();
 
-export function navigate(route: Route, options: { replace?: boolean; search?: string; keepScroll?: boolean } = {}): void {
+export function navigate(route: Route, options: { replace?: boolean; search?: string; keepScroll?: boolean; state?: unknown } = {}): void {
   const url = routePath(route) + (options.search ? `?${options.search}` : '');
   const commit = () => {
-    if (options.replace) window.history.replaceState(null, '', url);
-    else window.history.pushState(null, '', url);
+    if (options.replace) window.history.replaceState(options.state ?? null, '', url);
+    else window.history.pushState(options.state ?? null, '', url);
     listeners.forEach((listener) => listener());
     if (!options.keepScroll) window.scrollTo({ top: 0 });
   };
@@ -81,7 +86,7 @@ export function navigate(route: Route, options: { replace?: boolean; search?: st
 /** A new page, not a panel opening over the same one, gets the cross-fade. */
 function changesPage(from: Route, to: Route): boolean {
   if (from.name !== to.name) return true;
-  if (from.name === 'guide' && to.name === 'guide') return from.section !== to.section;
+  if (from.name === 'courses' && to.name === 'courses') return false;
   if ((from.name === 'post' && to.name === 'post') || (from.name === 'question' && to.name === 'question')) return from.id !== to.id;
   return false;
 }

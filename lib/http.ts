@@ -129,7 +129,7 @@ interface SseStream {
 }
 
 /** Starts a server-sent-events response. Vercel's Node runtime streams `res.write` as-is. */
-export function startSse(req: ApiRequest, res: ApiResponse): SseStream {
+export function startSse(_req: ApiRequest, res: ApiResponse): SseStream {
   res.statusCode = 200;
   res.setHeader('content-type', 'text/event-stream; charset=utf-8');
   res.setHeader('cache-control', 'no-cache, no-transform');
@@ -137,7 +137,8 @@ export function startSse(req: ApiRequest, res: ApiResponse): SseStream {
   res.setHeader('x-accel-buffering', 'no');
   res.flushHeaders?.();
   let closed = false;
-  req.on('close', () => {
+  // The response's 'close', not the request's: the request closes once its body is read, long before the client leaves.
+  res.on('close', () => {
     closed = true;
   });
   return {

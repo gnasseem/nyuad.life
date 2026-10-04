@@ -9,35 +9,97 @@ export interface GeminiConfig {
   embedModel: string;
   /** Model that writes answers. */
   chatModel: string;
-  /** Models to try, in order, when the answer model is out of quota (free tiers reset daily). */
+  /** Models to try, in order, when the answer model is gone or out of quota (free tiers reset daily). */
   chatFallbacks: string[];
-  /** Cheaper model for reranking, follow-ups and query rewriting. */
+  /** Cheaper model for reranking, follow-ups and query rewriting: the first of `liteModels`. */
   liteModel: string;
+  /** The lite model and the ones to fall back to, in order. */
+  liteModels: string[];
   dimensions: number;
 }
 
 export const DEFAULT_EMBED_MODEL = 'gemini-embedding-001';
-// Pinned rather than "-latest": the free tier is granted per model, and an alias can move to a model without one.
-const DEFAULT_CHAT_MODEL = 'gemini-2.5-flash';
-const DEFAULT_LITE_MODEL = 'gemini-2.5-flash-lite';
-const DEFAULT_CHAT_FALLBACKS = ['gemini-2.5-flash-lite'];
+// Newest first. Google retires models on short notice (the 2.5 family is being shut down in October 2026) and the free
+// tier is granted per model, so each call walks down its list and skips, for a while, any model that answered 404 or
+// ran out of quota. Pinned names rather than "-latest" aliases, which can move to a model without a free tier.
+const DEFAULT_CHAT_MODELS = ['gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash'];
+const DEFAULT_LITE_MODELS = ['gemini-3.1-flash-lite', 'gemini-2.5-flash-lite'];
 export const DEFAULT_DIMENSIONS = 768;
+
+function modelList(value: string | undefined): string[] | null {
+  if (value === undefined) return null;
+  return value.split(',').map((model) => model.trim()).filter(Boolean);
+}
+
+/** A primary model, then the fallbacks: those set in the environment, or the defaults the primary is not already. */
+function chain(primary: string | undefined, fallbacks: string[] | null, defaults: string[]): string[] {
+  const first = primary?.trim() || defaults[0]!;
+  const rest = fallbacks ?? defaults;
+  return [first, ...rest.filter((model) => model !== first)].filter((model, index, all) => all.indexOf(model) === index);
+}
 
 /** Reads GEMINI_API_KEY and the optional model overrides; returns null when no key is configured. */
 export function geminiConfig(env: NodeJS.ProcessEnv = process.env): GeminiConfig | null {
   const apiKey = (env.GEMINI_API_KEY ?? env.GOOGLE_API_KEY ?? '').trim();
   if (!apiKey) return null;
-  const chatModel = env.GEMINI_CHAT_MODEL?.trim() || DEFAULT_CHAT_MODEL;
-  const fallbacks = env.GEMINI_CHAT_FALLBACK_MODELS === undefined ? DEFAULT_CHAT_FALLBACKS : env.GEMINI_CHAT_FALLBACK_MODELS.split(',').map((model) => model.trim()).filter(Boolean);
+  const chat = chain(env.GEMINI_CHAT_MODEL, modelList(env.GEMINI_CHAT_FALLBACK_MODELS), DEFAULT_CHAT_MODELS);
+  const lite = chain(env.GEMINI_LITE_MODEL, modelList(env.GEMINI_LITE_FALLBACK_MODELS), DEFAULT_LITE_MODELS);
   return {
     apiKey,
     baseUrl: (env.GEMINI_BASE_URL ?? 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, ''),
     embedModel: env.GEMINI_EMBED_MODEL?.trim() || DEFAULT_EMBED_MODEL,
-    chatModel,
-    chatFallbacks: fallbacks.filter((model) => model !== chatModel),
-    liteModel: env.GEMINI_LITE_MODEL?.trim() || DEFAULT_LITE_MODEL,
+    chatModel: chat[0]!,
+    chatFallbacks: chat.slice(1),
+    liteModel: lite[0]!,
+    liteModels: lite,
     dimensions: Number(env.GEMINI_EMBED_DIMENSIONS) || DEFAULT_DIMENSIONS,
   };
+}
+
+/* ---------- Which models are worth trying ---------- */
+
+/** Model -> until when to skip it. Per process, so a cold start tries everything once. */
+const unavailable = new Map<string, number>();
+/** Models that rejected a thinking setting; they are called without one from then on. */
+const noThinking = new Set<string>();
+
+/** The models still worth trying, in order; all of them again when every one is marked unavailable. */
+export function usableModels(models: string[], now = Date.now()): string[] {
+  const live = models.filter((model) => (unavailable.get(model) ?? 0) <= now);
+  return live.length ? live : models;
+}
+
+/** Whether an error means "try the next model": the model is gone (404) or out of quota (429). */
+export function isModelUnavailable(error: unknown): error is GeminiError {
+  return error instanceof GeminiError && (error.status === 404 || error.status === 429);
+}
+
+/** Skips a model for a while: hours when it no longer exists, an hour when its daily quota is spent, else its retry delay. */
+export function markUnavailable(model: string, error: GeminiError, now = Date.now()): void {
+  const ms = error.status === 404 ? 6 * 3_600_000 : /per ?day|perday|daily/i.test(error.message) ? 3_600_000 : Math.max(60_000, error.retryAfterMs ?? 60_000);
+  unavailable.set(model, now + ms);
+}
+
+/** Test hook. */
+export function resetModelState(): void {
+  unavailable.clear();
+  noThinking.clear();
+}
+
+type Effort = 'none' | 'low';
+
+/**
+ * Thinking settings per model family. Thinking tokens count against maxOutputTokens, so a 2.5 Flash answer with
+ * default (dynamic) thinking could spend most of its budget thinking and stop mid-sentence. Utility calls turn it off
+ * where the model allows; answers get a small, fixed budget.
+ */
+export function thinkingFor(model: string, effort: Effort): Record<string, unknown> | undefined {
+  const name = model.replace(/^models\//, '');
+  if (noThinking.has(name)) return undefined;
+  if (/^gemini-2\.5-flash/.test(name)) return { thinkingBudget: effort === 'none' ? 0 : 1024 };
+  if (/^gemini-2\.5-pro/.test(name)) return { thinkingBudget: effort === 'none' ? 128 : 1024 };
+  if (/^gemini-(?:[3-9]|\d\d)/.test(name)) return { thinkingLevel: 'low' };
+  return undefined;
 }
 
 export class GeminiError extends Error {
@@ -60,6 +122,8 @@ interface RequestOptions {
   signal?: AbortSignal;
   retries?: number;
   timeoutMs?: number;
+  /** False: a 429 is thrown at once (so the caller can move to another model) instead of waited out. Default true. */
+  waitOutQuota?: boolean;
 }
 
 /** Embeds up to 100 texts in one batchEmbedContents call; vectors are L2-normalised. */
@@ -100,7 +164,10 @@ export interface Message {
 }
 
 interface GenerateParams {
-  model?: string;
+  /** One model, or several to try in order (see usableModels). Defaults to the chat model. */
+  model?: string | string[];
+  /** How much the model may think before answering; thinking tokens count against maxOutputTokens. Default none. */
+  thinking?: Effort;
   system?: string;
   messages: Message[];
   temperature?: number;
@@ -122,9 +189,29 @@ interface GenerateResult {
   model: string;
 }
 
+/**
+ * One generateContent call. With a list of models, each usable one is tried in turn, moving on when a model is gone or
+ * out of quota; the result says which one answered.
+ */
 export async function generateText(cfg: GeminiConfig, params: GenerateParams, options: RequestOptions = {}): Promise<GenerateResult> {
-  const model = qualify(params.model ?? cfg.chatModel);
-  const json = (await call(cfg, `${model}:generateContent`, requestBody(params), options)) as GenerateResponse;
+  const models = Array.isArray(params.model) ? params.model : [params.model ?? cfg.chatModel];
+  if (models.length === 1) return generateOnce(cfg, models[0]!, params, options);
+  let lastError: unknown;
+  for (const model of usableModels(models)) {
+    try {
+      return await generateOnce(cfg, model, params, { ...options, waitOutQuota: false });
+    } catch (error) {
+      if (!isModelUnavailable(error)) throw error;
+      markUnavailable(model, error);
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+async function generateOnce(cfg: GeminiConfig, name: string, params: GenerateParams, options: RequestOptions): Promise<GenerateResult> {
+  const model = qualify(name);
+  const json = (await withThinkingFallback(name, (thinking) => call(cfg, `${model}:generateContent`, requestBody(params, name, thinking), options))) as GenerateResponse;
   const candidate = json.candidates?.[0];
   const text = candidate?.content?.parts?.map((part) => part.text ?? '').join('') ?? '';
   if (!text && json.promptFeedback?.blockReason) {
@@ -156,8 +243,9 @@ export async function* generateStream(
   params: GenerateParams,
   options: RequestOptions = {},
 ): AsyncGenerator<StreamEvent> {
-  const model = qualify(params.model ?? cfg.chatModel);
-  const response = await fetchWithRetry(cfg, `${model}:streamGenerateContent?alt=sse`, requestBody(params), options);
+  const name = Array.isArray(params.model) ? params.model[0]! : (params.model ?? cfg.chatModel);
+  const model = qualify(name);
+  const response = await withThinkingFallback(name, (thinking) => fetchWithRetry(cfg, `${model}:streamGenerateContent?alt=sse`, requestBody(params, name, thinking), options));
   if (!response.body) throw new GeminiError('Gemini returned an empty stream.', 502);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -206,11 +294,25 @@ interface GenerateResponse {
   error?: { code?: number; message?: string; status?: string };
 }
 
-function requestBody(params: GenerateParams): Record<string, unknown> {
+/** Runs a request with the model's thinking setting, and once more without it if the model rejects that setting. */
+async function withThinkingFallback<T>(model: string, run: (thinking: boolean) => Promise<T>): Promise<T> {
+  try {
+    return await run(true);
+  } catch (error) {
+    if (!(error instanceof GeminiError) || error.status !== 400 || !/thinking/i.test(error.message) || noThinking.has(model)) throw error;
+    console.warn(`[gemini] ${model} rejected its thinking setting; calling it without one.`);
+    noThinking.add(model);
+    return run(false);
+  }
+}
+
+function requestBody(params: GenerateParams, model: string, withThinking = true): Record<string, unknown> {
   const generationConfig: Record<string, unknown> = {
     temperature: params.temperature ?? 0.3,
     maxOutputTokens: params.maxOutputTokens ?? 2048,
   };
+  const thinking = withThinking ? thinkingFor(model, params.thinking ?? 'none') : undefined;
+  if (thinking) generationConfig.thinkingConfig = thinking;
   if (params.responseSchema) {
     generationConfig.responseMimeType = 'application/json';
     generationConfig.responseSchema = params.responseSchema;
@@ -263,11 +365,11 @@ async function fetchWithRetry(cfg: GeminiConfig, path: string, body: unknown, op
         return response;
       }
       const error = await toError(response);
-      if (!error.retryable || attempt >= retries) throw error;
+      if (!error.retryable || attempt >= retries || (error.status === 429 && options.waitOutQuota === false)) throw error;
       await sleep(error.retryAfterMs ?? backoff(attempt));
     } catch (thrown) {
       if (thrown instanceof GeminiError) {
-        if (!thrown.retryable || attempt >= retries) throw thrown;
+        if (!thrown.retryable || attempt >= retries || (thrown.status === 429 && options.waitOutQuota === false)) throw thrown;
         await sleep(thrown.retryAfterMs ?? backoff(attempt));
       } else if (options.signal?.aborted) {
         throw new GeminiError('Request cancelled.', 499);

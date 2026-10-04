@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { api, askStream, type Announcement, type GuideCourse, type Listing, type MarketSummary, type QuestionWithAnswers, type SourceCard } from '../api';
+import { api, askStream, type Announcement, type Listing, type MarketSummary, type QuestionWithAnswers, type SourceCard } from '../api';
 import { Flap } from '../components/Flap';
 import { RedirectCard } from '../components/RedirectCard';
 import { SourceRow } from '../components/SourceRow';
@@ -29,7 +29,7 @@ const STAGES: Array<{ label: string; match: RegExp }> = [
   { label: 'Ranking sources', match: /^rank/i },
   { label: 'Writing', match: /^writ/i },
 ];
-const KIND_COLOR: Record<SourceCard['kind'], string> = { archive: 'var(--cobalt)', official: 'var(--cobalt)', board: 'var(--green)', announcement: 'var(--amber)' };
+const KIND_COLOR: Record<SourceCard['kind'], string> = { archive: 'var(--cobalt)', official: 'var(--cobalt)', schedule: 'var(--cobalt)', board: 'var(--green)', announcement: 'var(--amber)' };
 
 export function AskPage({ resumeId }: Props) {
   const { home, health, toast, askPrefill, setAskPrefill, setBoardPrefill } = useApp();
@@ -46,6 +46,25 @@ export function AskPage({ resumeId }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
+  const mounted = useRef(true);
+
+  // Leaving the page stops the answer, so it cannot finish later and pull the page back to Ask.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  const reset = useCallback(() => {
+    abortRef.current?.abort();
+    conversationRef.current = fresh();
+    setConversation(conversationRef.current);
+    setInput('');
+    setExpanded(new Set());
+    setRailId(null);
+  }, []);
 
   useEffect(() => {
     const current = conversationRef.current;
@@ -58,14 +77,9 @@ export function AskPage({ resumeId }: Props) {
         setRailId(null);
       }
     } else if (current.messages.length > 0) {
-      abortRef.current?.abort();
-      conversationRef.current = fresh();
-      setConversation(conversationRef.current);
-      setInput('');
-      setExpanded(new Set());
-      setRailId(null);
+      reset();
     }
-  }, [resumeId]);
+  }, [resumeId, reset]);
 
   // Every change goes through the ref first, so a save right after a patch sees the patched conversation rather than
   // whatever React has rendered so far.
@@ -101,7 +115,7 @@ export function AskPage({ resumeId }: Props) {
       const controller = new AbortController();
       abortRef.current = controller;
       try {
-        await askStream(
+        const { complete } = await askStream(
           question,
           history,
           {
@@ -114,10 +128,10 @@ export function AskPage({ resumeId }: Props) {
           },
           controller.signal,
         );
-        patchMessage(modelMessage.id, { pending: false, status: undefined });
+        patchMessage(modelMessage.id, (message) => ({ pending: false, status: undefined, truncated: !complete && !message.redirect ? true : undefined }));
         const done = { ...conversationRef.current, updatedAt: new Date().toISOString() };
         saveConversation(done);
-        navigate({ name: 'ask' }, { replace: true, search: `c=${done.id}`, keepScroll: true });
+        if (mounted.current) navigate({ name: 'ask' }, { replace: true, search: `c=${done.id}`, keepScroll: true });
       } catch (error) {
         if (controller.signal.aborted) {
           patchMessage(modelMessage.id, (message) => ({ pending: false, status: undefined, error: message.content ? undefined : 'Stopped' }));
@@ -296,7 +310,14 @@ export function AskPage({ resumeId }: Props) {
     <div className="conv">
       <div className="conv-main">
         <div className="conv-head">
-          <button type="button" className="btn ghost sm" onClick={() => navigate({ name: 'ask' })}>
+          <button
+            type="button"
+            className="btn ghost sm"
+            onClick={() => {
+              reset();
+              navigate({ name: 'ask' });
+            }}
+          >
             <IconPlus /> New question
           </button>
         </div>
@@ -323,6 +344,14 @@ export function AskPage({ resumeId }: Props) {
                   </div>
                 )}
                 {message.error && <div className="alert error">{message.error}</div>}
+                {message.truncated && !message.pending && (
+                  <div className="alert cut">
+                    This answer was cut short.{' '}
+                    <button type="button" className="link-btn" onClick={() => void send(questionBefore(conversation.messages, message.id))} disabled={running}>
+                      Ask again
+                    </button>
+                  </div>
+                )}
                 {!message.pending && message.content && (
                   <div className="answer-foot">
                     {message.confidence && message.confidence.level !== 'high' && (
@@ -438,7 +467,7 @@ interface HomeData {
   market: MarketSummary | null;
   answered: QuestionWithAnswers[] | null;
   open: number | null;
-  courses: GuideCourse[] | null;
+  courses: { term: string; open: number; total: number } | null;
 }
 
 function useHomeData(): HomeData {
@@ -474,10 +503,11 @@ function useHomeData(): HomeData {
         .then((result) => set({ open: result.open }))
         .catch(() => set({ open: null }));
     }
-    api.guide
-      .courses()
-      .then((result) => set({ courses: [...result.items].filter((course) => course.threads > 0).sort((a, b) => b.threads - a.threads).slice(0, 4) }))
-      .catch(() => set({ courses: [] }));
+    api.courses
+      .terms()
+      .then(({ current }) => api.courses.list(current))
+      .then((result) => set({ courses: { term: result.term, open: result.courses.filter((course) => course.sections.some((section) => section.status === 'open')).length, total: result.courses.length } }))
+      .catch(() => set({ courses: { term: '', open: 0, total: 0 } }));
   }, [boardProblem]);
   return data;
 }
@@ -579,18 +609,26 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
               ))
             ))}
         </LineCard>
-        <LineCard line="guide" title="Guide" ar="الدليل" href="/guide">
+        <LineCard line="guide" title="Courses" ar="المساقات" href="/courses">
           {data.courses === null ? (
             <Loading />
-          ) : data.courses.length === 0 ? (
-            <p className="stops-note">Nothing yet.</p>
+          ) : data.courses.total === 0 ? (
+            <p className="stops-note">Search every course, section and professor.</p>
           ) : (
-            data.courses.slice(0, 3).map((course) => (
-              <a key={course.code} className="stn" href={`/guide/courses/${encodeURIComponent(course.code)}`} onClick={onLinkClick}>
-                <span className="when">{course.code}</span>
-                <span className="what">{course.title || course.code}</span>
+            <>
+              <a className="stn" href="/courses" onClick={onLinkClick}>
+                <span className="when">{data.courses.term}</span>
+                <span className="what">{plural(data.courses.total, 'course')}, {data.courses.open} with open seats</span>
               </a>
-            ))
+              <a className="stn" href="/courses?core=1" onClick={onLinkClick}>
+                <span className="when">Core</span>
+                <span className="what">Core Curriculum courses this term</span>
+              </a>
+              <a className="stn" href="/threads" onClick={onLinkClick}>
+                <span className="when">Threads</span>
+                <span className="what">Search the group's old posts</span>
+              </a>
+            </>
           )}
         </LineCard>
       </div>

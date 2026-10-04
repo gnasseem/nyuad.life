@@ -48,7 +48,7 @@ export function PostPage({ id }: Props) {
 
   return (
     <div className="page">
-      <button type="button" className="btn ghost sm back" onClick={() => (window.history.length > 1 ? window.history.back() : navigate({ name: 'guide' }))}>
+      <button type="button" className="btn ghost sm back" onClick={() => (window.history.length > 1 ? window.history.back() : navigate({ name: 'threads' }))}>
         <IconBack /> Back
       </button>
       {error && <div className="alert error">{error}</div>}
@@ -111,12 +111,12 @@ export function PostPage({ id }: Props) {
                 <h2>Tags</h2>
                 <div className="chips">
                   {post.courses.map((code) => (
-                    <button key={code} type="button" className="chip mono" onClick={() => navigate({ name: 'guide', section: 'courses', id: code })}>
+                    <button key={code} type="button" className="chip mono" onClick={() => navigate({ name: 'courses', code })}>
                       {code}
                     </button>
                   ))}
                   {topics.map((topic) => (
-                    <button key={topic} type="button" className="chip" onClick={() => navigate({ name: 'guide', section: 'threads' }, { search: `topic=${encodeURIComponent(topic)}` })}>
+                    <button key={topic} type="button" className="chip" onClick={() => navigate({ name: 'threads' }, { search: `topic=${encodeURIComponent(topic)}` })}>
                       {topicLabel(topic)}
                     </button>
                   ))}

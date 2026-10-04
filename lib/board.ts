@@ -175,7 +175,7 @@ export async function tagQuestion(cfg: GeminiConfig | null, text: string): Promi
     const result = await generateJson<{ summary?: string; topics?: string[]; majors?: string[]; years?: string[] }>(
       cfg,
       {
-        model: cfg.liteModel,
+        model: cfg.liteModels,
         temperature: 0,
         maxOutputTokens: 300,
         responseSchema: TAG_SCHEMA,

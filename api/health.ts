@@ -1,8 +1,10 @@
 import { boardStore, type BoardCheck, type BoardStore } from '../lib/board-store.ts';
 import { embedderForIndex, keysFor, providerForModel } from '../lib/embeddings.ts';
+import { loadCatalog } from '../lib/courses.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { route, sendJson } from '../lib/http.ts';
 import { loadOfficial } from '../lib/official.ts';
+import { rerankerFromEnv } from '../lib/rerank.ts';
 import { loadArchive } from '../lib/store.ts';
 
 /** The board probe costs two database calls, so its result is kept for a while: five minutes when fine, half a minute when not. */
@@ -31,6 +33,14 @@ export default route(['GET'], async (_req, res) => {
   const official = await loadOfficial().catch(() => null);
   const provider = archive ? (archive.meta.provider ?? providerForModel(archive.meta.model)) : null;
   const queryEmbedder = archive ? embedderForIndex(archive.meta) : null;
+  const catalog = (() => {
+    try {
+      return loadCatalog();
+    } catch {
+      return null;
+    }
+  })();
+  const reranker = rerankerFromEnv();
   sendJson(res, archive ? 200 : 503, {
     ok: Boolean(archive && cfg),
     archive: archive
@@ -60,7 +70,11 @@ export default route(['GET'], async (_req, res) => {
       : undefined,
     // Official NYUAD pages: crawled by the "Crawl official NYUAD pages" workflow into data/official.jsonl.
     official: official && official.docs.length ? { pages: official.docs.length, courses: official.byCode.size, chunks: official.chunks.length, vectors: official.vectors.count > 0, fetchedAt: official.meta.newestPost, source: official.source } : { pages: 0, hint: 'Run the Crawl official NYUAD pages workflow to add official pages.' },
-    gemini: cfg ? { configured: true, chatModel: cfg.chatModel, chatFallbacks: cfg.chatFallbacks, liteModel: cfg.liteModel } : { configured: false },
+    // The class schedule from Albert: scraped on a laptop with npm run scrape:albert into data/classes.jsonl.
+    classes: catalog && catalog.byCode.size ? { courses: catalog.byCode.size, terms: catalog.terms.map((term) => term.name), current: catalog.current, scraped: catalog.scraped } : { courses: 0, hint: 'Run npm run scrape:albert and commit data/classes.jsonl.' },
+    // Sources are reranked by a cross-encoder when VOYAGE_API_KEY is set, else by the lite Gemini model.
+    reranker: reranker ? { model: reranker.name } : { model: null, hint: 'Set VOYAGE_API_KEY for better source ranking.' },
+    gemini: cfg ? { configured: true, chatModel: cfg.chatModel, chatFallbacks: cfg.chatFallbacks, liteModel: cfg.liteModel, liteModels: cfg.liteModels } : { configured: false },
     // The board needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in production; locally it runs in memory. `ok` comes
     // from a real probe, so a schema that was never run or a wrong key shows up here instead of as a vague error.
     board: await boardHealth(board),

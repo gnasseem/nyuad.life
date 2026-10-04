@@ -10,9 +10,10 @@ import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApiServer } from './devserver.ts';
 import { embedderFromEnv } from './embeddings.ts';
-import { normalize } from './gemini.ts';
+import { geminiConfig, normalize } from './gemini.ts';
 import { buildIndex } from './indexer.ts';
-import { resetArchive } from './store.ts';
+import { ask } from './rag.ts';
+import { loadArchive, resetArchive } from './store.ts';
 
 const DIMS = 16;
 const posts = [
@@ -34,11 +35,25 @@ function fakeEmbed(text: string): number[] {
   return Array.from(normalize(out));
 }
 
+const classes = [
+  {
+    term: 'Fall 2026',
+    code: 'MATH-UH 1012',
+    title: 'Calculus',
+    description: 'Limits, derivatives and integrals.',
+    sections: [
+      { classNumber: '101', section: '001', component: 'Lecture', topic: '', units: '4', status: 'Open', session: 'AD', startDate: '2026-08-24', endDate: '2026-12-14', grading: '', mode: 'In-Person', location: 'Abu Dhabi', instructors: ['Dania, Rana'], meetings: [{ days: ['Mon', 'Wed'], startTime: '10:00', endTime: '11:15', room: 'Social Science C2 Room 001', startDate: '2026-08-24', endDate: '2026-12-14' }], notes: '' },
+    ],
+    scraped: '2026-10-02T00:00:00.000Z',
+  },
+];
+
 let fakeGemini: Server;
 let api: Server;
 let apiUrl = '';
 let dataRoot = '';
-const geminiCalls: Array<{ url: string; prompt: string }> = [];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const geminiCalls: Array<{ url: string; prompt: string; body: any }> = [];
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const getJson = async (url: string, init?: RequestInit): Promise<any> => (await fetch(url, init)).json();
 
@@ -48,7 +63,7 @@ beforeAll(async () => {
     for await (const chunk of req) chunks.push(chunk as Buffer);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
     const url = req.url ?? '';
-    geminiCalls.push({ url, prompt: String(body.contents?.at?.(-1)?.parts?.[0]?.text ?? '') });
+    geminiCalls.push({ url, prompt: String(body.contents?.at?.(-1)?.parts?.[0]?.text ?? ''), body });
     if (req.headers['x-goog-api-key'] !== 'test-key') {
       res.statusCode = 403;
       res.end(JSON.stringify({ error: { code: 403, message: 'bad key' } }));
@@ -62,8 +77,13 @@ beforeAll(async () => {
       return;
     }
     if (url.includes(':streamGenerateContent')) {
-      // The main chat model is "out of quota for the day": the API must fall back to the lite model.
-      if (url.includes('gemini-2.5-flash:')) {
+      // The newest model has been shut down and the next is out of quota for the day: the API must walk down to 2.5 Flash.
+      if (url.includes('gemini-3.5-flash:')) {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ error: { code: 404, message: 'models/gemini-3.5-flash is not found for API version v1beta', status: 'NOT_FOUND' } }));
+        return;
+      }
+      if (url.includes('gemini-3-flash-preview:')) {
         res.statusCode = 429;
         res.end(JSON.stringify({ error: { code: 429, message: 'You exceeded your current quota: generate_content_free_tier_requests, limit: 250 per day', status: 'RESOURCE_EXHAUSTED' } }));
         return;
@@ -109,6 +129,7 @@ beforeAll(async () => {
   const dataDir = path.join(dataRoot, 'data');
   require('node:fs').mkdirSync(dataDir, { recursive: true });
   writeFileSync(path.join(dataDir, 'posts.jsonl'), posts.map((post) => JSON.stringify(post)).join('\n') + '\n');
+  writeFileSync(path.join(dataDir, 'classes.jsonl'), classes.map((row) => JSON.stringify(row)).join('\n') + '\n');
   const embedder = embedderFromEnv()!;
   expect(embedder.provider).toBe('gemini');
   const result = await buildIndex({ postsFile: path.join(dataDir, 'posts.jsonl'), outDir: path.join(dataDir, 'index'), embedder, batchSize: 2, concurrency: 2 });
@@ -141,7 +162,7 @@ describe('api', () => {
     expect(health.ok).toBe(true);
     expect(health.archive).toMatchObject({ source: 'index', posts: 4, vectors: true, dimensions: DIMS });
     expect(health.embeddings).toMatchObject({ provider: 'gemini', keyConfigured: true, semanticSearch: true });
-    expect(health.gemini).toMatchObject({ configured: true, chatModel: 'gemini-2.5-flash', chatFallbacks: ['gemini-2.5-flash-lite'] });
+    expect(health.gemini).toMatchObject({ configured: true, chatModel: 'gemini-3.5-flash', chatFallbacks: ['gemini-3-flash-preview', 'gemini-2.5-flash'], liteModel: 'gemini-3.1-flash-lite' });
     expect(health).not.toHaveProperty('accessCode');
   });
 
@@ -212,9 +233,17 @@ describe('api', () => {
     const answer = events.filter((e) => e.event === 'delta').map((e) => e.data.text).join('');
     expect(answer).toContain('Dania');
     expect(events.at(-1)!.data.confidence).toEqual({ level: 'high', reason: 'three people agree, all this year' });
-    // gemini-2.5-flash answered 429 (daily quota), so the answer came from the fallback model.
-    expect(events.at(-1)!.data.model).toBe('gemini-2.5-flash-lite');
-    expect(geminiCalls.some((call) => call.url.includes('gemini-2.5-flash:streamGenerateContent'))).toBe(true);
+    // 3.5 Flash is gone (404) and 3 Flash is out of quota (429), so the answer came from 2.5 Flash.
+    expect(events.at(-1)!.data.model).toBe('gemini-2.5-flash');
+    expect(events.at(-1)!.data.truncated).toBe(false);
+    expect(geminiCalls.some((call) => call.url.includes('gemini-3.5-flash:streamGenerateContent'))).toBe(true);
+    expect(geminiCalls.some((call) => call.url.includes('gemini-3-flash-preview:streamGenerateContent'))).toBe(true);
+    // Thinking is capped so it cannot eat the answer's token budget, and utility calls do not think at all where they can.
+    const answerCall = geminiCalls.find((call) => call.url.includes('gemini-2.5-flash:streamGenerateContent'))!;
+    expect(answerCall.body.generationConfig).toMatchObject({ maxOutputTokens: 8192, thinkingConfig: { thinkingBudget: 1024 } });
+    const utilityCall = geminiCalls.find((call) => call.url.includes(':generateContent'))!;
+    expect(utilityCall.url).toContain('gemini-3.1-flash-lite:generateContent');
+    expect(utilityCall.body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'low' });
     expect(events.find((e) => e.event === 'followups')!.data.questions).toHaveLength(3);
     // The follow-up rewrite saw the conversation, and the answer was generated by streaming.
     expect(geminiCalls.some((call) => call.url.includes(':generateContent') && call.prompt.includes('Latest message:'))).toBe(true);
@@ -226,9 +255,30 @@ describe('api', () => {
     expect(result.answer).toContain('Dania');
     expect(result.answer).not.toMatch(/confidence:/i);
     expect(result.confidence.level).toBe('high');
-    expect(result.model).toBe('gemini-2.5-flash-lite');
+    expect(result.model).toBe('gemini-2.5-flash');
     expect(result.sources.length).toBeGreaterThan(0);
     expect(result.retrieval.reranked).toBe(true);
+    // Models that failed are skipped for a while rather than tried on every question.
+    const answers = geminiCalls.filter((call) => call.url.includes(':streamGenerateContent'));
+    expect(answers.at(-1)!.url).toContain('gemini-2.5-flash:');
+    expect(answers.filter((call) => call.url.includes('gemini-3.5-flash:'))).toHaveLength(1);
+  });
+
+  it('cites the Albert schedule for a course the question names', async () => {
+    const result = await getJson(`${apiUrl}/api/ask`, { method: 'POST', headers, body: JSON.stringify({ question: 'Who teaches MATH-UH 1012 this term?', stream: false }) });
+    const schedule = result.sources.find((source: { kind: string }) => source.kind === 'schedule');
+    expect(schedule).toMatchObject({ postId: 'MATH-UH 1012', title: 'MATH-UH 1012 Calculus' });
+    const prompt = geminiCalls.filter((call) => call.url.includes(':streamGenerateContent')).at(-1)!.prompt;
+    expect(prompt).toContain('Albert class schedule: MATH-UH 1012 Calculus (4 credits)');
+    expect(prompt).toContain('Lecture 001: Mon/Wed 10:00–11:15, Social Science C2 Room 001 · Rana Dania · open');
+  });
+
+  it('orders threads by the cross-encoder when there is one', async () => {
+    const archive = await loadArchive();
+    const reranker = { name: 'fake', rerank: async (_query: string, documents: string[]) => documents.map((doc) => (doc.includes('new professor') ? 0.9 : doc.includes('Dania') ? 0.7 : 0.05)) };
+    const result = await ask(archive, geminiConfig()!, { question: 'calculus professor', stream: false }, {}, undefined, { reranker, catalog: null });
+    expect(result.retrieval.reranked).toBe(true);
+    expect(result.sources.map((source) => source.postId).slice(0, 2)).toEqual(['p4', 'p1']);
   });
 
   it('validates questions', async () => {

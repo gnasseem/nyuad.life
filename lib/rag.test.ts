@@ -16,9 +16,16 @@ describe('parseConfidence', () => {
 
 describe('systemPrompt', () => {
   it('asks for the shape the client renders', () => {
-    const prompt = systemPrompt(new Date('2026-09-29T00:00:00Z'));
-    expect(prompt).toContain('Today is 2026-09-29');
+    const prompt = systemPrompt(new Date('2026-09-29T00:00:00Z'), 'Fall 2026');
+    expect(prompt).toContain('Today is 2026-09-29, a Tuesday, in Abu Dhabi; the term now is Fall 2026');
     expect(prompt).toContain('Confidence: high|medium|low');
-    expect(prompt).toContain('Falcons = campus dirhams');
+  });
+  it('dates the question in Abu Dhabi, four hours ahead of UTC', () => {
+    expect(systemPrompt(new Date('2026-09-29T21:30:00Z'))).toContain('Today is 2026-09-30, a Wednesday');
+  });
+  it('keeps Falcons and Campus Dirhams apart', () => {
+    const prompt = systemPrompt();
+    expect(prompt).toContain('Campus Dirhams = the meal-plan money');
+    expect(prompt).not.toMatch(/Falcons = campus dirhams/i);
   });
 });

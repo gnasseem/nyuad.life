@@ -5,10 +5,10 @@ import { Wordmark } from './components/Logo';
 import { ProfileModal } from './components/ProfileForm';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
 import { initials, relativeDate } from './format';
-import { IconAsk, IconAuto, IconBag, IconClock, IconMap, IconMegaphone, IconMoon, IconQuestions, IconSun, IconTrash, IconUser } from './icons';
+import { IconAsk, IconAuto, IconBag, IconBook, IconClock, IconMegaphone, IconMoon, IconQuestions, IconSun, IconTrash, IconUser } from './icons';
 import { AnnouncementsPage } from './pages/Announcements';
 import { AskPage } from './pages/Ask';
-import { GuidePage } from './pages/Guide';
+import { CoursesPage } from './pages/Courses';
 import { MarketPage } from './pages/Market';
 import { PostPage } from './pages/Post';
 import { QuestionPage, QuestionsPage } from './pages/Questions';
@@ -24,11 +24,11 @@ const NAV: Array<{ route: Route; label: string; line: Line; icon: typeof IconAsk
   { route: { name: 'questions' }, label: 'Questions', line: 'questions', icon: IconQuestions, matches: ['questions', 'question'] },
   { route: { name: 'announcements' }, label: 'Notices', line: 'notices', icon: IconMegaphone, matches: ['announcements'] },
   { route: { name: 'market', tab: 'items' }, label: 'Market', line: 'market', icon: IconBag, matches: ['market'] },
-  { route: { name: 'guide' }, label: 'Guide', line: 'guide', icon: IconMap, matches: ['guide', 'post'] },
+  { route: { name: 'courses' }, label: 'Courses', line: 'guide', icon: IconBook, matches: ['courses', 'threads', 'post'] },
 ];
 
 const THEME_LABEL: Record<Theme, string> = { system: 'Theme: auto', light: 'Theme: light', dark: 'Theme: dark' };
-const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Notices', market: 'Market', guide: 'Guide', post: 'Thread', settings: 'Settings' };
+const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Notices', market: 'Market', courses: 'Courses', threads: 'Threads', post: 'Thread', settings: 'Settings' };
 const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: '' };
 
 function useConversations(): Conversation[] {
@@ -148,8 +148,10 @@ export function App() {
         return <AnnouncementsPage />;
       case 'market':
         return <MarketPage tab={route.tab} />;
-      case 'guide':
-        return <GuidePage section={route.section} id={route.id} />;
+      case 'courses':
+        return <CoursesPage view="courses" code={route.code} />;
+      case 'threads':
+        return <CoursesPage view="threads" />;
       case 'post':
         return <PostPage id={route.id} />;
       case 'settings':
@@ -159,8 +161,8 @@ export function App() {
     }
   })();
 
-  // A new key per page replays its entrance. Market tabs and the guide's side panel keep the key, so they do not.
-  const pageKey = route.name === 'market' ? 'market' : route.name === 'guide' ? `guide-${route.section ?? ''}` : routePath(route);
+  // A new key per page replays its entrance. Market tabs and a course opening beside the list keep the key, so they do not.
+  const pageKey = route.name === 'market' ? 'market' : route.name === 'courses' || route.name === 'threads' ? 'courses' : routePath(route);
   const settingsActive = route.name === 'settings';
 
   const me = (
