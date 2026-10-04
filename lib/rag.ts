@@ -7,6 +7,7 @@ import { searchAnnouncements, searchBoard, STANDING_LABELS, type Announcement, t
 import type { BoardStore } from './board-store.ts';
 import { detectRedirect } from './domains.ts';
 import { embedderForIndex, type Embedder } from './embeddings.ts';
+import { ChatGPTError, liteText, markChatGPTModelUnusable, streamResponse, usableChatGPTModels, type ChatGPTConfig } from './chatgpt.ts';
 import { abuDhabiDate, courseScheduleText, instructorScheduleText, loadCatalog, matchSchedule, type Catalog } from './courses.ts';
 import { generateJson, generateStream, generateText, isDailyQuota, isModelUnavailable, markUnavailable, usableModels, type GeminiConfig, type Message } from './gemini.ts';
 import { ApiError } from './http.ts';
@@ -463,40 +464,47 @@ async function rerankWithLite(cfg: GeminiConfig, archive: Archive, question: str
 }
 
 /** The cross-encoder when there is one, else the lite model for threads and fused scores for official pages. */
-async function rank(cfg: GeminiConfig, archive: Archive, question: string, retrieval: Retrieval, official: OfficialCandidates | null, reranker: Reranker | null): Promise<Ranked> {
+async function rank(cfg: GeminiConfig | null, archive: Archive, question: string, retrieval: Retrieval, official: OfficialCandidates | null, reranker: Reranker | null): Promise<Ranked> {
   if (reranker) {
     const ranked = await rerankWithModel(reranker, archive, question, retrieval.hits, official);
     if (ranked) return ranked;
   }
   const officialHits = official ? strongOfficial(official) : [];
   if (retrieval.hits.length === 0) return { archive: [], official: officialHits, reranked: false };
-  const lite = await rerankWithLite(cfg, archive, question, retrieval.hits, retrieval.terms);
+  // The lite-model fallback is the site's Gemini; without it the fused order stands.
+  const lite = cfg ? await rerankWithLite(cfg, archive, question, retrieval.hits, retrieval.terms) : null;
   return { archive: (lite ?? retrieval.hits.slice(0, 10)).slice(0, MAX_SOURCES), official: officialHits, reranked: lite !== null };
 }
 
+/**
+ * Who writes. A student who connected ChatGPT gets everything model-made for their question (the answer, the
+ * follow-ups, the query rewrite) on their own plan; everyone else gets the site's Gemini.
+ */
+export interface Writers {
+  gemini: GeminiConfig | null;
+  chatgpt: { cfg: ChatGPTConfig; token: string } | null;
+}
+
+const REWRITE_SYSTEM =
+  "Rewrite the student's latest message as one standalone search query that keeps every name, course code and detail it refers to from the conversation. " +
+  'Output only the query, no quotes or explanation. If it is already standalone, return it unchanged. ';
+
 /** Turns a follow-up like "and what about his grading?" into a standalone search query. */
-async function standaloneQuestion(cfg: GeminiConfig, history: ChatTurn[], question: string): Promise<string> {
+async function standaloneQuestion(writers: Writers, history: ChatTurn[], question: string): Promise<string> {
   if (history.length === 0) return question;
   const transcript = history
     .slice(-6)
     .map((turn) => `${turn.role === 'user' ? 'Student' : 'Assistant'}: ${truncate(collapseWhitespace(turn.content), 700)}`)
     .join('\n');
+  const prompt = `Conversation:\n${transcript}\n\nLatest message: ${question}`;
   try {
-    const result = await generateText(
-      cfg,
-      {
-        model: cfg.liteModels,
-        temperature: 0,
-        maxOutputTokens: 512,
-        system:
-          "Rewrite the student's latest message as one standalone search query that keeps every name, course code and detail it refers to from the conversation. " +
-          'Output only the query, no quotes or explanation. If it is already standalone, return it unchanged. ' +
-          GLOSSARY,
-        messages: [{ role: 'user', text: `Conversation:\n${transcript}\n\nLatest message: ${question}` }],
-      },
-      { retries: 1, timeoutMs: 8_000 },
-    );
-    const rewritten = collapseWhitespace(result.text).replace(/^["“]|["”]$/g, '');
+    let text = '';
+    if (writers.chatgpt) text = await liteText(writers.chatgpt.cfg, writers.chatgpt.token, REWRITE_SYSTEM + GLOSSARY, prompt, 8_000);
+    else if (writers.gemini) {
+      const cfg = writers.gemini;
+      text = (await generateText(cfg, { model: cfg.liteModels, temperature: 0, maxOutputTokens: 512, system: REWRITE_SYSTEM + GLOSSARY, messages: [{ role: 'user', text: prompt }] }, { retries: 1, timeoutMs: 8_000 })).text;
+    } else return question;
+    const rewritten = collapseWhitespace(text).replace(/^["“]|["”]$/g, '');
     return rewritten && rewritten.length <= MAX_QUESTION_CHARS ? rewritten : question;
   } catch {
     return question;
@@ -509,12 +517,30 @@ const FOLLOWUP_SCHEMA = {
   required: ['questions'],
 };
 
-export async function followups(cfg: GeminiConfig, question: string, cards: SourceCard[]): Promise<string[]> {
+const FOLLOWUP_SYSTEM =
+  'Suggest exactly three short follow-up questions (under 12 words each) that an NYU Abu Dhabi student would naturally ask next, each answerable from the sources summarised. Vary the angle: one deeper on the same topic, one comparison, one practical next step. No numbering. ';
+
+export async function followups(writers: Writers, question: string, cards: SourceCard[]): Promise<string[]> {
   if (cards.length === 0) return [];
   const context = cards
     .slice(0, 8)
     .map((card) => `- ${card.title ? `${card.title}: ` : ''}${truncate(card.text, 160)}`)
     .join('\n');
+  const prompt = `Question asked: ${question}\n\nPosts found:\n${context}`;
+  if (writers.chatgpt) {
+    try {
+      const text = await liteText(writers.chatgpt.cfg, writers.chatgpt.token, `${FOLLOWUP_SYSTEM}Write one question per line and nothing else. ${GLOSSARY}`, prompt);
+      return text
+        .split('\n')
+        .map((line) => collapseWhitespace(line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '')))
+        .filter((line) => line.length > 3)
+        .slice(0, 3);
+    } catch {
+      return [];
+    }
+  }
+  const cfg = writers.gemini;
+  if (!cfg) return [];
   try {
     const result = await generateJson<{ questions: string[] }>(
       cfg,
@@ -523,10 +549,8 @@ export async function followups(cfg: GeminiConfig, question: string, cards: Sour
         temperature: 0.7,
         maxOutputTokens: 1024,
         responseSchema: FOLLOWUP_SCHEMA,
-        system:
-          'Suggest exactly three short follow-up questions (under 12 words each) that an NYU Abu Dhabi student would naturally ask next, each answerable from the sources summarised. Vary the angle: one deeper on the same topic, one comparison, one practical next step. No numbering. ' +
-          GLOSSARY,
-        messages: [{ role: 'user', text: `Question asked: ${question}\n\nPosts found:\n${context}` }],
+        system: FOLLOWUP_SYSTEM + GLOSSARY,
+        messages: [{ role: 'user', text: prompt }],
       },
       { retries: 0, timeoutMs: 12_000 },
     );
@@ -564,6 +588,8 @@ interface AskContext {
   catalog?: Catalog | null;
   /** The cross-encoder; taken from the environment when not given. Null switches it off. */
   reranker?: Reranker | null;
+  /** The student's own ChatGPT plan, when they connected it; then the answer runs there instead of on Gemini. */
+  chatgpt?: Writers['chatgpt'];
   /** When to stop writing, in ms since the epoch; defaults to ANSWER_DEADLINE_MS after the call starts. The route
    * passes one counted from the request, since loading the archive on a cold start eats into the same 60 s. */
   deadline?: number;
@@ -580,8 +606,11 @@ function catalogOrNull(): Catalog | null {
 }
 
 /** The full pipeline. Emits sources first, then answer deltas, then follow-ups; also returns everything at the end. */
-export async function ask(archive: Archive, cfg: GeminiConfig, request: AskRequest, events: AskEvents = {}, signal?: AbortSignal, context: AskContext = {}): Promise<AskResponse> {
+export async function ask(archive: Archive, cfg: GeminiConfig | null, request: AskRequest, events: AskEvents = {}, signal?: AbortSignal, context: AskContext = {}): Promise<AskResponse> {
   const started = Date.now();
+  const writers: Writers = { gemini: cfg, chatgpt: context.chatgpt ?? null };
+  if (!writers.gemini && !writers.chatgpt) throw new ApiError(503, 'No model is set up to write answers.', 'no_model');
+  const writerName = writers.chatgpt ? `chatgpt:${writers.chatgpt.cfg.chatModels[0]}` : writers.gemini!.chatModel;
   const deadline = context.deadline ?? started + ANSWER_DEADLINE_MS;
   const history = request.history ?? [];
   const board = context.board ?? null;
@@ -593,11 +622,11 @@ export async function ask(archive: Archive, cfg: GeminiConfig, request: AskReque
     events.redirect?.(redirect);
     events.sources?.([]);
     events.followups?.([]);
-    return { answer: '', sources: [], followups: [], model: cfg.chatModel, confidence: null, redirect, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
+    return { answer: '', sources: [], followups: [], model: writerName, confidence: null, redirect, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
   }
 
   events.status?.('Reading the question');
-  const searchQuery = await standaloneQuestion(cfg, history, request.question);
+  const searchQuery = await standaloneQuestion(writers, history, request.question);
 
   events.status?.('Searching');
   const retrieval = await retrieve(archive, searchQuery, { k: CANDIDATES });
@@ -615,10 +644,10 @@ export async function ask(archive: Archive, cfg: GeminiConfig, request: AskReque
     const answer = 'No source covers this. Ask students on the Questions page.';
     events.delta?.(answer);
     events.followups?.([]);
-    return { answer, sources: [], followups: [], model: cfg.chatModel, confidence: { level: 'low', reason: 'no matching threads' }, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
+    return { answer, sources: [], followups: [], model: writerName, confidence: { level: 'low', reason: 'no matching threads' }, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
   }
 
-  const followupsPromise = followups(cfg, request.question, cards).then((questions) => {
+  const followupsPromise = followups(writers, request.question, cards).then((questions) => {
     events.followups?.(questions);
     return questions;
   });
@@ -626,7 +655,8 @@ export async function ask(archive: Archive, cfg: GeminiConfig, request: AskReque
   events.status?.('Writing');
   const messages: Message[] = history.slice(-6).map((turn) => ({ role: turn.role, text: truncate(turn.content, 2500) }));
   messages.push({ role: 'user', text: `Question: ${request.question}\n\nSources:\n${sourcesBlock(archive, cards, [...official, ...schedule, ...live])}` });
-  const { answer, model, truncated } = await writeAnswer(cfg, messages, events, signal, deadline, catalog?.current ?? '');
+  const term = catalog?.current ?? '';
+  const { answer, model, truncated } = writers.chatgpt ? await writeWithChatGPT(writers.chatgpt, messages, events, signal, deadline, term) : await writeAnswer(writers.gemini!, messages, events, signal, deadline, term);
   if (!answer.trim()) throw new ApiError(502, 'The model returned an empty answer.', 'empty_answer');
   const questions = await followupsPromise;
   const parsed = parseConfidence(answer);
@@ -698,4 +728,53 @@ async function writeAnswer(cfg: GeminiConfig, messages: Message[], events: AskEv
     }
   }
   throw new ApiError(503, QUOTA_MESSAGE, 'quota');
+}
+
+/**
+ * The same as writeAnswer, on the student's ChatGPT plan: moves down the model list when a model is not available to
+ * this site, stops at the deadline with a note, and turns plan errors (limit reached, sign-in expired) into messages.
+ */
+async function writeWithChatGPT(chatgpt: NonNullable<Writers['chatgpt']>, messages: Message[], events: AskEvents, signal: AbortSignal | undefined, deadline: number, term: string): Promise<{ answer: string; model: string; truncated: boolean }> {
+  const models = usableChatGPTModels(chatgpt.cfg.chatModels);
+  const instructions = systemPrompt(new Date(), term);
+  const input = messages.map((message) => ({ role: message.role, text: message.text }));
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i]!;
+    const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, Math.max(1_000, deadline - Date.now()));
+    let answer = '';
+    let truncated = false;
+    try {
+      for await (const event of streamResponse(chatgpt.cfg, chatgpt.token, { model, instructions, input, signal: controller.signal, effort: 'low' })) {
+        if (event.text) {
+          answer += event.text;
+          events.delta?.(event.text);
+        }
+        if (event.incomplete) truncated = true;
+      }
+      return { answer, model: `chatgpt:${model}`, truncated };
+    } catch (error) {
+      if (timedOut && !signal?.aborted) {
+        if (answer) return { answer, model: `chatgpt:${model}`, truncated: true };
+        throw new ApiError(504, 'The answer took too long. Try again, or ask a narrower question.', 'timeout');
+      }
+      if (error instanceof ChatGPTError && error.code === 'chatgpt_model' && !answer && i < models.length - 1) {
+        markChatGPTModelUnusable(model);
+        console.warn(`[ask] ChatGPT model ${model} is not available here; trying ${models[i + 1]}.`);
+        continue;
+      }
+      if (error instanceof ChatGPTError) throw new ApiError(error.status, error.message, error.code);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    }
+  }
+  throw new ApiError(502, 'None of the ChatGPT models this site asks for are available to your plan.', 'chatgpt_model');
 }

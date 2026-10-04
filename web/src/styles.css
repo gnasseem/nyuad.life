@@ -495,6 +495,13 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .central .send { background: #ffc21a; color: #0b1230; }
 .central .send:disabled { background: #e8ecf3; color: #5f688e; }
 .central-note { margin-top: 12px; color: rgba(240, 242, 250, 0.62); font-size: 13.5px; }
+.chatgpt-btn { gap: 8px; }
+.chatgpt-btn svg { width: 16px; height: 16px; }
+.chatgpt-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 12px; font-size: 13.5px; }
+.chatgpt-line > svg { width: 14px; height: 14px; flex: none; }
+.chatgpt-line.on-dark { color: rgba(240, 242, 250, 0.7); }
+.chatgpt-line.on-dark .link-btn { color: #ffc21a; display: inline-flex; align-items: center; gap: 6px; }
+.chatgpt-line.on-light { color: var(--ink-3); }
 .journeys { position: relative; z-index: 3; display: flex; flex-wrap: wrap; gap: 8px; width: calc(100% - 110px); margin-top: 16px; }
 .journey { display: inline-flex; align-items: center; min-height: 34px; max-width: 100%; padding: 7px 14px; border: 1px solid rgba(240, 242, 250, 0.16); border-radius: 18px; background: rgba(240, 242, 250, 0.05); color: rgba(240, 242, 250, 0.84); font: 540 13.5px/1.3 var(--text); text-align: left; transition: background 0.2s, border-color 0.2s, color 0.2s, transform 0.15s var(--ease); animation: rise-in 0.5s var(--ease) backwards; }
 .journey:nth-child(1) { animation-delay: 0.15s; }

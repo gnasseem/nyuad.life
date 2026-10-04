@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { api } from '../api';
 import { GROUP_URL } from '../brand';
+import { ChatGPTSignIn } from '../components/ChatGPT';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
 import { plural, standingLabel } from '../format';
@@ -40,7 +42,7 @@ function ThemeArt({ theme }: { theme: Theme }) {
 }
 
 export function SettingsPage() {
-  const { profile, setProfile, requestProfile, theme, setTheme, toast, boardProblem } = useApp();
+  const { profile, setProfile, requestProfile, theme, setTheme, toast, boardProblem, chatgpt, refreshChatGPT } = useApp();
   const [count, setCount] = useState(() => loadConversations().length);
 
   useEffect(() => onConversationsChange(() => setCount(loadConversations().length)), []);
@@ -75,6 +77,37 @@ export function SettingsPage() {
           ))}
         </div>
       </section>
+
+      {chatgpt?.available && (
+        <section className="settings-section">
+          <h2>ChatGPT</h2>
+          <div className="list">
+            <div className="settings-row">
+              <div className="text">
+                <b>{chatgpt.connected ? `Connected${chatgpt.plan ? ` (${chatgpt.plan[0]!.toUpperCase()}${chatgpt.plan.slice(1)} plan)` : ''}` : 'Not connected'}</b>
+                <span>{chatgpt.connected ? `Answers run on the ChatGPT plan of ${chatgpt.email || chatgpt.name || 'your account'}, within the limit you set for this site in ChatGPT.` : chatgpt.required ? 'Answers here run on your own ChatGPT plan: connect it to ask.' : 'Connect your ChatGPT plan and your answers run on it instead of the site’s shared quota.'}</span>
+              </div>
+              <div className="actions">
+                {chatgpt.connected ? (
+                  <button
+                    type="button"
+                    className="btn sm"
+                    onClick={async () => {
+                      await api.chatgpt.logout().catch(() => {});
+                      refreshChatGPT();
+                      toast('ChatGPT disconnected');
+                    }}
+                  >
+                    Disconnect
+                  </button>
+                ) : (
+                  <ChatGPTSignIn className="btn sm primary" />
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="settings-section">
         <h2>Your details</h2>

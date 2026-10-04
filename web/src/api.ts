@@ -72,6 +72,21 @@ export interface Health {
   board: { configured: boolean; persistent?: boolean; ok?: boolean; code?: string; problem?: string; hint?: string };
 }
 
+/** Sign in with ChatGPT: whether it is set up here, whether answers require it, and who is connected. */
+export interface ChatGPTStatus {
+  available: boolean;
+  required: boolean;
+  connected: boolean;
+  name: string;
+  email: string;
+  plan: string;
+}
+
+/** Where the "Sign in with ChatGPT" button goes; the server redirects to ChatGPT and back to `returnTo`. */
+export function chatgptSignInUrl(returnTo = window.location.pathname + window.location.search): string {
+  return `${apiBase()}/api/chatgpt?op=start&returnTo=${encodeURIComponent(returnTo)}`;
+}
+
 /** Why the board cannot be used right now, in a sentence for the screen, or null when it is fine. */
 export function boardProblem(health: Health | null): string | null {
   if (!health) return null;
@@ -347,6 +362,10 @@ function post<T>(path: string, body: unknown): Promise<T> {
 
 export const api = {
   health: () => request<Health>('/api/health'),
+  chatgpt: {
+    me: () => request<ChatGPTStatus>('/api/chatgpt?op=me'),
+    logout: () => post<{ ok: true }>('/api/chatgpt', { op: 'logout' }),
+  },
   home: () => request<HomePayload>('/api/home'),
   search: (params: { q?: string; topic?: string; sort?: string; page?: number }) => {
     const query = new URLSearchParams();
@@ -446,7 +465,7 @@ export async function askStream(question: string, history: ChatTurn[], handlers:
         handlers.onDone?.({ model: String(payload.model ?? ''), confidence: (payload.confidence as Confidence | null) ?? null, truncated });
         break;
       case 'error':
-        streamError = new ApiError(500, 'stream_error', String(payload.message ?? 'The answer failed.'));
+        streamError = new ApiError(500, String(payload.code ?? 'stream_error'), String(payload.message ?? 'The answer failed.'));
         break;
     }
   };

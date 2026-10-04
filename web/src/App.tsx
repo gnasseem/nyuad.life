@@ -1,5 +1,5 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, boardProblem as describeBoardProblem, type Health, type HomePayload, type Profile } from './api';
+import { api, boardProblem as describeBoardProblem, type ChatGPTStatus, type Health, type HomePayload, type Profile } from './api';
 import { APP_NAME } from './brand';
 import { Wordmark } from './components/Logo';
 import { ProfileModal } from './components/ProfileForm';
@@ -46,6 +46,7 @@ export function App() {
   const [toastState, setToastState] = useState<{ message: string; leaving: boolean; id: number } | null>(null);
   const [askPrefill, setAskPrefillState] = useState<(Prefill & { token: number }) | null>(null);
   const [boardPrefill, setBoardPrefill] = useState('');
+  const [chatgpt, setChatGPT] = useState<ChatGPTStatus | null>(null);
   const [history, setHistory] = useState(false);
   const [profileAsk, setProfileAsk] = useState<{ title: string; reason: string } | null>(null);
   const profileRequest = useRef<((saved: boolean) => void) | null>(null);
@@ -72,6 +73,14 @@ export function App() {
       .then(setHealth)
       .catch(() => setHealth({ ok: false, gemini: { configured: false }, board: { configured: false } }));
   }, []);
+
+  const refreshChatGPT = useCallback(() => {
+    api.chatgpt
+      .me()
+      .then(setChatGPT)
+      .catch(() => setChatGPT({ available: false, required: false, connected: false, name: '', email: '', plan: '' }));
+  }, []);
+  useEffect(refreshChatGPT, [refreshChatGPT]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -129,9 +138,22 @@ export function App() {
 
   const boardProblem = useMemo(() => describeBoardProblem(health), [health]);
 
+  // Back from ChatGPT: say how it went once, and take the marker out of the address.
+  useEffect(() => {
+    const result = search.get('chatgpt');
+    if (!result) return;
+    const reason = search.get('reason') ?? '';
+    toast(result === 'connected' ? 'ChatGPT connected. Answers now run on your plan.' : reason === 'chatgpt_denied' ? 'ChatGPT was not connected.' : 'Could not connect ChatGPT. Try again.');
+    const url = new URL(window.location.href);
+    url.searchParams.delete('chatgpt');
+    url.searchParams.delete('reason');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const context = useMemo(
-    () => ({ home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, setBoardPrefill }),
-    [home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill],
+    () => ({ home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, setBoardPrefill, chatgpt, refreshChatGPT }),
+    [home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, chatgpt, refreshChatGPT],
   );
 
   const cycleTheme = () => setThemeState(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');

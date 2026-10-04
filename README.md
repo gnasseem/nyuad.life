@@ -5,7 +5,7 @@ level: threads from the Room of Requirement Facebook group, official NYUAD pages
 other students wrote here.
 
 - **Ask.** Hybrid keyword and vector search over the archive and the official pages, reranked by Voyage's cross-encoder
-  and written up by Gemini. A question that names a course or a professor also gets their Albert schedule as a source.
+  and written up by Gemini, or on the student's own ChatGPT plan when they sign in with ChatGPT. A question that names a course or a professor also gets their Albert schedule as a source.
 - **Questions.** When the archive falls short, a question goes to students. Helpers give a name, NetID, major and class
   year once, then get questions one at a time, matched by major and year. Answered questions are cited by Ask.
 - **Notices.** Events, deadlines and opportunities posted by students, by day, with a calendar file for dated ones.
@@ -29,7 +29,8 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
 
    | Variable | Needed for |
    | --- | --- |
-   | `GEMINI_API_KEY` | Answers, question tagging, follow-ups, course summaries. |
+   | `GEMINI_API_KEY` | Answers for students not signed in with ChatGPT, question tagging, course summaries. |
+   | `OPENAI_CLIENT_ID`, `SESSION_SECRET`, `ROR_SITE_URL` | Sign in with ChatGPT: answers on each student's own plan (below). |
    | `VOYAGE_API_KEY` | Semantic search (must be the provider that built the index) and the reranker. |
    | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | The board: questions, notices, offers, listings, course summaries. |
    | `ROR_GROUP_URL` | Where listings and rides are sent. Defaults to the group. |
@@ -46,6 +47,23 @@ search, courses and the board are rate-limited per IP.
 Gemini models are tried newest first (3.5 Flash, 3 Flash, 2.5 Flash for answers; 3.1 Flash-Lite, 2.5 Flash-Lite for
 the small calls), and a model that is shut down or out of quota is skipped for a while, so a retirement or a spent free
 tier degrades to the next model instead of breaking Ask. `GET /api/health` shows the lists.
+
+## Sign in with ChatGPT
+
+Students can connect their own ChatGPT plan; their answers, follow-ups and query rewrites then run on it, counted
+against the limit they give this site in ChatGPT, and the site's Gemini key is not used for them. It is OpenAI's Sign
+in with ChatGPT: OAuth with PKCE against `auth.openai.com`, then the issued token calls `api.openai.com/v1/responses`
+directly (`lib/chatgpt.ts`). Tokens are kept encrypted in an httpOnly cookie, so no database is involved.
+
+1. Register the site with OpenAI for Sign in with ChatGPT and get its client ID. The redirect URI is
+   `https://<your domain>/api/chatgpt-callback`.
+2. Set `OPENAI_CLIENT_ID`, `SESSION_SECRET` (32+ random characters) and `ROR_SITE_URL` on Vercel, then redeploy. A
+   "Sign in with ChatGPT" link appears under the ask box and in Settings.
+3. Optional: `ROR_REQUIRE_CHATGPT=1` answers only students who connected, so the site never pays for answers; without a
+   Gemini key at all, connecting is required anyway. `OPENAI_CHAT_MODELS` and `OPENAI_LITE_MODELS` pick the models.
+
+`GET /api/health` shows whether it is on. Routes: `GET /api/chatgpt?op=start|me`, `POST /api/chatgpt {op:"logout"}`,
+`GET /api/chatgpt-callback`.
 
 ## Scrape the group
 

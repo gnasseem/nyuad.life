@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { api, askStream, type Announcement, type Listing, type MarketSummary, type QuestionWithAnswers, type SourceCard } from '../api';
+import { api, ApiError, askStream, type Announcement, type Listing, type MarketSummary, type QuestionWithAnswers, type SourceCard } from '../api';
+import { ChatGPTLine, ChatGPTSignIn } from '../components/ChatGPT';
 import { Flap } from '../components/Flap';
 import { RedirectCard } from '../components/RedirectCard';
 import { SourceRow } from '../components/SourceRow';
@@ -32,7 +33,7 @@ const STAGES: Array<{ label: string; match: RegExp }> = [
 const KIND_COLOR: Record<SourceCard['kind'], string> = { archive: 'var(--cobalt)', official: 'var(--cobalt)', schedule: 'var(--cobalt)', board: 'var(--green)', announcement: 'var(--amber)' };
 
 export function AskPage({ resumeId }: Props) {
-  const { home, health, toast, askPrefill, setAskPrefill, setBoardPrefill } = useApp();
+  const { home, health, toast, askPrefill, setAskPrefill, setBoardPrefill, chatgpt, refreshChatGPT } = useApp();
   const [conversation, setConversation] = useState<Conversation>(() => (resumeId && loadConversations().find((entry) => entry.id === resumeId)) || fresh());
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
@@ -137,14 +138,17 @@ export function AskPage({ resumeId }: Props) {
           patchMessage(modelMessage.id, (message) => ({ pending: false, status: undefined, error: message.content ? undefined : 'Stopped' }));
           if (conversationRef.current.messages.some((m) => m.role === 'model' && m.content && !m.error)) saveConversation(conversationRef.current);
         } else {
-          patchMessage(modelMessage.id, { pending: false, status: undefined, error: error instanceof Error ? error.message : 'The request failed.' });
+          const code = error instanceof ApiError ? error.code : undefined;
+          patchMessage(modelMessage.id, { pending: false, status: undefined, error: error instanceof Error ? error.message : 'The request failed.', errorCode: code });
+          // The server cleared an expired ChatGPT sign-in; show the page as signed out.
+          if (code === 'chatgpt_expired' || code === 'chatgpt_required') refreshChatGPT();
         }
       } finally {
         setRunning(false);
         abortRef.current = null;
       }
     },
-    [running, update, patchMessage],
+    [running, update, patchMessage, refreshChatGPT],
   );
 
   useEffect(() => {
@@ -298,7 +302,7 @@ export function AskPage({ resumeId }: Props) {
         composer={composer}
         suggestions={home?.suggestions ?? []}
         onSuggestion={(question) => void send(question)}
-        answersOff={Boolean(health && !health.gemini.configured)}
+        answersOff={Boolean(health && !health.gemini.configured && !chatgpt?.available)}
       />
     );
   }
@@ -343,7 +347,16 @@ export function AskPage({ resumeId }: Props) {
                     {message.pending && <span className="cursor" />}
                   </div>
                 )}
-                {message.error && <div className="alert error">{message.error}</div>}
+                {message.error && (
+                  <div className="alert error">
+                    {message.error}
+                    {(message.errorCode === 'chatgpt_required' || message.errorCode === 'chatgpt_expired' || message.errorCode === 'chatgpt_plan') && (
+                      <div style={{ marginTop: 10 }}>
+                        <ChatGPTSignIn className="btn sm primary" />
+                      </div>
+                    )}
+                  </div>
+                )}
                 {message.truncated && !message.pending && (
                   <div className="alert cut">
                     This answer was cut short.{' '}
@@ -540,6 +553,7 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
         <div className="central-ask">
           {composer}
           {answersOff && <p className="central-note">Answers are paused right now.</p>}
+          <ChatGPTLine />
         </div>
         {suggestions.length > 0 && (
           <div className="journeys">

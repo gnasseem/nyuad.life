@@ -1,5 +1,6 @@
 import { boardStore, type BoardCheck, type BoardStore } from '../lib/board-store.ts';
 import { embedderForIndex, keysFor, providerForModel } from '../lib/embeddings.ts';
+import { chatgptConfig } from '../lib/chatgpt.ts';
 import { loadCatalog } from '../lib/courses.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { route, sendJson } from '../lib/http.ts';
@@ -41,8 +42,9 @@ export default route(['GET'], async (_req, res) => {
     }
   })();
   const reranker = rerankerFromEnv();
+  const chatgpt = chatgptConfig();
   sendJson(res, archive ? 200 : 503, {
-    ok: Boolean(archive && cfg),
+    ok: Boolean(archive && (cfg || chatgpt)),
     archive: archive
       ? {
           source: archive.source,
@@ -74,6 +76,8 @@ export default route(['GET'], async (_req, res) => {
     classes: catalog && catalog.byCode.size ? { courses: catalog.byCode.size, terms: catalog.terms.map((term) => term.name), current: catalog.current, scraped: catalog.scraped } : { courses: 0, hint: 'Run npm run scrape:albert and commit data/classes.jsonl.' },
     // Sources are reranked by a cross-encoder when VOYAGE_API_KEY is set, else by the lite Gemini model.
     reranker: reranker ? { model: reranker.name } : { model: null, hint: 'Set VOYAGE_API_KEY for better source ranking.' },
+    // Sign in with ChatGPT: students' answers run on their own plan. Needs OPENAI_CLIENT_ID and SESSION_SECRET.
+    chatgpt: chatgpt ? { available: true, required: chatgpt.required, chatModels: chatgpt.chatModels, liteModels: chatgpt.liteModels, siteUrl: chatgpt.siteUrl || null } : { available: false, hint: 'Set OPENAI_CLIENT_ID and SESSION_SECRET to let students answer on their own ChatGPT plan.' },
     gemini: cfg ? { configured: true, chatModel: cfg.chatModel, chatFallbacks: cfg.chatFallbacks, liteModel: cfg.liteModel, liteModels: cfg.liteModels } : { configured: false },
     // The board needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in production; locally it runs in memory. `ok` comes
     // from a real probe, so a schema that was never run or a wrong key shows up here instead of as a vague error.

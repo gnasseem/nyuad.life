@@ -11,6 +11,8 @@ export interface Message {
   redirect?: Redirect;
   status?: string;
   error?: string;
+  /** The server's code for the error, so the page can offer the fix (signing in to ChatGPT again, for one). */
+  errorCode?: string;
   pending?: boolean;
   /** The answer stopped before it finished: the time or length limit, or a dropped connection. */
   truncated?: boolean;

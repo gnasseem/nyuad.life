@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { Health, HomePayload, Profile } from './api';
+import type { ChatGPTStatus, Health, HomePayload, Profile } from './api';
 import type { Theme } from './store';
 
 export interface Prefill {
@@ -29,6 +29,9 @@ export interface AppState {
   /** A question carried from Ask to the board's "ask students" form. */
   boardPrefill: string;
   setBoardPrefill(text: string): void;
+  /** Sign in with ChatGPT for this browser; null until the server has answered. */
+  chatgpt: ChatGPTStatus | null;
+  refreshChatGPT(): void;
 }
 
 export const AppContext = createContext<AppState>({
@@ -45,6 +48,8 @@ export const AppContext = createContext<AppState>({
   setAskPrefill: () => {},
   boardPrefill: '',
   setBoardPrefill: () => {},
+  chatgpt: null,
+  refreshChatGPT: () => {},
 });
 
 export function useApp(): AppState {
