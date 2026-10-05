@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { dataRoot } from './store.ts';
-import { collapseWhitespace, truncate } from './text.ts';
+import { collapseWhitespace, tokenize, truncate } from './text.ts';
 
 interface Meeting {
   days: string[];
@@ -239,9 +239,58 @@ export interface CourseHistory {
   offerings: Array<{ term: string; sections: SectionRow[] }>;
 }
 
+/**
+ * "MATH-UH 1012Q" -> "MATH-UH 1012". Albert's trailing letters mark attributes (Q, X, E, J…) and were dropped from
+ * many codes in Fall 2026, so one course can carry two codes over the years.
+ */
+export function baseCode(code: string): string {
+  return code.replace(/^([A-Z]+-UH \d{4})[A-Z]*$/, '$1');
+}
+
+const variantIndexes = new WeakMap<Catalog, Map<string, string[]>>();
+
+/** Every code sharing this one's base, the one offered most recently first. */
+export function codeVariants(catalog: Catalog, code: string): string[] {
+  let index = variantIndexes.get(catalog);
+  if (!index) {
+    index = new Map();
+    for (const key of catalog.byCode.keys()) index.set(baseCode(key), [...(index.get(baseCode(key)) ?? []), key]);
+    for (const list of index.values()) list.sort((a, b) => termOrder(catalog.byCode.get(b)![0]!.term) - termOrder(catalog.byCode.get(a)![0]!.term));
+    variantIndexes.set(catalog, index);
+  }
+  return index.get(baseCode(code)) ?? (catalog.byCode.has(code) ? [code] : []);
+}
+
+/**
+ * A course's offerings under every code it has carried with the same title, newest first. A variant's term is only
+ * added when the code itself has no offering that term, so two different courses sharing a number never mix.
+ */
+function mergedOfferings(catalog: Catalog, code: string): Offering[] {
+  const own = catalog.byCode.get(code);
+  if (!own?.length) return [];
+  const title = fold(own[0]!.title);
+  const terms = new Set(own.map((offering) => offering.term));
+  const merged = [...own];
+  for (const variant of codeVariants(catalog, code)) {
+    if (variant === code) continue;
+    for (const offering of catalog.byCode.get(variant)!) {
+      if (fold(offering.title) !== title || terms.has(offering.term)) continue;
+      terms.add(offering.term);
+      merged.push(offering);
+    }
+  }
+  return merged.sort((a, b) => termOrder(b.term) - termOrder(a.term));
+}
+
+/** The code a course goes by now: the variant offered most recently, so "MATH-UH 1012Q" finds this term's sections. */
+export function currentCode(catalog: Catalog, code: string): string {
+  const title = fold(catalog.byCode.get(code)?.[0]?.title ?? '');
+  return codeVariants(catalog, code).find((variant) => fold(catalog.byCode.get(variant)![0]!.title) === title) ?? code;
+}
+
 export function courseHistory(catalog: Catalog, code: string): CourseHistory | null {
-  const offerings = catalog.byCode.get(code);
-  if (!offerings?.length) return null;
+  const offerings = mergedOfferings(catalog, code);
+  if (!offerings.length) return null;
   const latest = offerings[0]!;
   return {
     code,
@@ -294,13 +343,9 @@ export function matchSchedule(catalog: Catalog, question: string, limits = { cou
   const add = (code: string) => !courses.includes(code) && courses.push(code);
   for (const match of question.matchAll(/\b([A-Za-z]{2,6})[\s-]?(?:UH[\s-]?)?(\d{4})([A-Za-z]{0,2})\b/gi)) {
     const base = `${match[1]!.toUpperCase()}-UH ${match[2]}`;
-    const suffix = match[3]!.toUpperCase();
-    for (const candidate of [base + suffix, base, `${base}X`, `${base}J`]) {
-      if (catalog.byCode.has(candidate)) {
-        add(candidate);
-        break;
-      }
-    }
+    const exact = base + match[3]!.toUpperCase();
+    const found = catalog.byCode.has(exact) ? exact : codeVariants(catalog, base)[0];
+    if (found) add(currentCode(catalog, found));
   }
   const folded = ` ${fold(question)} `;
   const titled: Array<{ code: string; length: number }> = [];
@@ -313,8 +358,10 @@ export function matchSchedule(catalog: Catalog, question: string, limits = { cou
   for (const entry of titled) {
     const title = fold(catalog.byCode.get(entry.code)![0]!.title);
     const inside = courses.some((code) => fold(catalog.byCode.get(code)![0]!.title).includes(title));
-    if (!inside) add(entry.code);
+    if (!inside) add(currentCode(catalog, entry.code));
   }
+  // How students actually name courses: "calculus", "intro to cs", "linear algebra workload".
+  if (courses.length === 0) for (const code of matchTitleHeads(catalog, question)) add(code);
 
   const instructors: string[] = [];
   const teaching = TEACHING.test(folded);
@@ -343,6 +390,154 @@ function titleIndex(catalog: Catalog): Map<string, string[]> {
     titleIndexes.set(catalog, index);
   }
   return index;
+}
+
+/** Words students shorten. Expanded before matching titles. */
+const ALIASES: Record<string, string> = {
+  calc: 'calculus',
+  multivar: 'multivariable',
+  linalg: 'linear algebra',
+  orgo: 'organic chemistry',
+  ochem: 'organic chemistry',
+  cs: 'computer science',
+  compsci: 'computer science',
+  econ: 'economics',
+  stats: 'statistics',
+  psych: 'psychology',
+  bio: 'biology',
+  chem: 'chemistry',
+  phys: 'physics',
+  polisci: 'political science',
+  macro: 'macroeconomics',
+  micro: 'microeconomics',
+  algo: 'algorithms',
+  algos: 'algorithms',
+  diffeq: 'differential equations',
+  ode: 'ordinary differential equations',
+};
+/** Title words that say nothing about which course it is. */
+const TITLE_FILLER = new Set(['introduction', 'intro', 'topic', 'special', 'seminar', 'part', 'ii', 'iii', 'fundamental', 'foundation', 'principle', 'advanced', 'applications', 'application']);
+/** Words that make a question about courses, so a one-word title ("Space", "Chance") may be meant as a course. */
+const COURSE_INTENT = /\b(?:prof|professors?|dr|teach(?:es|ing)?|taught|instructors?|lecturers?|class(?:es)?|courses?|sections?|take|taking|took|hard|easy|workload|grad(?:e|es|ing)|exams?|midterms?|finals?|syllabus|credits?|core|electives?|requirements?|prereq(?:uisite)?s?|waitlist(?:ed)?|regist(?:er|ration)|semester|worth)\b/i;
+
+export function isCourseQuestion(question: string): boolean {
+  return COURSE_INTENT.test(question);
+}
+
+function expandAliases(text: string): string {
+  return fold(text)
+    .split(' ')
+    .map((word) => ALIASES[word] ?? word)
+    .join(' ');
+}
+
+interface TitleEntry {
+  code: string;
+  title: string;
+  head: string[];
+  words: Set<string>;
+  live: boolean;
+}
+
+const headIndexes = new WeakMap<Catalog, TitleEntry[]>();
+
+/** Each course offered from the current term on, or in the last year, with the words that name it. */
+function titleEntries(catalog: Catalog): TitleEntry[] {
+  let entries = headIndexes.get(catalog);
+  if (!entries) {
+    const live = new Set(liveTerms(catalog));
+    const recent = termOrder(catalog.current) - 10;
+    entries = [];
+    for (const [code, offerings] of catalog.byCode) {
+      if (termOrder(offerings[0]!.term) < recent || currentCode(catalog, code) !== code) continue;
+      const title = offerings[0]!.title;
+      // "Calculus with Applications to Economics" is named by "Calculus"; "Introduction to Computer Science" by "Computer Science".
+      const head = tokenize(title.split(/\s+(?:with|for|in|through)\s+|:|\s[-–]\s/i)[0]!).filter((word) => !TITLE_FILLER.has(word));
+      if (head.length === 0) continue;
+      entries.push({ code, title: fold(title), head, words: new Set(tokenize(title)), live: offerings.some((offering) => live.has(offering.term)) });
+    }
+    headIndexes.set(catalog, entries);
+  }
+  return entries;
+}
+
+/**
+ * Courses whose title a question names in its own words: every word of the title's head is in the question
+ * (abbreviations expanded), more of the full title breaks ties, and a one-word title only counts in a question about
+ * courses. "Multivariable calculus" wins over "Calculus"; courses still offered come first. At most three.
+ */
+export function matchTitleHeads(catalog: Catalog, question: string): string[] {
+  const words = new Set(tokenize(expandAliases(question)));
+  const intent = COURSE_INTENT.test(question);
+  const hits = titleEntries(catalog)
+    .filter((entry) => entry.head.every((word) => words.has(word)) && (entry.head.length > 1 || (intent && entry.head[0]!.length >= 4)))
+    .map((entry) => ({ entry, score: entry.head.length * 2 + [...entry.words].filter((word) => words.has(word)).length + (entry.live ? 0.5 : 0) }));
+  if (hits.length === 0) return [];
+  // A longer head that matched means the shorter ones inside it were not what the student meant.
+  const longest = Math.max(...hits.map((hit) => hit.entry.head.length));
+  // "Capstone Project" is the full title of a dozen courses: naming it does not say which. ("Calculus with
+  // Applications to Economics" and "… to Science" share only a head, and both are worth showing.)
+  const titles = new Map<string, number>();
+  for (const hit of hits) titles.set(hit.entry.title, (titles.get(hit.entry.title) ?? 0) + 1);
+  const best = hits.filter((hit) => hit.entry.head.length === longest && titles.get(hit.entry.title) === 1);
+  if (best.length > 3) return [];
+  return best
+    .sort((a, b) => b.score - a.score)
+    .map((hit) => hit.entry.code);
+}
+
+/** Words that say a question is about courses without saying which. */
+const SEARCH_FILLER = new Set(tokenize('core course courses class classes professor prof take taking took elective electives credit credits semester term requirement requirements major minor recommend recommendation recommendations easy hard good best interesting fun workload grading about any which what nyuad uh offered offer teach teaches taught next this fall spring summer january'));
+
+/** "arabic" names ARABL, "music" MUSIC, "film" FILMM, "history" HIST; short subject codes have to match whole. */
+function namesSubject(term: string, subject: string): boolean {
+  if (subject.length < 4 || term.length < 4) return term === subject;
+  return subject.slice(0, 4) === term.slice(0, 4);
+}
+
+/**
+ * A keyword search over the courses offered from the current term on, for questions that ask about a subject rather
+ * than a course ("classes about machine learning"). A title word counts three times a description word.
+ */
+export function searchCatalog(catalog: Catalog, question: string, limit = 3): string[] {
+  const terms = [...new Set(tokenize(expandAliases(question)))].filter((term) => !SEARCH_FILLER.has(term));
+  if (terms.length === 0) return [];
+  const live = new Set(liveTerms(catalog));
+  let docs: Array<{ code: string; title: Set<string>; body: Set<string> }> = [];
+  for (const [code, offerings] of catalog.byCode) {
+    const offering = offerings.find((entry) => live.has(entry.term));
+    if (!offering) continue;
+    docs.push({ code, title: new Set(tokenize(offering.title)), body: new Set(tokenize(offerings.find((entry) => entry.description)?.description ?? '')) });
+  }
+  // A word that names a department ("arabic" for ARABL, "music", "film") keeps the search to that department.
+  const named = new Set(docs.map((doc) => subjectOf(doc.code).toLowerCase()).filter((subject) => terms.some((term) => namesSubject(term, subject))));
+  if (named.size) docs = docs.filter((doc) => named.has(subjectOf(doc.code).toLowerCase()));
+  const idf = (term: string) => Math.log(1 + docs.length / (1 + docs.filter((doc) => doc.title.has(term) || doc.body.has(term)).length));
+  const weights = new Map(terms.map((term) => [term, idf(term)]));
+  return docs
+    .map((doc) => {
+      let score = 0;
+      let inTitle = 0;
+      let inBody = 0;
+      for (const term of terms) {
+        if (doc.title.has(term)) {
+          score += 3 * weights.get(term)!;
+          inTitle++;
+        } else if (doc.body.has(term)) {
+          score += weights.get(term)!;
+          inBody++;
+        }
+      }
+      return { code: doc.code, score, covered: inTitle + inBody, enough: inTitle > 0 || inBody >= 2 };
+    })
+    .filter((hit) => hit.enough && hit.score > 0)
+    // The courses that cover more of the question first, then the stronger matches among them.
+    .sort((a, b) => b.covered - a.covered || b.score - a.score)
+    .filter((hit, _, all) => hit.covered === all[0]!.covered)
+    // Only courses close to the best match: one shared word out of three is not the subject asked about.
+    .filter((hit, _, all) => hit.score >= all[0]!.score * 0.6)
+    .slice(0, limit)
+    .map((hit) => hit.code);
 }
 
 /* ---------- What the answer model reads ---------- */

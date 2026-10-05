@@ -16,6 +16,8 @@ const DEADLINE_MS = 54_000;
 export default route(['POST'], async (req, res) => {
   const deadline = Date.now() + DEADLINE_MS;
   rateLimit(req, 12, 10, 'ask');
+  // And a daily ceiling per address, so one client cannot spend the free model quota everyone shares.
+  rateLimit(req, 150, 150 / 1440, 'ask-day');
   const cfg = geminiConfig();
   const request = validateAsk(await readJson<Partial<AskRequest>>(req));
 
@@ -44,9 +46,13 @@ export default route(['POST'], async (req, res) => {
     return null;
   });
   const board = boardStore();
+  // Saving the answer to the cache happens after the student has it; the function stays up until it is done.
+  const deferred: Array<Promise<unknown>> = [];
+  const defer = (work: Promise<unknown>) => void deferred.push(work.catch(() => undefined));
 
   if (!request.stream) {
-    sendJson(res, 200, await ask(archive, cfg, request, {}, undefined, { board, official, deadline, chatgpt, backups }));
+    sendJson(res, 200, await ask(archive, cfg, request, {}, undefined, { board, official, deadline, chatgpt, backups, defer }));
+    await Promise.all(deferred);
     return;
   }
 
@@ -70,7 +76,7 @@ export default route(['POST'], async (req, res) => {
         followups: (questions) => sse.send('followups', { questions }),
       },
       controller.signal,
-      { board, official, deadline, chatgpt, backups },
+      { board, official, deadline, chatgpt, backups, defer },
     );
     sse.send('done', { model: result.model, confidence: result.confidence, truncated: result.truncated ?? false, cached: result.cached ?? false, retrieval: result.retrieval });
   } catch (error) {
@@ -80,5 +86,6 @@ export default route(['POST'], async (req, res) => {
     sse.send('error', { message, code: error instanceof ApiError ? error.code : 'error' });
   } finally {
     sse.close();
+    await Promise.all(deferred);
   }
 });

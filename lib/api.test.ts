@@ -193,7 +193,9 @@ describe('api', () => {
 
   it('serves the starter questions', async () => {
     const home = await getJson(`${apiUrl}/api/home`, { headers });
-    expect(home.suggestions).toHaveLength(3);
+    expect(home.suggestions).toHaveLength(4);
+    // Short, the way students ask.
+    for (const { question } of home.suggestions) expect(question.split(' ').length).toBeLessThanOrEqual(9);
   });
 
   it('searches with hybrid retrieval and filters', async () => {
@@ -308,7 +310,7 @@ describe('api', () => {
 
   it('keeps contacts out of the lists and hands them out one post at a time', async () => {
     const post = (body: Record<string, unknown>) => getJson(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
-    await post({ op: 'profile', netId: 'abc1234', name: 'Sara Ali', major: 'Computer Science', classOf: 2027 });
+    await post({ op: 'profile', netId: 'abc1234', key: 'key-12345678', name: 'Sara Ali', major: 'Computer Science', classOf: 2027 });
     const { listing } = await post({ op: 'listing', netId: 'abc1234', key: 'key-12345678', kind: 'sell', title: 'Mini fridge', price: 150, contactKind: 'instagram', contact: '@sara' });
     const { offer } = await post({ op: 'offer', netId: 'abc1234', key: 'key-12345678', currency: 'campus', side: 'sell', amount: 360, rate: 0.5, contactKind: 'instagram', contact: '@sara' });
     const listings = await getJson(`${apiUrl}/api/board?op=listings`);
@@ -319,6 +321,28 @@ describe('api', () => {
     expect(await getJson(`${apiUrl}/api/board?op=contact&type=offer&id=${offer.id}`)).toEqual({ contactKind: 'instagram', contact: '@sara' });
     expect((await fetch(`${apiUrl}/api/board?op=contact&type=offer&id=nope`)).status).toBe(404);
     expect((await fetch(`${apiUrl}/api/board?op=contact&type=user&id=${offer.id}`)).status).toBe(400);
+  });
+
+  it('lets only the browser that set a NetID up act as it', async () => {
+    const post = (body: Record<string, unknown>) => fetch(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
+    expect((await post({ op: 'profile', netId: 'vic1234', key: 'victim-key-1', name: 'Vic Tim', major: 'Economics', classOf: 2027 })).status).toBe(200);
+    // Someone else's browser can neither take the NetID over nor post as it.
+    const takeover = await post({ op: 'profile', netId: 'vic1234', key: 'mallory-key', name: 'Mallory', major: 'Economics', classOf: 2027 });
+    expect(takeover.status).toBe(403);
+    expect(((await takeover.json()) as { error: string }).error).toBe('netid_taken');
+    expect((await post({ op: 'announce', netId: 'vic1234', key: 'mallory-key', title: 'Free food at D2', body: 'Come by', kind: 'event' })).status).toBe(403);
+    // The owner still can.
+    expect((await post({ op: 'profile', netId: 'vic1234', key: 'victim-key-1', name: 'Vic Tim', major: 'Economics', classOf: 2028 })).status).toBe(200);
+  });
+
+  it('screens what students post', async () => {
+    const post = (body: Record<string, unknown>) => fetch(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
+    await post({ op: 'profile', netId: 'sel1234', key: 'seller-key-1', name: 'Sam Seller', major: 'Economics', classOf: 2027 });
+    const blocked = await post({ op: 'listing', netId: 'sel1234', key: 'seller-key-1', kind: 'sell', title: 'Selling vapes', body: 'elf bars, dm me', price: 40, contactKind: 'instagram', contact: '@sam' });
+    expect(blocked.status).toBe(422);
+    expect(((await blocked.json()) as { error: string }).error).toBe('blocked_prohibited');
+    const crisis = await post({ op: 'ask', key: 'asker-key-1', text: 'I want to kill myself and I do not know who to talk to' });
+    expect(((await crisis.json()) as { message: string }).message).toContain('Wellness Exchange');
   });
 
   it('serves the course search and spends nothing on codes that are not courses', async () => {

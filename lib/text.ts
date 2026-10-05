@@ -106,3 +106,17 @@ export function formatDate(date: string): string {
   if (Number.isNaN(day)) return date || 'unknown date';
   return new Date(day * 86_400_000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
+
+const PHONE_NUMBER = /(?:\+|\b00)\s?\d{1,3}[\s-]?\(?\d{1,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}\b|\b05\d[\s-]?\d{3}[\s-]?\d{4}\b/g;
+const EMAIL_ADDRESS = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+
+/**
+ * Takes phone numbers and personal email addresses out of archive text, so search, post pages and Ask never hand
+ * them out. An office's address ("nyuad.registrar@nyu.edu") stays; a NetID address or a gmail goes.
+ */
+export function redactContacts(text: string): string {
+  if (!text || (!text.includes('@') && !/\d{3}/.test(text))) return text;
+  return text
+    .replace(PHONE_NUMBER, '[phone number removed]')
+    .replace(EMAIL_ADDRESS, (email) => (/@(?:[\w-]+\.)*nyu\.edu$/i.test(email) && !/^[a-z]{2,4}\d{2,6}@/i.test(email) ? email : '[email removed]'));
+}

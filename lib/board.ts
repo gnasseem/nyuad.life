@@ -28,6 +28,11 @@ export interface Profile {
   answers: number;
   createdAt: string;
   lastSeenAt: string;
+  /**
+   * A hash of the browser key that set this NetID up; only that browser may act as it. Null until claimed (profiles
+   * from before this existed); undefined when the database has no such column yet. Never sent to clients.
+   */
+  ownerKey?: string | null;
 }
 
 type QuestionStatus = 'open' | 'answered' | 'closed';
@@ -78,7 +83,7 @@ export const QUESTION_MAX = 600;
 const ANSWER_MIN = 2;
 const ANSWER_MAX = 1200;
 /** Questions stop being handed out once this many people have answered. */
-const ENOUGH_ANSWERS = 3;
+export const ENOUGH_ANSWERS = 3;
 
 /** The academic year turns over on 1 May: the class of 2026 graduates on 1 May 2026, and the class of 2030 is a first-year from then. */
 export function academicYearOf(now = new Date()): number {
@@ -319,7 +324,8 @@ export function validateAnnouncement(body: Record<string, unknown>, now = new Da
   if (body.startsAt) {
     const parsed = Date.parse(String(body.startsAt));
     if (Number.isNaN(parsed)) throw new ApiError(400, 'The date is invalid.', 'bad_date');
-    if (parsed < now.getTime() - 86_400_000) throw new ApiError(400, 'The date is in the past.', 'past_date');
+    // A dated notice stays up for a day after it starts; one that would vanish within the hour is not worth posting.
+    if (parsed + 86_400_000 < now.getTime() + 3_600_000) throw new ApiError(400, 'The date is in the past.', 'past_date');
     startsAt = new Date(parsed).toISOString();
   }
   const location = collapseWhitespace(String(body.location ?? '')).slice(0, 80);
@@ -329,14 +335,24 @@ export function validateAnnouncement(body: Record<string, unknown>, now = new Da
   return { title, body: text, kind, startsAt, location, link, expiresAt };
 }
 
-/** Announcements that speak to a query, newest and soonest first among matches. */
+/**
+ * Notices that speak to the question. Being the best of a weak set is not enough: a notice has to contain at least
+ * half of the question's words (and two of them, for a longer question), so one stuffed with keywords is not pulled
+ * into answers it has nothing to do with.
+ */
 export function searchAnnouncements(announcements: Announcement[], query: string, limit = 2): Array<{ announcement: Announcement; score: number }> {
   if (announcements.length === 0) return [];
+  const terms = [...new Set(tokenize(query))];
   const docs = announcements.map((entry) => `${entry.title}\n${entry.body}\n${entry.location}`);
-  const lexical = bm25Query(buildBm25(docs), tokenize(query), limit * 3);
+  const lexical = bm25Query(buildBm25(docs), terms, limit * 3);
   const top = lexical[0]?.score ?? 0;
+  const covers = (row: number) => {
+    const words = new Set(tokenize(docs[row]!));
+    const found = terms.filter((term) => words.has(term)).length;
+    return found >= Math.ceil(terms.length / 2) && found >= Math.min(2, terms.length);
+  };
   return lexical
-    .filter(({ score }) => top > 0 && score / top >= 0.5)
+    .filter(({ row, score }) => top > 0 && score / top >= 0.5 && covers(row))
     .slice(0, limit)
     .map(({ row, score }) => ({ announcement: announcements[row]!, score: score / top }));
 }
@@ -545,9 +561,11 @@ export function validateListing(body: Record<string, unknown>, now = new Date())
   if (body.happensAt) {
     const parsed = Date.parse(String(body.happensAt));
     if (Number.isNaN(parsed)) throw new ApiError(400, 'The date is invalid.', 'bad_date');
-    if (kind === 'ride' && parsed < now.getTime() - RIDE_GRACE_MS) throw new ApiError(400, 'That time has passed.', 'past_date');
+    // A ride stays listed until RIDE_GRACE_MS after it leaves; one that would drop off within the hour has left.
+    if (kind === 'ride' && parsed + RIDE_GRACE_MS < now.getTime() + 3_600_000) throw new ApiError(400, 'That time has passed.', 'past_date');
     if (kind === 'ride' && parsed > now.getTime() + 60 * 86_400_000) throw new ApiError(400, 'Rides can be posted up to two months ahead.', 'far_date');
     if ((kind === 'lost' || kind === 'found') && parsed > now.getTime() + 3_600_000) throw new ApiError(400, 'That date is in the future.', 'future_date');
+    if ((kind === 'lost' || kind === 'found') && parsed < now.getTime() - 90 * 86_400_000) throw new ApiError(400, 'Lost and found is for the last three months.', 'past_date');
     if (kind === 'ride' || kind === 'lost' || kind === 'found') happensAt = new Date(parsed).toISOString();
   }
   if (kind === 'ride' && !happensAt) throw new ApiError(400, 'Say when the ride leaves.', 'bad_date');

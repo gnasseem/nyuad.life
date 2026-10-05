@@ -16,7 +16,8 @@ function redirect(res: Parameters<Parameters<typeof route>[1]>[1], to: string): 
 function withParams(path: string, params: Record<string, string>): string {
   const url = new URL(path, 'http://site');
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-  return `${url.pathname}${url.search}`;
+  // A path that normalised to "//host" would leave the site; send it home instead.
+  return url.origin === 'http://site' && !url.pathname.startsWith('//') ? `${url.pathname}${url.search}` : `/${url.search}`;
 }
 
 export default route(['GET'], async (req, res) => {

@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const schema = readFileSync(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
+/** The roles every Supabase project has, which the schema grants to and revokes from. */
+const SUPABASE_ROLES = 'create role anon; create role authenticated; create role service_role;';
 
 describe('supabase/schema.sql', () => {
   it('keeps function bodies free of semicolons, so naive statement splitters cannot break them', () => {
@@ -12,6 +14,7 @@ describe('supabase/schema.sql', () => {
   it('applies twice and the counters behave', async () => {
     const { PGlite } = await import('@electric-sql/pglite');
     const db = new PGlite();
+    await db.exec(SUPABASE_ROLES);
     await db.exec(schema);
     await db.exec(schema);
     await db.query(`insert into board_profiles (net_id, name, major, class_of) values ('abc1234', 'Sara', 'Mathematics', 2027)`);
@@ -48,6 +51,7 @@ describe('supabase/schema.sql', () => {
     // The offers table as the previous schema created it, with a Falcon offer in it.
     const before = schema.replace(/^\s*currency\s+text not null default 'falcon'.*\n/m, '').replace(/^alter table public\.board_offers add column if not exists currency.*\n/m, '');
     expect(before).not.toContain('currency');
+    await db.exec(SUPABASE_ROLES);
     await db.exec(before);
     await db.query(`insert into board_profiles (net_id, name, major, class_of) values ('abc1234', 'Sara', 'Mathematics', 2027)`);
     await db.query(`insert into board_offers (side, amount, rate, contact_kind, contact, poster_key, poster_net_id, poster_name, expires_at) values ('sell', 100, 0.85, 'whatsapp', '+971', 'k', 'abc1234', 'Sara', now() + interval '5 days')`);

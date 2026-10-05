@@ -92,7 +92,13 @@ export function readCookies(req: IncomingMessage): Map<string, string> {
   const out = new Map<string, string>();
   for (const part of (req.headers.cookie ?? '').split(';')) {
     const eq = part.indexOf('=');
-    if (eq > 0) out.set(part.slice(0, eq).trim(), decodeURIComponent(part.slice(eq + 1).trim()));
+    if (eq <= 0) continue;
+    // Other cookies on the domain can be anything ("promo=50%off"); one that does not decode must not break the request.
+    try {
+      out.set(part.slice(0, eq).trim(), decodeURIComponent(part.slice(eq + 1).trim()));
+    } catch {
+      continue;
+    }
   }
   return out;
 }
@@ -173,9 +179,20 @@ export function siteOrigin(cfg: ChatGPTConfig, req: IncomingMessage): string {
   return `${secure(req) ? 'https' : 'http'}://${host}`;
 }
 
-/** Only paths on this site: a login must not be usable to bounce someone to another domain. */
+/**
+ * Only paths on this site: a login must not be usable to bounce someone to another domain. The path is judged after
+ * the browser would normalise it, since "/.//evil.example" becomes "//evil.example", which leaves the site.
+ */
 export function safeReturnTo(value: string | undefined): string {
-  return value && value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\') ? value.slice(0, 300) : '/';
+  if (!value || !value.startsWith('/') || value.length > 300) return '/';
+  let url: URL;
+  try {
+    url = new URL(value, 'http://site');
+  } catch {
+    return '/';
+  }
+  if (url.origin !== 'http://site' || url.pathname.startsWith('//') || url.pathname.includes('\\')) return '/';
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 /** Starts a sign-in: remembers the PKCE verifier, state and nonce in a short-lived sealed cookie and returns the URL. */

@@ -50,6 +50,8 @@ export interface IndexMeta {
   quantization: 'int8';
   newestPost: string;
   oldestPost: string;
+  /** The FILTERS_VERSION the posts were cleaned with; a matching index is not cleaned again on load. */
+  filters?: number;
 }
 
 export type SourceKind = 'archive' | 'board' | 'announcement' | 'official' | 'schedule';
@@ -104,6 +106,8 @@ export interface AskResponse {
   truncated?: boolean;
   /** The same question was answered recently, and that answer was served again without a model call. */
   cached?: boolean;
+  /** Set when the safety screen replied instead of answering (lib/moderation.ts); the reason it gave. */
+  screened?: string;
   /** Set when the question belongs somewhere else; then there is no answer to speak of. */
   redirect?: { domain: string; title: string; message: string; link: { url: string; label: string } };
   retrieval: {

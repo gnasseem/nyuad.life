@@ -1,4 +1,8 @@
-/** Starter questions shown on the Ask page; each one is answerable from typical group threads. */
+/**
+ * Starter questions for the Ask page: short, concrete, phrased the way students ask them, and each one well covered
+ * by the group's threads, the official pages or the schedule. The ones in season (registration, J-Term, finals,
+ * internship season) come first, and the order turns over daily so the page does not look the same every visit.
+ */
 interface Suggestion {
   topic: string;
   question: string;
@@ -6,29 +10,46 @@ interface Suggestion {
   months?: number[];
 }
 
-const REGISTRATION = [4, 5, 8, 11, 12];
-const SEMESTER_START = [1, 8, 9];
-const SEMESTER_END = [4, 5, 11, 12];
-const SUMMER_PLANNING = [2, 3, 4, 5];
+const REGISTRATION = [4, 5, 10, 11];
+const TERM_START = [1, 2, 8, 9];
+const FINALS = [4, 5, 11, 12];
 
 const SUGGESTED_QUESTIONS: Suggestion[] = [
-  { topic: 'courses', question: 'Which core courses are the easiest to take alongside a heavy major load?', months: REGISTRATION },
-  { topic: 'professors', question: 'Who are the best professors for Calculus, according to students?', months: REGISTRATION },
-  { topic: 'courses', question: 'How hard is it to get into a course from the waitlist?', months: SEMESTER_START },
-  { topic: 'study-away', question: 'How do people rate studying away in NYU Shanghai versus NYU London?', months: [9, 10, 2, 3] },
-  { topic: 'housing', question: 'How does summer housing work and how much does it cost?', months: SUMMER_PLANNING },
-  { topic: 'jobs', question: 'How do students find summer internships in Abu Dhabi or Dubai?', months: [10, 11, 12, 1, 2, 3] },
-  { topic: 'courses', question: 'How do finals week and reading days actually work?', months: SEMESTER_END },
-  { topic: 'money', question: 'Which bank do students recommend for opening an account as an international student?', months: SEMESTER_START },
-  { topic: 'visa-travel', question: 'How do I renew my UAE residence visa and how long does it take?' },
-  { topic: 'transport', question: 'What is the cheapest way to get from campus to Dubai?' },
-  { topic: 'health', question: 'How does the student health insurance work when I see a doctor off campus?' },
-  { topic: 'research', question: 'How do I find a capstone mentor and what makes a good one?', months: [2, 3, 4, 9, 10] },
+  { topic: 'courses', question: 'Which J-Term courses are worth it?', months: [9, 10, 11] },
+  { topic: 'courses', question: 'Easiest Core classes for next semester?', months: REGISTRATION },
+  { topic: 'courses', question: 'Is Calculus hard at NYUAD?', months: [...REGISTRATION, 8] },
+  { topic: 'professors', question: 'Who should I take Intro to CS with?', months: REGISTRATION },
+  { topic: 'courses', question: 'How does the Albert waitlist work?', months: [...REGISTRATION, ...TERM_START] },
+  { topic: 'courses', question: 'How do reading days and finals work?', months: FINALS },
+  { topic: 'travel', question: 'Where do people go for fall break?', months: [9, 10] },
+  { topic: 'travel', question: 'Spring break trip ideas from Abu Dhabi?', months: [2, 3] },
+  { topic: 'study-away', question: 'Shanghai or London for study away?', months: [9, 10, 2, 3] },
+  { topic: 'jobs', question: 'How do people land summer internships in the UAE?', months: [10, 11, 12, 1, 2, 3] },
+  { topic: 'research', question: 'How do I find a capstone mentor?', months: [2, 3, 9, 10] },
+  { topic: 'housing', question: 'How does room selection work?', months: [3, 4, 5] },
+  { topic: 'money', question: 'Which bank should I open an account with?', months: TERM_START },
+  { topic: 'transport', question: 'Cheapest way to get to Dubai?' },
+  { topic: 'visa-travel', question: 'How long does the Emirates ID renewal take?' },
+  { topic: 'campus', question: 'Best quiet places to study on campus?' },
+  { topic: 'campus', question: 'Which dining spots are open late?' },
+  { topic: 'health', question: 'How does health insurance work off campus?' },
+  { topic: 'transport', question: 'How do I get a UAE driving license?' },
+  { topic: 'campus', question: 'Where can I print on campus?' },
 ];
 
-/** Three starters, the ones in season this month first. */
-export function starterQuestions(month = new Date().getUTCMonth() + 1): Array<{ topic: string; question: string }> {
-  const inSeason = SUGGESTED_QUESTIONS.filter((entry) => entry.months?.includes(month));
-  const rest = SUGGESTED_QUESTIONS.filter((entry) => !entry.months?.includes(month));
-  return [...inSeason, ...rest].slice(0, 3).map(({ topic, question }) => ({ topic, question }));
+/** A stable shuffle for the day: the same order all day, a different one tomorrow. */
+function dailyOrder<T>(items: T[], day: number): T[] {
+  return items
+    .map((item, i) => ({ item, rank: Math.sin((day + 1) * 12.9898 + i * 78.233) * 43758.5453 }))
+    .sort((a, b) => (a.rank - Math.floor(a.rank)) - (b.rank - Math.floor(b.rank)))
+    .map((entry) => entry.item);
+}
+
+/** Starters for today, the ones in season first. */
+export function starterQuestions(now = new Date(), count = 4): Array<{ topic: string; question: string }> {
+  const month = now.getUTCMonth() + 1;
+  const day = Math.floor(now.getTime() / 86_400_000);
+  const inSeason = dailyOrder(SUGGESTED_QUESTIONS.filter((entry) => entry.months?.includes(month)), day);
+  const rest = dailyOrder(SUGGESTED_QUESTIONS.filter((entry) => !entry.months?.includes(month)), day);
+  return [...inSeason, ...rest].slice(0, count).map(({ topic, question }) => ({ topic, question }));
 }

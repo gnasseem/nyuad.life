@@ -77,7 +77,7 @@ function clientIp(req: IncomingMessage): string {
  */
 const buckets = new Map<string, { tokens: number; updated: number }>();
 export function rateLimit(req: IncomingMessage, capacity: number, perMinute: number, scope = 'default'): void {
-  const ip = `${scope}:${clientIp(req)}`;
+  const ip = `${scope}:${clientKey(clientIp(req))}`;
   const now = Date.now();
   const bucket = buckets.get(ip) ?? { tokens: capacity, updated: now };
   bucket.tokens = Math.min(capacity, bucket.tokens + ((now - bucket.updated) / 60_000) * perMinute);
@@ -91,6 +91,21 @@ export function rateLimit(req: IncomingMessage, capacity: number, perMinute: num
   if (buckets.size > 5000) {
     for (const [key, value] of buckets) if (now - value.updated > 600_000) buckets.delete(key);
   }
+}
+
+/**
+ * Who a rate limit counts: an IPv4 address, or an IPv6 /64, since one connection is handed a whole /64 and could
+ * otherwise rotate addresses to reset its limits.
+ */
+export function clientKey(ip: string): string {
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  if (mapped) return mapped[1]!;
+  if (!ip.includes(':')) return ip;
+  const [head = '', tail = ''] = ip.toLowerCase().split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const groups = ip.includes('::') ? [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right] : left;
+  return `${groups.slice(0, 4).map((group) => group.replace(/^0+(?=.)/, '')).join(':')}::/64`;
 }
 
 /** Wraps a handler with CORS, OPTIONS, method checks and uniform error JSON. */
@@ -115,7 +130,8 @@ export function route(methods: Array<'GET' | 'POST'>, handler: Handler): Handler
       }
       const status = error instanceof ApiError ? error.status : (error as { status?: number }).status ?? 500;
       const code = error instanceof ApiError ? error.code : 'error';
-      const message = error instanceof Error ? error.message : String(error);
+      // Our own errors are written for people; anything else may carry internals, so it stays in the log.
+      const message = error instanceof ApiError ? error.message : status >= 500 ? 'Something went wrong on our side. Try again in a moment.' : error instanceof Error ? error.message : String(error);
       if (status >= 500) console.error(`[api] ${req.method} ${req.url}:`, error);
       sendJson(res, status >= 400 && status < 600 ? status : 500, { error: code, message });
     }

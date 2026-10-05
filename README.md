@@ -6,8 +6,11 @@ other students wrote here.
 
 - **Ask.** Hybrid keyword and vector search over the archive and the official pages, reranked by Voyage's cross-encoder
   and written up by Gemini, with free backup models when Gemini is overloaded, or on the student's own ChatGPT plan
-  when they sign in with ChatGPT. A question that names a course or a professor also gets their Albert schedule as a
-  source. Answers lead with a verdict, then the specifics, the catch, what may have changed and the next step.
+  when they sign in with ChatGPT. A question about a course or a professor gets the Albert schedule first (course codes
+  in any spelling, titles the way students say them, "calc", "intro to cs", or a subject for "classes about machine
+  learning"), plus the group's threads tagged with that course. Newer threads are lifted, more so for questions about
+  how things are now, and a thread the reranker finds unrelated is left out rather than padding the answer. Answers lead
+  with a verdict, then the specifics, the catch, what may have changed and the next step.
 - **Questions.** When the archive falls short, a question goes to students. Helpers give a name, NetID, major and class
   year once, then get questions one at a time, matched by major and year. Answered questions are cited by Ask.
 - **Notices.** Events, deadlines and opportunities posted by students, by day, with a calendar file for dated ones.
@@ -32,7 +35,7 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
    | Variable | Needed for |
    | --- | --- |
    | `GEMINI_API_KEY` | Answers for students not signed in with ChatGPT, question tagging, course summaries. |
-   | `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY` | Free backup models for answers when Gemini is overloaded or out of quota (below). Any or all. |
+   | `GROQ_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY` | Free backup models for answers when Gemini is overloaded or out of quota (below). Any or all. |
    | `OPENAI_CLIENT_ID`, `SESSION_SECRET`, `ROR_SITE_URL` | Sign in with ChatGPT: answers on each student's own plan (below). |
    | `VOYAGE_API_KEY` | Semantic search (must be the provider that built the index) and the reranker. |
    | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | The board: questions, notices, offers, listings, course summaries. |
@@ -53,9 +56,9 @@ Free model tiers fail in two ways: a model is overloaded (Gemini's 503 "The mode
 spent (429). Ask handles both by moving down a chain of models before it has written a word:
 
 1. Gemini 3.5 Flash, 3 Flash and 2.5 Flash.
-2. Every backup provider with a key set, each with several models: Groq, Cerebras, Mistral and OpenRouter, over the
+2. Every backup provider with a key set, each with several models: Groq, Mistral and OpenRouter, over the
    OpenAI-compatible API (`lib/providers.ts`). Their free tiers are counted per provider and mostly per model, so each
-   key adds capacity. Groq and Cerebras cap a request at about 8,000 tokens, so the sources are cut down to fit them.
+   key adds capacity. Groq caps a request at about 8,000 tokens, so the sources are cut down to fit it.
 3. Gemini's Flash-Lite models, as the last resort.
 
 A model that failed rests for a while (a minute when overloaded, an hour when its day's quota is spent, hours when it
@@ -67,9 +70,8 @@ it stands (`answers.chain`).
 | --- | --- | --- |
 | Gemini | per model, resets daily | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 | Groq | about 1,000 requests a day per model, no card | [console.groq.com/keys](https://console.groq.com/keys) |
-| Cerebras | about a million tokens a day, no card | [cloud.cerebras.ai](https://cloud.cerebras.ai) |
 | Mistral | "Experiment" plan, phone check | [console.mistral.ai](https://console.mistral.ai) |
-| OpenRouter | `:free` models, 50 requests a day, 1,000 after a one-time $10 top-up | [openrouter.ai/keys](https://openrouter.ai/keys) |
+| OpenRouter | `:free` models, 50 requests a day without paying (1,000 a day only after a $10 top-up) | [openrouter.ai/keys](https://openrouter.ai/keys) |
 
 Opening questions are also cached for six hours (`lib/answer-cache.ts`): the same question asked again, in any case or
 punctuation, is answered from the cache with no model call. Suggestions on the home page and registration-week
@@ -152,13 +154,38 @@ Manual: `cp .env.example .env`, add the key, `npm run index`, commit `data/index
 ## The board
 
 1. Create a Supabase project and run the whole of `supabase/schema.sql` in its SQL editor. It is safe to run again, and
-   running it again is how an existing project gets new columns (Campus Dirham offers need the `currency` column).
+   running it again is how an existing project gets new columns (Campus Dirham offers need the `currency` column, and
+   binding NetIDs to a browser needs `owner_key`; until it is there, profiles still save but are not bound).
    Row level security is on with no policies, so only the service role, which the API holds, can read or write.
 2. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on Vercel and in `.env`, then redeploy.
 
 If the pages say the board tables are missing, the schema was not run in the project `SUPABASE_URL` points at. If they
 say the key was rejected, the anon key was pasted instead of the service role key. Locally, with nothing set, the board
 runs in memory.
+
+A NetID belongs to the browser that set it up: the profile keeps a hash of that browser's key, and answering, posting,
+trading or editing the profile as the NetID from another browser is refused. Profiles made before this are claimed by
+the first browser that uses them.
+
+## Safety
+
+Everything students write is screened by rules in `lib/moderation.ts`, which add no delay and cost nothing:
+
+- **Posts** (questions, answers, notices, listings, offers, names) are refused, with a reason, for slurs and threats,
+  sexual services, selling drugs, alcohol, prescription medicine, vapes, weapons or fake documents, paid academic work
+  or leaked exams, money schemes, phishing (asking for passwords, "verify your NetID", NYU look-alike sign-in links),
+  text written to steer the answer bot, ID, card and bank numbers, and phone numbers or personal emails in public text
+  (listings and offers have a contact field for that).
+- **Questions to Ask** about where to get drugs, finding a person's room or WhatsApp, buying academic work, or telling
+  the bot to ignore its instructions get a short reply instead of an answer, with no model call. Asking about rules
+  ("can I bring my ADHD medication into the UAE?") is answered as usual.
+- **Someone who writes about hurting themselves** is shown where to get help (NYU Wellness Exchange, the Counseling
+  Center, UAE emergency numbers) instead of being refused.
+- **The archive** is served without phone numbers and personal email addresses; offices' addresses stay.
+- **The answer model** is told that sources are material, never instructions, and that notices and answers from this
+  site are unverified; those only reach an answer when the reranker finds them relevant, and such answers are not cached.
+
+Ask is limited per address (a burst, a per-minute rate and a daily ceiling; IPv6 counted per /64).
 
 How questions are handed out (`lib/board.ts`): a helper never sees their own question (matched by their browser key) or
 one they answered or skipped,

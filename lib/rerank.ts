@@ -27,7 +27,7 @@ export function rerankerFromEnv(env: NodeJS.ProcessEnv = process.env): Reranker 
         `${baseUrl}/rerank`,
         { authorization: `Bearer ${apiKey}` },
         { query, documents, model, truncation: true },
-        { retries: 1, timeoutMs: options.timeoutMs ?? 10_000, signal: options.signal },
+        { retries: 1, timeoutMs: options.timeoutMs ?? 6_000, maxWaitMs: 1_500, signal: options.signal },
         'Voyage rerank',
       )) as { data?: Array<{ index?: number; relevance_score?: number }> };
       const scores = new Array<number>(documents.length).fill(0);

@@ -85,14 +85,14 @@ export default route(['GET'], async (_req, res) => {
     chatgpt: chatgpt ? { available: true, required: chatgpt.required, chatModels: chatgpt.chatModels, liteModels: chatgpt.liteModels, siteUrl: chatgpt.siteUrl || null } : { available: false, hint: 'Set OPENAI_CLIENT_ID and SESSION_SECRET to let students answer on their own ChatGPT plan.' },
     gemini: cfg ? { configured: true, chatModel: cfg.chatModel, chatFallbacks: cfg.chatFallbacks, liteModel: cfg.liteModel, liteModels: cfg.liteModels } : { configured: false },
     // Every model that can write an answer, in the order they are tried when one is overloaded or out of quota. Free
-    // backups join with GROQ_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY or OPENROUTER_API_KEY; models resting after
+    // backups join with GROQ_API_KEY, MISTRAL_API_KEY or OPENROUTER_API_KEY; models resting after
     // a recent failure are left out until they are due again.
     answers: {
       available: chain.length > 0,
       order,
       chain,
       backups: backups.map((provider) => ({ id: provider.id, models: provider.models, liteModels: provider.liteModels })),
-      ...(backups.length ? {} : { hint: 'Add GROQ_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY or OPENROUTER_API_KEY (all free) so answers keep working when Gemini is overloaded.' }),
+      ...(backups.length ? {} : { hint: 'Add GROQ_API_KEY (free, no card) so answers keep working when Gemini is overloaded.' }),
     },
     // The board needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in production; locally it runs in memory. `ok` comes
     // from a real probe, so a schema that was never run or a wrong key shows up here instead of as a vague error.

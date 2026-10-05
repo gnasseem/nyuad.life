@@ -7,9 +7,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { chunkPosts } from './chunker.ts';
-import { cleanPosts } from './filters.ts';
+import { cleanPosts, FILTERS_VERSION } from './filters.ts';
 import { enrichPost, readPostsJsonl, sortNewestFirst } from './posts.ts';
 import { buildBm25, type Bm25Index } from './search.ts';
+import { redactContacts } from './text.ts';
 import type { Chunk, IndexMeta, IndexedPost, SourcePost } from './types.ts';
 import { decodeTable, emptyTable, selectRows, type VectorTable } from './vectors.ts';
 
@@ -76,7 +77,8 @@ async function load(): Promise<Archive> {
         vectors = emptyTable(meta.dimensions);
       }
     }
-    return assemble(meta, ...clean(posts, chunks, vectors), 'index', started);
+    // An index cleaned with today's rules needs no second pass.
+    return assemble(meta, ...(meta.filters === FILTERS_VERSION ? ([posts, chunks, vectors] as const) : clean(posts, chunks, vectors)), 'index', started);
   }
 
   const raw = await readPostsJsonl(postsFile());
@@ -116,14 +118,23 @@ function clean(posts: IndexedPost[], chunks: Chunk[], vectors: VectorTable): [In
   return [result.posts, keptChunks, keptVectors];
 }
 
+/** The archive without the phone numbers and personal emails people left in posts and comments. */
+function withoutContacts(posts: IndexedPost[], chunks: Chunk[]): [IndexedPost[], Chunk[]] {
+  return [
+    posts.map((post) => ({ ...post, text: redactContacts(post.text), comments: post.comments.map((comment) => ({ ...comment, text: redactContacts(comment.text) })) })),
+    chunks.map((chunk) => ({ ...chunk, text: redactContacts(chunk.text) })),
+  ];
+}
+
 function assemble(
   meta: IndexMeta,
-  posts: IndexedPost[],
-  chunks: Chunk[],
+  rawPosts: IndexedPost[],
+  rawChunks: Chunk[],
   vectors: VectorTable,
   source: Archive['source'],
   started: number,
 ): Archive {
+  const [posts, chunks] = withoutContacts(rawPosts, rawChunks);
   const postPosition = new Map(posts.map((post, index) => [post.id, index]));
   const chunkPost = new Int32Array(chunks.length);
   const postChunk = new Int32Array(posts.length).fill(-1);

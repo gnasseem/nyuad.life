@@ -4,12 +4,11 @@
  * tiers are counted per provider, and mostly per model, so every key and every model adds capacity.
  *
  *   GROQ_API_KEY         console.groq.com: about 1,000 requests a day per model, no card.
- *   CEREBRAS_API_KEY     cloud.cerebras.ai: about a million tokens a day, no card.
  *   MISTRAL_API_KEY      console.mistral.ai, free "Experiment" plan: generous monthly tokens, phone check.
- *   OPENROUTER_API_KEY   openrouter.ai, models ending in ":free": 50 requests a day, 1,000 after a one-time $10 top-up.
+ *   OPENROUTER_API_KEY   openrouter.ai, models ending in ":free": 50 requests a day without paying anything.
  *
  * `<PROVIDER>_MODELS` overrides a provider's answer models and `<PROVIDER>_LITE_MODELS` its models for small calls.
- * `ROR_MODEL_ORDER` (default `gemini,groq,cerebras,mistral,openrouter`) sets which goes first.
+ * `ROR_MODEL_ORDER` (default `gemini,groq,mistral,openrouter`) sets which goes first.
  */
 import type { Message } from './gemini.ts';
 
@@ -23,8 +22,8 @@ export interface Provider {
   /** Models for follow-ups and query rewrites, tried in order. */
   liteModels: string[];
   /**
-   * The most prompt, in characters, one request may carry. Small free tiers cap tokens per minute (Groq) or context
-   * (Cerebras) at about 8,000 tokens, so the sources are cut down to fit rather than the request being refused.
+   * The most prompt, in characters, one request may carry. Groq's free tier caps tokens per minute at about 8,000,
+   * so the sources are cut down to fit rather than the request being refused.
    */
   maxPromptChars: number;
   maxOutputTokens: number;
@@ -45,7 +44,6 @@ interface Preset {
 // hours, so a stale name costs one request, and the lists can be replaced from the environment.
 const PRESETS: Preset[] = [
   { id: 'groq', label: 'Groq', key: 'GROQ_API_KEY', baseUrl: 'https://api.groq.com/openai/v1', models: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'openai/gpt-oss-20b'], liteModels: ['llama-3.1-8b-instant', 'openai/gpt-oss-20b'], maxPromptChars: 20_000, maxOutputTokens: 1_600 },
-  { id: 'cerebras', label: 'Cerebras', key: 'CEREBRAS_API_KEY', baseUrl: 'https://api.cerebras.ai/v1', models: ['gpt-oss-120b', 'qwen-3-235b-a22b-instruct-2507', 'llama-3.3-70b'], liteModels: ['llama3.1-8b', 'gpt-oss-120b'], maxPromptChars: 20_000, maxOutputTokens: 1_600 },
   { id: 'mistral', label: 'Mistral', key: 'MISTRAL_API_KEY', baseUrl: 'https://api.mistral.ai/v1', models: ['mistral-medium-latest', 'mistral-small-latest'], liteModels: ['mistral-small-latest'], maxPromptChars: 60_000, maxOutputTokens: 2_000 },
   { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['openai/gpt-oss-120b:free', 'deepseek/deepseek-chat-v3.1:free', 'meta-llama/llama-3.3-70b-instruct:free'], liteModels: ['meta-llama/llama-3.3-70b-instruct:free', 'openai/gpt-oss-20b:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000 },
 ];

@@ -7,6 +7,12 @@ import type { SourceComment, SourcePost } from './types.ts';
 
 type DropReason = 'empty' | 'ad' | 'falcons' | 'listing';
 
+/**
+ * Bump whenever a rule below changes what is kept. An index built with the current version is loaded as it is; an
+ * older one is cleaned again on load, which costs about a second on every cold start until it is rebuilt.
+ */
+export const FILTERS_VERSION = 2;
+
 const FALCON = /\bfalcons?\b/i;
 /** Campus Dirhams: meal-plan money, traded like Falcons ("selling 360 campus dirhams at 50%"). */
 const CAMPUS = /\bcampus\s*(?:dirhams?|dhs?)\b/i;
@@ -89,22 +95,35 @@ function normaliseName(value: string): string {
   return plainWords(value).join(' ');
 }
 
+/** Names are a few words long; longer runs are never looked up. */
+const MAX_NAME_WORDS = 5;
+
 function isTag(text: string, names: Set<string>): boolean {
   // Tags start with a capitalised name; whatever follows is at most a "bump" or a "please".
   if (!/^[\p{Lu}]/u.test(text.trim())) return false;
-  let rest = ` ${normaliseName(text)} `;
-  if (names.has(rest.trim())) return true;
+  const words = normaliseName(text).split(' ').filter(Boolean);
+  if (names.has(words.join(' '))) return true;
   if (names.size === 0) return false;
+  // Strip every run of words that is someone's name, longest first. Looking up the comment's own runs keeps this
+  // linear in its length; walking the whole name list for every comment took seconds on a cold start.
+  const rest: string[] = [];
   let stripped = false;
-  for (const name of names) {
-    if (name.length < 5 || !rest.includes(` ${name} `)) continue;
-    rest = rest.replace(` ${name} `, ' ');
-    stripped = true;
+  for (let i = 0; i < words.length; ) {
+    let matched = 0;
+    for (let length = Math.min(MAX_NAME_WORDS, words.length - i); length > 0; length--) {
+      const candidate = words.slice(i, i + length).join(' ');
+      if (candidate.length >= 5 && names.has(candidate)) {
+        matched = length;
+        break;
+      }
+    }
+    if (matched) {
+      stripped = true;
+      i += matched;
+    } else rest.push(words[i++]!);
   }
   if (!stripped) return false;
-  const remainder = rest.trim();
-  if (!remainder) return true;
-  return remainder.split(' ').every((word) => FILLER.has(word) || GENERIC.has(word) || BUMP.test(word.replace(/(.)\1+/g, '$1')));
+  return rest.every((word) => FILLER.has(word) || GENERIC.has(word) || BUMP.test(word.replace(/(.)\1+/g, '$1')));
 }
 
 /** True for a comment that adds nothing a reader or the model can use. */
