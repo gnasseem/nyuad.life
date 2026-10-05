@@ -17,6 +17,8 @@ type EmbeddingKind = 'document' | 'query';
 interface EmbedOptions {
   retries?: number;
   timeoutMs?: number;
+  /** The longest wait before a retry; a student waiting on an answer should not sit out a two-minute Retry-After. */
+  maxWaitMs?: number;
   signal?: AbortSignal;
 }
 
@@ -215,12 +217,12 @@ export async function postJson(url: string, headers: Record<string, string>, bod
       const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal: controller.signal });
       if (response.ok) return await response.json();
       const error = await toError(response, label);
-      if (!error.retryable || attempt >= retries) throw error;
-      await sleep(error.retryAfterMs ?? backoff(attempt));
+      if (!error.retryable || attempt >= retries || (error.retryAfterMs ?? 0) > (options.maxWaitMs ?? Infinity)) throw error;
+      await sleep(Math.min(error.retryAfterMs ?? backoff(attempt), options.maxWaitMs ?? Infinity));
     } catch (thrown) {
       if (thrown instanceof EmbeddingError) {
-        if (!thrown.retryable || attempt >= retries) throw thrown;
-        await sleep(thrown.retryAfterMs ?? backoff(attempt));
+        if (!thrown.retryable || attempt >= retries || (thrown.retryAfterMs ?? 0) > (options.maxWaitMs ?? Infinity)) throw thrown;
+        await sleep(Math.min(thrown.retryAfterMs ?? backoff(attempt), options.maxWaitMs ?? Infinity));
       } else if (options.signal?.aborted) {
         throw new EmbeddingError('Request cancelled.', 499);
       } else if (attempt >= retries) {

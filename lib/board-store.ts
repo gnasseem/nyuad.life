@@ -3,7 +3,7 @@
  * production; an in-memory store for local development and tests. `boardStore()` picks one from the environment.
  */
 import { randomUUID } from 'node:crypto';
-import type { Announcement, Answer, BoardEvent, EventKind, Listing, Offer, Profile, Question } from './board.ts';
+import { ENOUGH_ANSWERS, type Announcement, type Answer, type BoardEvent, type EventKind, type Listing, type Offer, type Profile, type Question } from './board.ts';
 import { ApiError } from './http.ts';
 
 interface BoardStats {
@@ -27,11 +27,14 @@ export interface BoardStore {
   /** Talks to the database once and says whether it is usable, and if not, why. */
   check(): Promise<BoardCheck>;
   getProfile(netId: string): Promise<Profile | null>;
-  upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>): Promise<Profile>;
+  /** Saves a profile; `ownerKey` binds the NetID to the browser that set it up (see Profile.ownerKey). */
+  upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>, ownerKey?: string): Promise<Profile>;
+  /** Binds a profile that has no owner yet to this browser; leaves one that has an owner alone. */
+  claimProfile(netId: string, ownerKey: string): Promise<void>;
   touchProfile(netId: string, answered: boolean): Promise<void>;
   createQuestion(question: Omit<Question, 'id' | 'createdAt' | 'updatedAt'>): Promise<Question>;
   getQuestion(id: string): Promise<Question | null>;
-  /** Questions still worth handing out, newest first. */
+  /** Questions still worth handing out (not closed, fewer than ENOUGH_ANSWERS answers), newest first. */
   listOpen(limit: number): Promise<Question[]>;
   listByAsker(askerKey: string): Promise<Question[]>;
   /** Questions with at least one answer, newest first, for the answer engine. */
@@ -52,6 +55,8 @@ export interface BoardStore {
   createOffer(offer: Omit<Offer, 'id' | 'createdAt'>): Promise<Offer>;
   /** Open, unexpired offers, newest first. */
   listOffers(now: Date): Promise<Offer[]>;
+  /** The contact on one open, unexpired offer or listing, or null. Read one row at a time so contacts cannot be listed. */
+  getContact(type: 'offer' | 'listing', id: string, now: Date): Promise<Pick<Offer, 'contactKind' | 'contact'> | null>;
   listOffersByPoster(posterKey: string): Promise<Offer[]>;
   /** Marks an offer done or removes it; only the poster's key works. Returns whether anything changed. */
   closeOffer(id: string, posterKey: string, remove: boolean): Promise<boolean>;
@@ -87,12 +92,16 @@ export class MemoryBoardStore implements BoardStore {
   async getProfile(netId: string): Promise<Profile | null> {
     return this.profiles.get(netId) ?? null;
   }
-  async upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>): Promise<Profile> {
+  async upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>, ownerKey?: string): Promise<Profile> {
     const now = new Date().toISOString();
     const current = this.profiles.get(profile.netId);
-    const next: Profile = { ...profile, answers: current?.answers ?? 0, createdAt: current?.createdAt ?? now, lastSeenAt: now };
+    const next: Profile = { ...profile, answers: current?.answers ?? 0, createdAt: current?.createdAt ?? now, lastSeenAt: now, ownerKey: ownerKey ?? current?.ownerKey ?? null };
     this.profiles.set(profile.netId, next);
     return next;
+  }
+  async claimProfile(netId: string, ownerKey: string): Promise<void> {
+    const profile = this.profiles.get(netId);
+    if (profile && !profile.ownerKey) profile.ownerKey = ownerKey;
   }
   async touchProfile(netId: string, answered: boolean): Promise<void> {
     const profile = this.profiles.get(netId);
@@ -111,7 +120,7 @@ export class MemoryBoardStore implements BoardStore {
   }
   async listOpen(limit: number): Promise<Question[]> {
     return this.sorted()
-      .filter((question) => question.status !== 'closed')
+      .filter((question) => question.status !== 'closed' && question.answers < ENOUGH_ANSWERS)
       .slice(0, limit);
   }
   async listByAsker(askerKey: string): Promise<Question[]> {
@@ -179,6 +188,11 @@ export class MemoryBoardStore implements BoardStore {
   }
   async listOffers(now: Date): Promise<Offer[]> {
     return [...this.offers.values()].filter((offer) => offer.status === 'open' && Date.parse(offer.expiresAt) > now.getTime()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  async getContact(type: 'offer' | 'listing', id: string, now: Date): Promise<Pick<Offer, 'contactKind' | 'contact'> | null> {
+    const found = type === 'offer' ? this.offers.get(id) : this.listings.get(id);
+    if (!found || found.status !== 'open' || Date.parse(found.expiresAt) <= now.getTime()) return null;
+    return { contactKind: found.contactKind, contact: found.contact };
   }
   async listOffersByPoster(posterKey: string): Promise<Offer[]> {
     return [...this.offers.values()].filter((offer) => offer.posterKey === posterKey).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -353,9 +367,25 @@ export class SupabaseBoardStore implements BoardStore {
     const rows = await this.select('board_profiles', `net_id=eq.${enc(netId)}&limit=1`);
     return rows[0] ? profileFrom(rows[0]) : null;
   }
-  async upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>): Promise<Profile> {
-    const rows = await this.write('POST', 'board_profiles?on_conflict=net_id', { net_id: profile.netId, name: profile.name, major: profile.major, class_of: profile.classOf, last_seen_at: new Date().toISOString() }, 'resolution=merge-duplicates,return=representation');
-    return profileFrom(rows[0]!);
+  async upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>, ownerKey?: string): Promise<Profile> {
+    const row = { net_id: profile.netId, name: profile.name, major: profile.major, class_of: profile.classOf, last_seen_at: new Date().toISOString() };
+    const save = (body: Record<string, unknown>) => this.write('POST', 'board_profiles?on_conflict=net_id', body, 'resolution=merge-duplicates,return=representation');
+    if (!ownerKey || this.ownerColumn === false) return profileFrom((await save(row))[0]!);
+    try {
+      return profileFrom((await save({ ...row, owner_key: ownerKey }))[0]!);
+    } catch (error) {
+      // A project whose schema predates owner_key keeps working, without the binding, until schema.sql is run again.
+      if (!(error instanceof ApiError) || error.code !== 'board_schema_outdated') throw error;
+      this.ownerColumn = false;
+      console.warn('[board] board_profiles has no owner_key column; run supabase/schema.sql again so NetIDs are bound to a browser.');
+      return profileFrom((await save(row))[0]!);
+    }
+  }
+  /** False once the database turned out to have no owner_key column. */
+  private ownerColumn: boolean | undefined;
+  async claimProfile(netId: string, ownerKey: string): Promise<void> {
+    if (this.ownerColumn === false) return;
+    await this.write('PATCH', `board_profiles?net_id=eq.${enc(netId)}&owner_key=is.null`, { owner_key: ownerKey }, 'return=minimal');
   }
   async touchProfile(netId: string, answered: boolean): Promise<void> {
     await this.rpc('board_touch_profile', { p_net_id: netId, p_answered: answered });
@@ -381,7 +411,8 @@ export class SupabaseBoardStore implements BoardStore {
     return rows[0] ? questionFrom(rows[0]) : null;
   }
   async listOpen(limit: number): Promise<Question[]> {
-    return (await this.select('board_questions', `status=neq.closed&order=created_at.desc&limit=${limit}`)).map(questionFrom);
+    // Fully answered questions are left out here, or once there were enough of them, older open ones would never be reached.
+    return (await this.select('board_questions', `status=neq.closed&answers=lt.${ENOUGH_ANSWERS}&order=created_at.desc&limit=${limit}`)).map(questionFrom);
   }
   async listByAsker(askerKey: string): Promise<Question[]> {
     return (await this.select('board_questions', `asker_key=eq.${enc(askerKey)}&order=created_at.desc&limit=100`)).map(questionFrom);
@@ -470,6 +501,12 @@ export class SupabaseBoardStore implements BoardStore {
   }
   async listOffers(now: Date): Promise<Offer[]> {
     return (await this.select('board_offers', `status=eq.open&expires_at=gt.${enc(now.toISOString())}&order=created_at.desc&limit=300`)).map(offerFrom);
+  }
+  async getContact(type: 'offer' | 'listing', id: string, now: Date): Promise<Pick<Offer, 'contactKind' | 'contact'> | null> {
+    if (!UUID.test(id)) return null;
+    const table = type === 'offer' ? 'board_offers' : 'board_listings';
+    const rows = await this.select(table, `id=eq.${enc(id)}&status=eq.open&expires_at=gt.${enc(now.toISOString())}&select=contact_kind,contact&limit=1`);
+    return rows[0] ? { contactKind: String(rows[0].contact_kind) as Offer['contactKind'], contact: String(rows[0].contact) } : null;
   }
   async listOffersByPoster(posterKey: string): Promise<Offer[]> {
     return (await this.select('board_offers', `poster_key=eq.${enc(posterKey)}&order=created_at.desc&limit=50`)).map(offerFrom);
@@ -583,6 +620,7 @@ function profileFrom(row: Row): Profile {
     answers: Number(row.answers ?? 0),
     createdAt: String(row.created_at),
     lastSeenAt: String(row.last_seen_at),
+    ownerKey: 'owner_key' in row ? ((row.owner_key as string | null) ?? null) : undefined,
   };
 }
 

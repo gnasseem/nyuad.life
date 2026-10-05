@@ -1,4 +1,5 @@
 /** Typed client for the API, including the streaming /api/ask protocol and the student board. */
+import { askerKey } from './store';
 
 export interface PostSummary {
   id: string;
@@ -381,11 +382,12 @@ export const api = {
     question: (id: string) => request<{ question: Question; answers: Answer[] }>(`/api/board?op=question&id=${encodeURIComponent(id)}`),
     mine: (key: string) => request<{ questions: QuestionWithAnswers[] }>(`/api/board?op=mine&key=${encodeURIComponent(key)}`),
     announcements: () => request<{ announcements: Announcement[] }>('/api/board?op=announcements'),
-    profile: (body: { netId: string; name: string; major: string; classOf: number }) => post<{ profile: Profile }>('/api/board', { op: 'profile', ...body }),
+    // The browser key goes with everything done as a NetID: the server only lets the browser that set a NetID up act as it.
+    profile: (body: { netId: string; name: string; major: string; classOf: number }) => post<{ profile: Profile }>('/api/board', { op: 'profile', key: askerKey(), ...body }),
     ask: (body: { text: string; key: string; name?: string }) => post<{ question?: Question; similar?: QuestionWithAnswers[]; related?: PostSummary[]; redirect?: Redirect }>('/api/board', { op: 'ask', ...body }),
     next: (netId: string, key: string) => post<{ question: Question | null; remaining: number; answered: number }>('/api/board', { op: 'next', netId, key }),
-    answer: (body: { netId: string; questionId: string; text: string }) => post<{ answer: Answer; answered: number }>('/api/board', { op: 'answer', ...body }),
-    skip: (body: { netId: string; questionId: string }) => post<{ ok: true }>('/api/board', { op: 'skip', ...body }),
+    answer: (body: { netId: string; questionId: string; text: string }) => post<{ answer: Answer; answered: number }>('/api/board', { op: 'answer', key: askerKey(), ...body }),
+    skip: (body: { netId: string; questionId: string }) => post<{ ok: true }>('/api/board', { op: 'skip', key: askerKey(), ...body }),
     announce: (body: { netId: string; key: string; title: string; body: string; kind: AnnouncementKind; startsAt?: string; location?: string; link?: string }) => post<{ announcement: Announcement }>('/api/board', { op: 'announce', ...body }),
     unannounce: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unannounce', ...body }),
     offers: (key: string) => request<{ offers: Offer[]; mine: Offer[]; market: MarketSummary; markets?: Record<OfferCurrency, MarketSummary> }>(`/api/board?op=offers&key=${encodeURIComponent(key)}`),

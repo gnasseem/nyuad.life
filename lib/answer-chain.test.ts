@@ -210,8 +210,8 @@ describe('the answer cache', () => {
 
 describe('backup providers', () => {
   it('are read from the environment in the configured order', () => {
-    const providers = providersFromEnv({ GROQ_API_KEY: 'g', OPENROUTER_API_KEY: 'o', CEREBRAS_API_KEY: 'c', ROR_MODEL_ORDER: 'openrouter,gemini', GROQ_MODELS: 'a, b' });
-    expect(providers.map((provider) => provider.id)).toEqual(['openrouter', 'groq', 'cerebras']);
+    const providers = providersFromEnv({ GROQ_API_KEY: 'g', OPENROUTER_API_KEY: 'o', MISTRAL_API_KEY: 'm', ROR_MODEL_ORDER: 'openrouter,gemini', GROQ_MODELS: 'a, b' });
+    expect(providers.map((provider) => provider.id)).toEqual(['openrouter', 'groq', 'mistral']);
     expect(providers.find((provider) => provider.id === 'groq')!.models).toEqual(['a', 'b']);
     expect(providersFromEnv({})).toEqual([]);
   });

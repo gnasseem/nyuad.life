@@ -13,3 +13,4 @@ data/scrape-state.json
 .vercel/
 .gradle/
 build/
+.claude/worktrees/

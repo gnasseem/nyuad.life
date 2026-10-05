@@ -232,6 +232,39 @@ describe('SupabaseBoardStore', () => {
       await new Promise((resolve) => server.close(resolve));
     }
   });
+
+  it('keeps saving profiles on a database without the owner column, until schema.sql is run again', async () => {
+    const { createServer } = await import('node:http');
+    const { SupabaseBoardStore } = await import('./board-store.ts');
+    const bodies: Array<Record<string, unknown>> = [];
+    const server = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as Record<string, unknown>;
+      bodies.push(body);
+      res.setHeader('content-type', 'application/json');
+      if ('owner_key' in body) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ code: 'PGRST204', message: "Could not find the 'owner_key' column of 'board_profiles' in the schema cache" }));
+        return;
+      }
+      res.end(JSON.stringify([{ ...body, answers: 0, created_at: '2026-10-01T00:00:00Z' }]));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    try {
+      const store = new SupabaseBoardStore({ url, serviceKey: 'sb_secret_test' });
+      const profile = await store.upsertProfile({ netId: 'abc1234', name: 'Sara', major: 'Economics', classOf: 2027 }, 'owner-hash');
+      expect(profile.netId).toBe('abc1234');
+      // No owner column in the row read back: nothing to check against, so the API does not lock anyone out.
+      expect(profile.ownerKey).toBeUndefined();
+      await store.upsertProfile({ netId: 'abc1234', name: 'Sara A', major: 'Economics', classOf: 2027 }, 'owner-hash');
+      // After the first refusal it stops sending the column.
+      expect(bodies.filter((body) => 'owner_key' in body)).toHaveLength(1);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
 });
 
 describe('Falcon and Campus Dirham offers, and the leaderboard', () => {

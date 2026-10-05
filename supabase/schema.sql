@@ -17,6 +17,9 @@ create table if not exists public.board_profiles (
   last_seen_at timestamptz not null default now()
 );
 
+-- The browser a NetID was set up in (a hash of its key): only that browser may post or answer as the NetID.
+alter table public.board_profiles add column if not exists owner_key text;
+
 create table if not exists public.board_questions (
   id         uuid primary key default gen_random_uuid(),
   text       text not null,
@@ -185,3 +188,12 @@ as $$
          (select count(*) from public.board_answers),
          (select count(distinct helper_net_id) from public.board_answers)
 $$;
+
+-- Only the API (the service role) calls these. Postgres lets every role execute a new function, and row level security
+-- does not cover security definer functions, so the public roles are shut out explicitly.
+revoke execute on function public.board_bump(uuid, int, int, int) from public, anon, authenticated;
+revoke execute on function public.board_touch_profile(text, boolean) from public, anon, authenticated;
+revoke execute on function public.board_stats() from public, anon, authenticated;
+grant execute on function public.board_bump(uuid, int, int, int) to service_role;
+grant execute on function public.board_touch_profile(text, boolean) to service_role;
+grant execute on function public.board_stats() to service_role;

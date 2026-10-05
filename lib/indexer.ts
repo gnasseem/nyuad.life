@@ -7,7 +7,7 @@ import path from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { chunkPosts } from './chunker.ts';
 import { EmbeddingError, PROVIDER_LABELS, type Embedder } from './embeddings.ts';
-import { cleanPosts } from './filters.ts';
+import { cleanPosts, FILTERS_VERSION } from './filters.ts';
 import { enrichPost, readPostsJsonl, sortNewestFirst } from './posts.ts';
 import type { Chunk, IndexMeta, IndexedPost } from './types.ts';
 import { concatTables, decodeTable, emptyTable, encodeTable, quantize, selectRows, type VectorTable } from './vectors.ts';
@@ -87,6 +87,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
     quantization: 'int8',
     newestPost: posts.find((post) => post.date)?.date ?? '',
     oldestPost: [...posts].reverse().find((post) => post.date)?.date ?? '',
+    filters: FILTERS_VERSION,
   };
   if (embedder) meta.provider = embedder.provider;
   writeFileSync(path.join(options.outDir, 'posts.json.gz'), gzipSync(JSON.stringify(posts)));

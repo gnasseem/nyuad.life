@@ -29,11 +29,13 @@ import {
   type Profile,
   type Question,
 } from '../lib/board.ts';
+import { createHash } from 'node:crypto';
 import { boardStore, type BoardStore } from '../lib/board-store.ts';
 import { detectRedirect } from '../lib/domains.ts';
 import { embedderForIndex } from '../lib/embeddings.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, queryString, rateLimit, readJson, route, sendJson } from '../lib/http.ts';
+import { screenPost, type PostKind } from '../lib/moderation.ts';
 import { retrieve } from '../lib/rag.ts';
 import { loadArchive, summarizePost } from '../lib/store.ts';
 import { collapseWhitespace } from '../lib/text.ts';
@@ -87,10 +89,9 @@ export default route(['GET', 'POST'], async (req, res) => {
       const id = queryString(req, 'id').trim();
       const type = queryString(req, 'type').trim();
       if (type !== 'offer' && type !== 'listing') throw new ApiError(400, 'type must be offer or listing.', 'bad_type');
-      const now = new Date();
-      const found = type === 'offer' ? (await store.listOffers(now)).find((entry) => entry.id === id) : (await store.listListings(now)).find((entry) => entry.id === id);
+      const found = await store.getContact(type, id, new Date());
       if (!found) throw new ApiError(404, 'That post is closed or gone.', 'not_found');
-      sendJson(res, 200, { contactKind: found.contactKind, contact: found.contact });
+      sendJson(res, 200, found);
       return;
     }
     case 'leaderboard': {
@@ -117,15 +118,21 @@ export default route(['GET', 'POST'], async (req, res) => {
     }
     case 'profile': {
       rateLimit(req, 10, 10, 'board-profile');
-      const profile = await store.upsertProfile(validateProfile(body));
+      const draft = validateProfile(body);
+      allow('name', draft.name, draft.major);
+      const owner = ownerOf(body.key);
+      const existing = await store.getProfile(draft.netId);
+      if (existing?.ownerKey && existing.ownerKey !== owner) throw new ApiError(403, NETID_TAKEN, 'netid_taken');
+      const profile = await store.upsertProfile(draft, owner);
       sendJson(res, 200, { profile: publicProfile(profile) });
       return;
     }
     case 'offer': {
       rateLimit(req, 10, 4, 'board-offer');
-      const profile = await requireProfile(store, body.netId);
+      const profile = await requireProfile(store, body.netId, body.key);
       const posterKey = validateKey(body.key);
       const draft = validateOffer(body);
+      allow('offer', draft.note);
       const open = (await store.listOffersByPoster(posterKey)).filter((offer) => offer.status === 'open' && offer.currency === draft.currency && Date.parse(offer.expiresAt) > Date.now());
       if (open.length >= 3) throw new ApiError(400, `You already have three open ${CURRENCY_LABELS[draft.currency]} offers.`, 'too_many_offers');
       const offer = await store.createOffer({ ...draft, posterKey, posterNetId: profile.netId, posterName: profile.name, status: 'open' });
@@ -142,11 +149,13 @@ export default route(['GET', 'POST'], async (req, res) => {
     }
     case 'listing': {
       rateLimit(req, 10, 4, 'board-listing');
-      const profile = await requireProfile(store, body.netId);
+      const profile = await requireProfile(store, body.netId, body.key);
       const posterKey = validateKey(body.key);
       const open = (await store.listListingsByPoster(posterKey)).filter((listing) => listing.status === 'open' && Date.parse(listing.expiresAt) > Date.now());
       if (open.length >= 8) throw new ApiError(400, 'You already have eight open posts. Mark one done first.', 'too_many_listings');
-      const listing = await store.createListing({ ...validateListing(body), posterKey, posterNetId: profile.netId, posterName: profile.name, status: 'open' });
+      const draft = validateListing(body);
+      allow('listing', draft.title, draft.body, draft.place, draft.destination);
+      const listing = await store.createListing({ ...draft, posterKey, posterNetId: profile.netId, posterName: profile.name, status: 'open' });
       sendJson(res, 200, { listing: publicListing(listing) });
       return;
     }
@@ -164,7 +173,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       return;
     case 'next': {
       rateLimit(req, 40, 30, 'board-help');
-      const profile = await requireProfile(store, body.netId);
+      const profile = await requireProfile(store, body.netId, body.key);
       const [questions, events] = await Promise.all([store.listOpen(300), store.listEventsByHelper(profile.netId)]);
       const askerKey = typeof body.key === 'string' && /^[a-z0-9-]{8,64}$/i.test(body.key) ? body.key : undefined;
       const question = pickNext(questions, { profile, events, askerKey });
@@ -177,10 +186,11 @@ export default route(['GET', 'POST'], async (req, res) => {
     }
     case 'answer': {
       rateLimit(req, 20, 15, 'board-help');
-      const profile = await requireProfile(store, body.netId);
+      const profile = await requireProfile(store, body.netId, body.key);
       const question = await store.getQuestion(String(body.questionId ?? ''));
       if (!question || question.status === 'closed') throw new ApiError(404, 'That question is no longer open.', 'not_found');
       const text = validateAnswerText(body.text);
+      allow('answer', text);
       const answer = await store.createAnswer({ questionId: question.id, text, helperNetId: profile.netId, helperName: profile.name, helperMajor: profile.major, helperYear: standingFor(profile.classOf) });
       await Promise.all([store.recordEvent({ questionId: question.id, netId: profile.netId, kind: 'answer' }), store.bump(question.id, { answers: 1 }), store.touchProfile(profile.netId, true)]);
       sendJson(res, 200, { answer: publicAnswer(answer), answered: profile.answers + 1 });
@@ -188,7 +198,7 @@ export default route(['GET', 'POST'], async (req, res) => {
     }
     case 'skip': {
       rateLimit(req, 60, 60, 'board-help');
-      const profile = await requireProfile(store, body.netId);
+      const profile = await requireProfile(store, body.netId, body.key);
       const question = await store.getQuestion(String(body.questionId ?? ''));
       if (question) await Promise.all([store.recordEvent({ questionId: question.id, netId: profile.netId, kind: 'skip' }), store.bump(question.id, { skips: 1 })]);
       sendJson(res, 200, { ok: true });
@@ -196,9 +206,11 @@ export default route(['GET', 'POST'], async (req, res) => {
     }
     case 'announce': {
       rateLimit(req, 8, 3, 'board-announce');
-      const profile = await requireProfile(store, body.netId);
+      const profile = await requireProfile(store, body.netId, body.key);
       const posterKey = validateKey(body.key);
-      const announcement = await store.createAnnouncement({ ...validateAnnouncement(body), posterKey, posterNetId: profile.netId, posterName: profile.name });
+      const draft = validateAnnouncement(body);
+      allow('notice', draft.title, draft.body, draft.location, draft.link);
+      const announcement = await store.createAnnouncement({ ...draft, posterKey, posterNetId: profile.netId, posterName: profile.name });
       sendJson(res, 200, { announcement: publicAnnouncement(announcement) });
       return;
     }
@@ -214,9 +226,33 @@ export default route(['GET', 'POST'], async (req, res) => {
   }
 });
 
-async function requireProfile(store: BoardStore, netId: unknown): Promise<Profile> {
+/**
+ * Refuses a post that the safety screen stops (lib/moderation.ts), with a message that says why. Someone who wrote
+ * about hurting themselves gets where to find help instead.
+ */
+function allow(kind: PostKind, ...parts: Array<string | null | undefined>): void {
+  const screened = screenPost(kind, ...parts);
+  if (screened) throw new ApiError(422, screened.message, `blocked_${screened.reason}`);
+}
+
+const NETID_TAKEN = 'This NetID is already set up in another browser. Use the browser you first signed up in.';
+
+/**
+ * A NetID is bound to the browser that set it up: its key, hashed (the key itself also removes that browser's posts,
+ * so it is never stored). Without this, anyone could answer, post or trade under any student's NetID.
+ */
+function ownerOf(key: unknown): string {
+  return createHash('sha256').update(`ror-owner:${validateKey(key)}`).digest('hex').slice(0, 40);
+}
+
+/** The profile behind a NetID, if this browser may act as it; a profile no browser has claimed yet becomes this one's. */
+async function requireProfile(store: BoardStore, netId: unknown, key: unknown): Promise<Profile> {
   const profile = await store.getProfile(validateNetId(netId));
   if (!profile) throw new ApiError(404, 'Add your details first.', 'no_profile');
+  const owner = ownerOf(key);
+  // Undefined: the database predates the owner column (see upsertProfile), so there is nothing to check against.
+  if (profile.ownerKey === null) await store.claimProfile(profile.netId, owner);
+  else if (profile.ownerKey !== undefined && profile.ownerKey !== owner) throw new ApiError(403, NETID_TAKEN, 'netid_taken');
   return profile;
 }
 
@@ -225,6 +261,8 @@ async function askQuestion(store: BoardStore, body: Body) {
   const text = validateQuestionText(body.text);
   const askerKey = validateKey(body.key);
   const askerName = collapseWhitespace(String(body.name ?? '')).slice(0, 40);
+  allow('question', text);
+  allow('name', askerName);
   const redirect = detectRedirect(text);
   if (redirect) return { redirect };
 
