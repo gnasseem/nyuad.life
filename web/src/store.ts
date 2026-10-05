@@ -2,6 +2,8 @@
  * Per-device state in localStorage: theme, past conversations, the helper profile, the anonymous asker key and the
  * contact last used. The conversation open on Ask is per tab, in sessionStorage.
  */
+import type { Rules, Want } from '../../lib/schedule.ts';
+import { DEFAULT_RULES } from '../../lib/schedule.ts';
 import type { ChatTurn, Confidence, ContactKind, Profile, Redirect, SourceCard } from './api';
 
 export interface Message {
@@ -9,7 +11,6 @@ export interface Message {
   role: 'user' | 'model';
   content: string;
   sources?: SourceCard[];
-  followups?: string[];
   confidence?: Confidence | null;
   redirect?: Redirect;
   status?: string;
@@ -37,6 +38,7 @@ const ANNOUNCED_KEY = 'room.announced';
 const CONTACT_KEY = 'room.contact';
 /** In sessionStorage: one per tab, gone when the tab closes. */
 const ACTIVE_KEY = 'room.active';
+const PLAN_KEY = 'room.plan';
 const MAX_CONVERSATIONS = 60;
 
 function read<T>(key: string, fallback: T): T {
@@ -186,7 +188,7 @@ export function saveContact(value: { contactKind: ContactKind; contact: string }
 
 /** Removes everything this site keeps in the browser: profile, conversations, the anonymous key, the contact and the theme. */
 export function forgetDevice(): void {
-  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, KEY_KEY, ANNOUNCED_KEY, CONTACT_KEY]) {
+  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, KEY_KEY, ANNOUNCED_KEY, CONTACT_KEY, PLAN_KEY]) {
     try {
       localStorage.removeItem(key);
     } catch {
@@ -219,4 +221,21 @@ export function applyTheme(theme: Theme): void {
   }
   if (theme === 'system') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = theme;
+}
+
+/** The schedule being built on Plan: its term, the courses wanted and the rules. */
+export interface SavedPlan {
+  term: string;
+  wants: Array<Want & { label: string }>;
+  rules: Rules;
+}
+
+export function loadPlan(): SavedPlan {
+  const saved = read<Partial<SavedPlan>>(PLAN_KEY, {});
+  const wants = Array.isArray(saved.wants) ? saved.wants.filter((want) => want && typeof want.id === 'string' && Array.isArray(want.codes)) : [];
+  return { term: typeof saved.term === 'string' ? saved.term : '', wants: wants.map((want) => ({ id: want.id, label: String(want.label ?? ''), codes: want.codes.map(String) })), rules: { ...DEFAULT_RULES, ...(saved.rules ?? {}) } };
+}
+
+export function savePlan(plan: SavedPlan): void {
+  write(PLAN_KEY, plan);
 }

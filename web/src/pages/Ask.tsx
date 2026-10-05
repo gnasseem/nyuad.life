@@ -34,7 +34,7 @@ const STAGES: Array<{ label: string; match: RegExp }> = [
 ];
 
 export function AskPage({ resumeId }: Props) {
-  const { home, health, toast, askPrefill, setAskPrefill, setBoardPrefill, chatgpt, refreshChatGPT } = useApp();
+  const { health, toast, askPrefill, setAskPrefill, setBoardPrefill, chatgpt, refreshChatGPT } = useApp();
   const [conversation, setConversation] = useState<Conversation>(() => (resumeId && loadConversations().find((entry) => entry.id === resumeId)) || fresh());
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
@@ -136,7 +136,6 @@ export function AskPage({ resumeId }: Props) {
             onRedirect: (redirect) => patchMessage(modelMessage.id, { redirect, status: undefined }),
             onSources: (sources) => patchMessage(modelMessage.id, { sources }),
             onDelta: (text) => patchMessage(modelMessage.id, (message) => ({ content: message.content + text, status: undefined })),
-            onFollowups: (followups) => patchMessage(modelMessage.id, { followups }),
             onDone: ({ confidence }) => patchMessage(modelMessage.id, (message) => ({ confidence, content: stripConfidence(message.content) })),
           },
           controller.signal,
@@ -301,8 +300,6 @@ export function AskPage({ resumeId }: Props) {
     return (
       <Home
         composer={composer}
-        suggestions={home?.suggestions ?? []}
-        onSuggestion={(question) => void send(question)}
         answersOff={Boolean(health && !(health.answers?.available ?? health.gemini.configured) && !chatgpt?.available)}
       />
     );
@@ -419,16 +416,6 @@ export function AskPage({ resumeId }: Props) {
                     </div>
                   </div>
                 )}
-                {!message.pending && !message.error && message.followups && message.followups.length > 0 && (
-                  <div className="followups">
-                    {message.followups.map((question) => (
-                      <button key={question} type="button" className="followup" onClick={() => void send(question)} disabled={running}>
-                        {question}
-                        <IconArrow />
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             ),
           )}
@@ -466,12 +453,11 @@ interface HomeData {
   markets: Array<{ currency: 'falcon' | 'campus'; label: string; summary: MarketSummary }>;
   answered: QuestionWithAnswers[] | null;
   open: number | null;
-  courses: { term: string; open: number; total: number } | null;
 }
 
 function useHomeData(): HomeData {
   const { boardProblem } = useApp();
-  const [data, setData] = useState<HomeData>({ notices: null, rides: null, listings: 0, markets: [], answered: null, open: null, courses: null });
+  const [data, setData] = useState<HomeData>({ notices: null, rides: null, listings: 0, markets: [], answered: null, open: null });
   useEffect(() => {
     const set = (patch: Partial<HomeData>) => setData((current) => ({ ...current, ...patch }));
     if (!boardProblem) {
@@ -510,16 +496,11 @@ function useHomeData(): HomeData {
         .then((result) => set({ open: result.open }))
         .catch(() => set({ open: null }));
     }
-    api.courses
-      .terms()
-      .then(({ current }) => api.courses.list(current))
-      .then((result) => set({ courses: { term: result.term, open: result.courses.filter((course) => course.sections.some((section) => section.status === 'open')).length, total: result.courses.length } }))
-      .catch(() => set({ courses: { term: '', open: 0, total: 0 } }));
   }, [boardProblem]);
   return data;
 }
 
-function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: ReactNode; suggestions: Array<{ topic: string; question: string }>; onSuggestion(question: string): void; answersOff: boolean }) {
+function Home({ composer, answersOff }: { composer: ReactNode; answersOff: boolean }) {
   const { boardProblem } = useApp();
   const data = useHomeData();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -541,15 +522,6 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
           {answersOff && <p className="central-note">Answers are paused right now.</p>}
           <ChatGPTLine />
         </div>
-        {suggestions.length > 0 && (
-          <div className="journeys">
-            {suggestions.slice(0, 3).map((suggestion) => (
-              <button key={suggestion.question} type="button" className="journey" onClick={() => onSuggestion(suggestion.question)}>
-                {suggestion.question}
-              </button>
-            ))}
-          </div>
-        )}
       </section>
 
       <div className="line-cards">
@@ -633,30 +605,22 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
             ))}
         </LineCard>
         <LineCard line="guide" title="Courses" ar="المساقات" href="/courses">
-          {data.courses === null ? (
-            <Loading />
-          ) : data.courses.total === 0 ? (
-            <p className="stops-note">Search every course, section and professor.</p>
-          ) : (
-            <>
-              <a className="stn" href="/courses" onClick={onLinkClick}>
-                <span className="when">{data.courses.term}</span>
-                <span className="what">{plural(data.courses.total, 'course')}, {data.courses.open} with open seats</span>
-              </a>
-              <a className="stn" href="/courses?core=1" onClick={onLinkClick}>
-                <span className="when">Core</span>
-                <span className="what">Core Curriculum courses this term</span>
-              </a>
-              <a className="stn" href="/threads" onClick={onLinkClick}>
-                <span className="when">Threads</span>
-                <span className="what">Search the group's old posts</span>
-              </a>
-            </>
-          )}
+          <a className="stn" href="/courses" onClick={onLinkClick}>
+            <span className="when">Rate</span>
+            <span className="what">How students rate any course</span>
+          </a>
+          <a className="stn" href="/plan" onClick={onLinkClick}>
+            <span className="when">Plan</span>
+            <span className="what">Build next term's schedule</span>
+          </a>
+          <a className="stn" href="/threads" onClick={onLinkClick}>
+            <span className="when">Threads</span>
+            <span className="what">Search the group's old posts</span>
+          </a>
         </LineCard>
       </div>
 
-      <HomeLines root={rootRef} deps={[data, suggestions.length, answersOff]} />
+      <HomeLines root={rootRef} deps={[data, answersOff]} />
     </div>
   );
 }

@@ -10,7 +10,8 @@ other students wrote here.
   in any spelling, titles the way students say them, "calc", "intro to cs", or a subject for "classes about machine
   learning"), plus the group's threads tagged with that course. Newer threads are lifted, more so for questions about
   how things are now, and a thread the reranker finds unrelated is left out rather than padding the answer. Answers lead
-  with a verdict, then the specifics, the catch, what may have changed and the next step.
+  with a verdict, then at most five specifics (a ranked shortlist for "which is best" questions), the catch and the next
+  step, in about 200 words.
 - **Questions.** When the archive falls short, a question goes to students. Helpers give a name, NetID, major and class
   year once, then get questions one at a time, matched by major and year. Answered questions are cited by Ask.
 - **Notices.** Events, deadlines and opportunities posted by students, by day, with a calendar file for dated ones.
@@ -19,10 +20,17 @@ other students wrote here.
   or free (one), offers to buy or sell Falcons and Campus Dirhams (two separate balances, each with its own order book;
   five days), shared rides by day (gone three hours after they leave) and lost and found (three weeks). Contact details
   are fetched one post at a time, on tap. Ask sends listings, trades, rides and lost items here.
-- **Courses.** Every course in Albert's schedule, searchable by code, title, professor or topic and filtered by term,
-  subject, open seats, Core and time of day, with each course's sections, who taught it in earlier terms, the group's
-  threads about it and a cached summary of what students say. The group's threads are a second tab, searchable by
-  keyword and topic with no model involved.
+- **Courses.** Every course in Albert's schedule once, searchable by code, title or professor and filtered by subject and
+  Core. Picking one shows an AI rating written from the group's threads about it: a score out of five, difficulty and
+  workload, what students liked, what they warn about, and their tips. Ratings are cached for a month per course. The
+  group's threads are a second tab, searchable by keyword and topic with no model involved.
+- **Plan.** A schedule builder after [Horarium](https://github.com/Phoenix-3139/Horarium). Say what you need ("calc,
+  intro to CS, any Arts Core, nothing before 10, Fridays off") and a model reads it into courses from the term's real list
+  and rules; or add courses one by one. The browser then finds every combination where no two classes meet at once
+  (`lib/schedule.ts`): one section of every component, lectures paired with their own recitation or lab, seven-week
+  halves sharing a slot, closed and waitlisted sections only when allowed. Plans are ranked by days on campus, gaps,
+  lunch, preferred professors and seats, drawn as a week, and listed with class numbers to copy into Albert. When nothing
+  fits it says which course or pair of courses is in the way.
 
 Everything is TypeScript in one repository: `api/` and `lib/` are Vercel serverless functions, `web/` is a Vite and
 React app, `scripts/` holds the scraper, the crawler and the indexer, and `supabase/schema.sql` is the board schema.
@@ -44,11 +52,11 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
 3. Deploy. `GET /api/health` reports what is active. `board.ok` comes from a real probe of the database and
    `board.problem` says what is wrong when it is false.
 
-Routes: `GET /api/health`, `/api/home`, `/api/search` (`q=`, `topic=`, `sort=`, `page=`), `/api/post?id=`,
-`/api/courses` (`term=`, `code=`, `code=&threads=1`, `code=&summary=1`); `POST /api/ask` (server-sent events);
+Routes: `GET /api/health`, `/api/search` (`q=`, `topic=`, `sort=`, `page=`), `/api/post?id=`, `/api/courses` (`term=`,
+`all=1`, `code=`, `code=&rating=1`); `POST /api/ask` (server-sent events), `POST /api/plan`;
 `GET|POST /api/board` (`op=stats|question|recent|mine|announcements|offers|listings|contact|leaderboard` on GET,
 `profile|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer|listing|listing_done|unlisting` on POST). Ask,
-search, courses and the board are rate-limited per IP.
+search, courses, plan and the board are rate-limited per IP.
 
 ## Keeping answers up for free
 
@@ -74,10 +82,9 @@ it stands (`answers.chain`).
 | OpenRouter | `:free` models, 50 requests a day without paying (1,000 a day only after a $10 top-up) | [openrouter.ai/keys](https://openrouter.ai/keys) |
 
 Opening questions are also cached for six hours (`lib/answer-cache.ts`): the same question asked again, in any case or
-punctuation, is answered from the cache with no model call. Suggestions on the home page and registration-week
-questions are asked many times a day, so this saves much of the quota. The cache lives in memory and in the board's
-`guide_summaries` table when Supabase is set up, so every serverless instance shares it; expired entries are removed.
-Follow-ups are never cached.
+punctuation, is answered from the cache with no model call. Registration-week questions are asked many times a day, so
+this saves much of the quota. The cache lives in memory and in the board's `guide_summaries` table when Supabase is set
+up, so every serverless instance shares it; expired entries are removed.
 
 Settings: `ROR_MODEL_ORDER=groq,gemini` puts a backup first; `<PROVIDER>_MODELS` and `<PROVIDER>_LITE_MODELS` (for
 example `GROQ_MODELS`) replace a provider's model lists; `ROR_ANSWER_CACHE=0` turns the cache off. Gemini's own lists
@@ -85,7 +92,7 @@ are `GEMINI_CHAT_MODEL`, `GEMINI_CHAT_FALLBACK_MODELS`, `GEMINI_LITE_MODEL` and 
 
 ## Sign in with ChatGPT
 
-Students can connect their own ChatGPT plan; their answers, follow-ups and query rewrites then run on it, counted
+Students can connect their own ChatGPT plan; their answers and query rewrites then run on it, counted
 against the limit they give this site in ChatGPT, and the site's Gemini key is not used for them. It is OpenAI's Sign
 in with ChatGPT: OAuth with PKCE against `auth.openai.com`, then the issued token calls `api.openai.com/v1/responses`
 directly (`lib/chatgpt.ts`). Tokens are kept encrypted in an httpOnly cookie, so no database is involved.
@@ -171,11 +178,14 @@ the first browser that uses them.
 
 Everything students write is screened by rules in `lib/moderation.ts`, which add no delay and cost nothing:
 
-- **Posts** (questions, answers, notices, listings, offers, names) are refused, with a reason, for slurs and threats,
-  sexual services, selling drugs, alcohol, prescription medicine, vapes, weapons or fake documents, paid academic work
+- **Posts** (questions, answers, notices, listings, offers, names) are refused, with a reason, for slurs, threats and
+  curse words (English and Arabic, starred out or not), sexual services, selling drugs, alcohol, prescription medicine, vapes, weapons or fake documents, paid academic work
   or leaked exams, money schemes, phishing (asking for passwords, "verify your NetID", NYU look-alike sign-in links),
   text written to steer the answer bot, ID, card and bank numbers, and phone numbers or personal emails in public text
   (listings and offers have a contact field for that).
+- **A small model** then reads every post the rules let through, except names, and refuses ads for businesses and paid
+  services, spam, trolling and fake posts, and attacks on a person, with what belongs in each place (a club's event is
+  a notice, a restaurant's discount is not). When no model answers, the post goes up on the rules alone.
 - **Questions to Ask** about where to get drugs, finding a person's room or WhatsApp, buying academic work, or telling
   the bot to ignore its instructions get a short reply instead of an answer, with no model call. Asking about rules
   ("can I bring my ADHD medication into the UAE?") is answered as usual.

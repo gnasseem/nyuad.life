@@ -178,8 +178,6 @@ describe('the answer model chain', () => {
   it('answers with backups alone when there is no Gemini key', async () => {
     const result = await ask(archive, null, { question: 'is A2 quieter than A5?', stream: true }, {}, undefined, { ...context, backups: [groq()] });
     expect(result.model).toBe('groq:openai/gpt-oss-120b');
-    // Follow-ups come from the backup's small model, one per line.
-    expect(result.followups).toEqual(['Who teaches Calculus this term?', 'Is the 8am section bad?']);
   });
 });
 

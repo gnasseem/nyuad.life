@@ -216,7 +216,6 @@ describe('Sign in with ChatGPT', () => {
     // 6.1 Sol is not available to this client, so the answer came from the next model.
     expect(done.data.model).toBe('chatgpt:gpt-6-sol');
     expect(done.data.confidence).toEqual({ level: 'high', reason: 'everyone agrees' });
-    expect(events.find((entry) => entry.event === 'followups')!.data.questions).toEqual(['How hard is the midterm?', 'Who grades fairest?', 'When is office hours?']);
     const calls = seen.responses;
     expect(calls.every((call) => call.auth === 'Bearer plan-token-1')).toBe(true);
     for (const call of calls) {

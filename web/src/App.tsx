@@ -1,15 +1,16 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, boardProblem as describeBoardProblem, type ChatGPTStatus, type Health, type HomePayload, type Profile } from './api';
+import { api, boardProblem as describeBoardProblem, type ChatGPTStatus, type Health, type Profile } from './api';
 import { APP_NAME } from './brand';
 import { Wordmark } from './components/Logo';
 import { ProfileModal } from './components/ProfileForm';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
 import { initials, relativeDate } from './format';
-import { IconAsk, IconAuto, IconBag, IconBook, IconClock, IconMegaphone, IconMoon, IconQuestions, IconSun, IconTrash, IconUser } from './icons';
+import { IconAsk, IconAuto, IconBag, IconBook, IconCalendar, IconClock, IconMegaphone, IconMoon, IconQuestions, IconSun, IconTrash, IconUser } from './icons';
 import { AnnouncementsPage } from './pages/Announcements';
 import { AskPage } from './pages/Ask';
 import { CoursesPage } from './pages/Courses';
 import { MarketPage } from './pages/Market';
+import { PlanPage } from './pages/Plan';
 import { PostPage } from './pages/Post';
 import { QuestionPage, QuestionsPage } from './pages/Questions';
 import { SettingsPage } from './pages/Settings';
@@ -17,7 +18,7 @@ import { navigate, onLinkClick, routePath, useRoute, type Route } from './router
 import { applyTheme, clearConversations, deleteConversation, loadActiveConversation, loadConversations, loadProfile, loadTheme, onConversationsChange, saveProfile, type Conversation, type Theme } from './store';
 import { standingFor } from './year';
 
-type Line = 'ask' | 'questions' | 'notices' | 'market' | 'guide';
+type Line = 'ask' | 'questions' | 'notices' | 'market' | 'guide' | 'plan';
 
 const NAV: Array<{ route: Route; label: string; line: Line; icon: typeof IconAsk; matches: Route['name'][] }> = [
   { route: { name: 'ask' }, label: 'Ask', line: 'ask', icon: IconAsk, matches: ['ask'] },
@@ -25,10 +26,11 @@ const NAV: Array<{ route: Route; label: string; line: Line; icon: typeof IconAsk
   { route: { name: 'announcements' }, label: 'Notices', line: 'notices', icon: IconMegaphone, matches: ['announcements'] },
   { route: { name: 'market', tab: 'items' }, label: 'Market', line: 'market', icon: IconBag, matches: ['market'] },
   { route: { name: 'courses' }, label: 'Courses', line: 'guide', icon: IconBook, matches: ['courses', 'threads', 'post'] },
+  { route: { name: 'plan' }, label: 'Plan', line: 'plan', icon: IconCalendar, matches: ['plan'] },
 ];
 
 const THEME_LABEL: Record<Theme, string> = { system: 'Theme: auto', light: 'Theme: light', dark: 'Theme: dark' };
-const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Notices', market: 'Market', courses: 'Courses', threads: 'Threads', post: 'Thread', settings: 'Settings' };
+const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Notices', market: 'Market', courses: 'Courses', threads: 'Threads', post: 'Thread', plan: 'Plan', settings: 'Settings' };
 const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: '' };
 
 function useConversations(): Conversation[] {
@@ -46,7 +48,6 @@ function useActiveConversation(): string | null {
 
 export function App() {
   const { route, search } = useRoute();
-  const [home, setHome] = useState<HomePayload | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [profile, setProfileState] = useState<Profile | null>(loadProfile);
   const [theme, setThemeState] = useState<Theme>(loadTheme);
@@ -74,10 +75,6 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    api
-      .home()
-      .then(setHome)
-      .catch(() => setHome(null));
     api
       .health()
       .then(setHealth)
@@ -162,8 +159,8 @@ export function App() {
   }, []);
 
   const context = useMemo(
-    () => ({ home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, setBoardPrefill, chatgpt, refreshChatGPT }),
-    [home, health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, chatgpt, refreshChatGPT],
+    () => ({ health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, setBoardPrefill, chatgpt, refreshChatGPT }),
+    [health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, chatgpt, refreshChatGPT],
   );
 
   const cycleTheme = () => setThemeState(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');
@@ -184,6 +181,8 @@ export function App() {
         return <CoursesPage view="courses" code={route.code} />;
       case 'threads':
         return <CoursesPage view="threads" />;
+      case 'plan':
+        return <PlanPage />;
       case 'post':
         return <PostPage id={route.id} />;
       case 'settings':
@@ -250,7 +249,7 @@ export function App() {
   );
 }
 
-/** The five lines as tabs, with one enamel plate that slides to the line you are on and takes its colour. */
+/** The six lines as tabs, with one enamel plate that slides to the line you are on and takes its colour. */
 function LineNav({ activeIndex, hrefOf }: { activeIndex: number; hrefOf(route: Route): string }) {
   const ref = useRef<HTMLElement>(null);
   const [plate, setPlate] = useState<{ x: number; w: number } | null>(null);

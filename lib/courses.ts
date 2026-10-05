@@ -175,6 +175,9 @@ export interface SectionRow {
   status: SeatStatus;
   waitlist?: number;
   session: string;
+  /** The weeks it runs, YYYY-MM-DD: seven-week halves cover part of the term. */
+  startDate: string;
+  endDate: string;
   meetings: Array<{ days: string[]; start: string; end: string; room: string }>;
   instructors: string[];
   notes: string;
@@ -199,6 +202,8 @@ function sectionRow(section: Section, withNotes: boolean): SectionRow {
     topic: section.topic,
     ...seats,
     session: sessionLabel(section),
+    startDate: section.startDate,
+    endDate: section.endDate,
     meetings: section.meetings.map((meeting) => ({ days: meeting.days, start: meeting.startTime, end: meeting.endTime, room: meeting.room })),
     instructors: section.instructors.map(displayName),
     notes: withNotes ? collapseWhitespace(section.notes) : '',
@@ -301,6 +306,30 @@ export function courseHistory(catalog: Catalog, code: string): CourseHistory | n
     description: collapseWhitespace(offerings.find((entry) => entry.description)?.description ?? ''),
     offerings: offerings.map((offering) => ({ term: offering.term, sections: offering.sections.map((section) => sectionRow(section, true)) })),
   };
+}
+
+export interface CourseEntry {
+  code: string;
+  title: string;
+  subject: string;
+  core: boolean;
+  /** Who taught it lately; searched, not shown. */
+  people: string[];
+}
+
+/** Every course in the schedule once, under the code it goes by now, for the course list. */
+export function allCourses(catalog: Catalog): CourseEntry[] {
+  const seen = new Set<string>();
+  const out: CourseEntry[] = [];
+  for (const code of catalog.byCode.keys()) {
+    const current = currentCode(catalog, code);
+    if (seen.has(current)) continue;
+    seen.add(current);
+    const offerings = mergedOfferings(catalog, current);
+    const people = new Set(offerings.slice(0, 4).flatMap((offering) => offering.sections.flatMap((section) => section.instructors.map(displayName))));
+    out.push({ code: current, title: offerings[0]!.title, subject: subjectOf(current), core: CORE_SUBJECTS.has(subjectOf(current)), people: [...people].slice(0, 8) });
+  }
+  return out.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
 }
 
 /* ---------- Finding what a question is about ---------- */

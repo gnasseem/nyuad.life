@@ -10,7 +10,7 @@
  * `<PROVIDER>_MODELS` overrides a provider's answer models and `<PROVIDER>_LITE_MODELS` its models for small calls.
  * `ROR_MODEL_ORDER` (default `gemini,groq,mistral,openrouter`) sets which goes first.
  */
-import type { Message } from './gemini.ts';
+import { generateJson, type GeminiConfig, type Message } from './gemini.ts';
 
 export interface Provider {
   id: string;
@@ -261,12 +261,15 @@ export async function* streamChat(provider: Provider, model: string, params: Cha
   }
 }
 
-/** A short whole answer (a query rewrite, follow-up questions) from the first provider and model that can give one. */
-export async function liteChat(providers: Provider[], params: ChatParams & { timeoutMs?: number }): Promise<string> {
+/**
+ * A short whole answer (a query rewrite, a moderation verdict) from the first provider and model that can give one.
+ * `tier: 'main'` uses the providers' answer models, for work that needs more judgement than a rewrite.
+ */
+export async function liteChat(providers: Provider[], params: ChatParams & { timeoutMs?: number; tier?: 'lite' | 'main' }): Promise<string> {
   const signal = AbortSignal.timeout(params.timeoutMs ?? 12_000);
   let lastError: unknown = new ProviderError('No backup model is set up.', 503);
   for (const provider of providers) {
-    for (const model of usable(provider, provider.liteModels)) {
+    for (const model of usable(provider, params.tier === 'main' ? provider.models : provider.liteModels)) {
       try {
         const response = await post(provider, model, { ...params, signal }, false);
         const json = (await response.json()) as { choices?: Array<{ message?: { content?: string | null } }> };
@@ -343,4 +346,37 @@ export class ThinkFilter {
 function partialTag(text: string): number {
   for (let n = Math.min(6, text.length); n > 0; n--) if ('<think>'.startsWith(text.slice(-n))) return n;
   return 0;
+}
+
+/**
+ * A JSON object from the site's own models: Gemini (lite models, or the answer models for `tier: 'main'`) with the
+ * schema, then the backups in JSON mode, or the other way round per ROR_MODEL_ORDER. Throws when none gives valid JSON.
+ */
+export async function siteJson<T>(
+  gemini: GeminiConfig | null,
+  backups: Provider[],
+  params: { system: string; prompt: string; schema: Record<string, unknown>; tier?: 'lite' | 'main'; maxOutputTokens?: number; temperature?: number; timeoutMs?: number },
+): Promise<T> {
+  const temperature = params.temperature ?? 0;
+  const maxOutputTokens = params.maxOutputTokens ?? 1024;
+  const viaGemini = async () => {
+    const cfg = gemini!;
+    const model = params.tier === 'main' ? [cfg.chatModel, ...cfg.chatFallbacks] : cfg.liteModels;
+    return generateJson<T>(cfg, { model, system: params.system, messages: [{ role: 'user', text: params.prompt }], responseSchema: params.schema, temperature, maxOutputTokens }, { retries: 0, timeoutMs: params.timeoutMs ?? 15_000 });
+  };
+  const viaBackups = async () => {
+    const text = await liteChat(backups, { system: `${params.system}\nReply with one JSON object and nothing else.`, messages: [{ role: 'user', text: params.prompt }], json: true, temperature, maxOutputTokens, timeoutMs: params.timeoutMs, tier: params.tier });
+    return JSON.parse(text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '')) as T;
+  };
+  const steps = [gemini ? viaGemini : null, backups.length ? viaBackups : null].filter((step): step is () => Promise<T> => step !== null);
+  if (modelOrder().indexOf('gemini') > 0) steps.reverse();
+  let lastError: unknown = new ProviderError('No model is set up.', 503);
+  for (const step of steps) {
+    try {
+      return await step();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }

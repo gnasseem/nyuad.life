@@ -10,6 +10,7 @@ export type Route =
   | { name: 'market'; tab: MarketTab }
   | { name: 'courses'; code?: string }
   | { name: 'threads' }
+  | { name: 'plan' }
   | { name: 'settings' };
 
 export type MarketTab = 'items' | 'falcons' | 'campus' | 'rides' | 'lost';
@@ -34,6 +35,8 @@ export function parseRoute(pathname: string): Route {
       return { name: 'courses', code: parts[1] };
     case 'threads':
       return { name: 'threads' };
+    case 'plan':
+      return { name: 'plan' };
     // Old links: the archive and the guide became the course search and the thread search.
     case 'archive':
     case 'browse':
@@ -73,6 +76,8 @@ export function routePath(route: Route): string {
       return route.code ? `/courses/${encodeURIComponent(route.code)}` : '/courses';
     case 'threads':
       return '/threads';
+    case 'plan':
+      return '/plan';
   }
 }
 

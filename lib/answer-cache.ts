@@ -12,11 +12,11 @@ import type { AskResponse } from './types.ts';
 /** Long enough to absorb a busy day, short enough that new notices, listings and board answers show up. */
 export const ANSWER_TTL_MS = 6 * 3_600_000;
 /** Bumped whenever the prompt changes, so answers written under the old one are not served. */
-const VERSION = 'v2';
+const VERSION = 'v3';
 const PREFIX = `answer:${VERSION}:`;
 const MAX_HOT = 500;
 
-export type CachedAnswer = Pick<AskResponse, 'answer' | 'sources' | 'followups' | 'model' | 'confidence'> & { createdAt: string };
+export type CachedAnswer = Pick<AskResponse, 'answer' | 'sources' | 'model' | 'confidence'> & { createdAt: string };
 
 const hot = new Map<string, CachedAnswer>();
 let lastSweep = 0;
@@ -47,7 +47,7 @@ export async function saveAnswer(store: BoardStore | null, question: string, res
   const key = answerKey(question);
   // Source cards carry long excerpts; the answer page only shows the start of them.
   const sources = response.sources.map((card) => ({ ...card, text: truncate(card.text, 300), snippet: truncate(card.snippet, 300) }));
-  const entry: CachedAnswer = { answer: response.answer, sources, followups: response.followups, model: response.model, confidence: response.confidence, createdAt: new Date(now).toISOString() };
+  const entry: CachedAnswer = { answer: response.answer, sources, model: response.model, confidence: response.confidence, createdAt: new Date(now).toISOString() };
   remember(key, entry);
   if (!store) return;
   try {

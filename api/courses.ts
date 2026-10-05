@@ -1,25 +1,24 @@
 /**
- * The course search: every NYU Abu Dhabi course in a term from Albert's schedule, and for one course its sections,
- * who taught it before, the bulletin entry, the group's threads about it and a cached summary of what students say.
+ * Courses from Albert's schedule, and for one course an AI rating written from what students said about it in the
+ * group, cached per course.
  *
  *   GET /api/courses                               the terms, and which one is current
- *   GET /api/courses?term=Fall%202026               every course offered that term, with sections, for the list
- *   GET /api/courses?code=CS-UH%201001              one course: every term's sections and the bulletin entry
- *   GET /api/courses?code=CS-UH%201001&threads=1    the group's threads about it
- *   GET /api/courses?code=CS-UH%201001&summary=1    what students say, written once and cached (slow the first time)
- *
- * The schedule parts never touch the archive, so the list and a course open at once; threads and the summary follow.
+ *   GET /api/courses?term=Fall%202026               every course offered that term, with sections (the planner)
+ *   GET /api/courses?all=1                          every course once, for the course list
+ *   GET /api/courses?code=CS-UH%201001              one course: title, credits, description
+ *   GET /api/courses?code=CS-UH%201001&rating=1     the rating, written once and cached (slow the first time)
  */
 import { boardStore } from '../lib/board-store.ts';
-import { courseHistory, courseRows, loadCatalog, type Catalog } from '../lib/courses.ts';
-import { generateJson, geminiConfig, type GeminiConfig } from '../lib/gemini.ts';
+import { allCourses, courseHistory, courseRows, loadCatalog, type Catalog } from '../lib/courses.ts';
+import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, queryString, rateLimit, route, sendJson } from '../lib/http.ts';
 import { normalizeCode } from '../lib/html.ts';
 import { loadOfficial, type OfficialCorpus, type OfficialDoc } from '../lib/official.ts';
+import { providersFromEnv, siteJson } from '../lib/providers.ts';
 import { retrieve, sourcesBlock, toSourceCards } from '../lib/rag.ts';
 import { rerankerFromEnv } from '../lib/rerank.ts';
 import type { Hit } from '../lib/search.ts';
-import { loadArchive, summarizePost, type Archive } from '../lib/store.ts';
+import { loadArchive, type Archive } from '../lib/store.ts';
 import { collapseWhitespace, formatDate, truncate } from '../lib/text.ts';
 
 export const config = { maxDuration: 60 };
@@ -33,19 +32,21 @@ export default route(['GET'], async (req, res) => {
   if (code) {
     const normalized = normalizeCode(code);
     const official = await loadOfficial().catch(() => null);
-    // Threads and summaries cost embedding and model calls and are cached per code: only real courses get them.
+    // Ratings cost embedding and model calls and are cached per code: only real courses get them.
     if (!catalog.byCode.has(normalized) && !bulletinEntry(official, normalized)) throw new ApiError(404, 'No course with that code.', 'not_found');
-    if (queryString(req, 'threads')) {
-      const archive = await loadArchive();
-      const hits = await courseThreads(archive, catalog, official, normalized);
-      sendJson(res, 200, { threads: hits.map((hit) => summarizePost(archive.posts[hit.post]!)) }, 600);
-      return;
-    }
-    if (queryString(req, 'summary')) {
-      sendJson(res, 200, { summary: await courseSummary(await loadArchive(), official, catalog, normalized) });
+    if (queryString(req, 'rating')) {
+      const known = await savedRating(normalized);
+      // Writing a rating costs a search and a model call: a few a minute per person, so walking every code cannot spend
+      // the day's model quota. Reading one already written is free.
+      if (known === undefined) rateLimit(req, 8, 3, 'course-rating');
+      sendJson(res, 200, { rating: known === undefined ? await courseRating(await loadArchive(), official, catalog, normalized) : known });
       return;
     }
     sendJson(res, 200, courseDetail(official, catalog, normalized), 600);
+    return;
+  }
+  if (queryString(req, 'all')) {
+    sendJson(res, 200, { courses: allCourses(catalog) }, 3600);
     return;
   }
   if (term) {
@@ -80,10 +81,7 @@ function courseDetail(official: OfficialCorpus | null, catalog: Catalog, code: s
     title: titleOf(catalog, official, code) || code,
     credits: history?.credits || (doc?.credits ? String(doc.credits) : ''),
     core: history?.core ?? false,
-    description: history?.description || (doc ? collapseWhitespace(doc.text) : ''),
-    offerings: history?.offerings ?? [],
-    bulletin: doc ? { url: doc.url, text: truncate(doc.text, 4000) } : null,
-    current: catalog.current,
+    description: history?.description || (doc ? truncate(collapseWhitespace(doc.text), 1500) : ''),
   };
 }
 
@@ -126,99 +124,141 @@ async function courseThreads(archive: Archive, catalog: Catalog, official: Offic
   return kept;
 }
 
-/* ---------- What students say ---------- */
+/* ---------- The rating ---------- */
 
-interface CourseSummary {
-  overview: string;
-  facts: string[];
-  students: string[];
-  keepInMind: string[];
+interface CourseRating {
+  /** 1.0 to 5.0: how students rate taking it. */
+  score: number;
+  /** 1 (easy) to 5 (very hard); null when students do not say. */
+  difficulty: number | null;
+  /** 1 (light) to 5 (heavy); null when students do not say. */
+  workload: number | null;
+  verdict: string;
+  pros: string[];
+  cons: string[];
+  tips: string[];
+  /** How many students' first-hand accounts it rests on. */
+  basis: number;
   confidence: 'high' | 'medium' | 'low';
   model: string;
   createdAt: string;
-  sources: Array<{ n: number; kind: string; title: string; url: string; postId?: string }>;
 }
 
-const SUMMARY_SCHEMA = {
+const RATING_SCHEMA = {
   type: 'OBJECT',
   properties: {
-    overview: { type: 'STRING' },
-    facts: { type: 'ARRAY', items: { type: 'STRING' } },
-    students: { type: 'ARRAY', items: { type: 'STRING' } },
-    keepInMind: { type: 'ARRAY', items: { type: 'STRING' } },
-    confidence: { type: 'STRING' },
+    score: { type: 'NUMBER' },
+    difficulty: { type: 'INTEGER', nullable: true },
+    workload: { type: 'INTEGER', nullable: true },
+    verdict: { type: 'STRING' },
+    pros: { type: 'ARRAY', items: { type: 'STRING' } },
+    cons: { type: 'ARRAY', items: { type: 'STRING' } },
+    tips: { type: 'ARRAY', items: { type: 'STRING' } },
+    basis: { type: 'INTEGER' },
+    confidence: { type: 'STRING', enum: ['high', 'medium', 'low'] },
   },
-  required: ['overview', 'facts', 'students', 'keepInMind', 'confidence'],
+  required: ['score', 'difficulty', 'workload', 'verdict', 'pros', 'cons', 'tips', 'basis', 'confidence'],
 };
 
-const SUMMARY_TTL_MS = 30 * 86_400_000;
-const hot = new Map<string, CourseSummary>();
+const RATING_SYSTEM = [
+  'You rate one NYU Abu Dhabi course for students, from what students wrote about it in the Room of Requirement Facebook group (the threads below) and its bulletin entry. Some threads may be about other courses: use only what is about this one.',
+  'Return:',
+  'score: how students rate taking it, 1.0 to 5.0 with one decimal: would they recommend it, is it worth the work, did they enjoy it. Use the whole range: 4.5 and up when students love it, 2 and below when they warn others off it, 3.0 only when they are truly split. Judge from what students say, never from the description.',
+  'difficulty: 1 (easy A) to 5 (very hard), and workload: 1 (light) to 5 (heavy), estimated from what students say about exams, grading, problem sets and hours; null only when the threads give nothing to go on.',
+  'verdict: one plain sentence on what taking it is like and who it suits.',
+  'pros: up to 4 things students liked. cons: up to 4 things students complained about. tips: up to 3 practical tips students gave.',
+  'basis: how many different students gave a first-hand account of taking it (count people, not threads). 0 when the threads say nothing about what taking it is like.',
+  'confidence: high when several recent first-hand accounts agree, medium when there are few or older ones, low when they are thin, very old or split.',
+  'Every point must be specific to this course: name the thing (the final, weekly problem sets, the lab reports, the group project, a professor and what students said about their teaching). Never write vague points like "some professors are good" or "experiences vary". If students only say something general, leave it out.',
+  'Each point under 16 words, plain words, no citations, source numbers or thread references. Report complaints as plainly as praise.',
+  'About professors, only how they teach, grade or run the class, as students reported it ("students found her exams fair"); nothing personal, no rumours. When a point held only in one year or with one professor, say so in a few words.',
+  'Never invent anything.',
+].join('\n');
 
-/** The cached summary when fresh, otherwise a new one from the lite model; null when there is nothing to summarise. */
-async function courseSummary(archive: Archive, official: OfficialCorpus | null, catalog: Catalog, code: string): Promise<CourseSummary | null> {
-  const key = `course:v3:${code}`;
-  const store = boardStore();
-  const cached = hot.get(key) ?? ((await store?.getSummary(key).catch(() => null))?.payload as CourseSummary | undefined);
-  if (cached && Date.now() - Date.parse(cached.createdAt) < SUMMARY_TTL_MS) {
-    hot.set(key, cached);
-    return cached;
+const RATING_TTL_MS = 30 * 86_400_000;
+const hot = new Map<string, CourseRating | null>();
+
+function ratingKey(code: string): string {
+  return `course-rating:v2:${code}`;
+}
+
+/** A fresh rating already written (null: students have not written enough), or undefined when one has to be written. */
+async function savedRating(code: string): Promise<CourseRating | null | undefined> {
+  const key = ratingKey(code);
+  const remembered = hot.get(key);
+  if (remembered !== undefined && (!remembered || Date.now() - Date.parse(remembered.createdAt) < RATING_TTL_MS)) return remembered;
+  const saved = (await boardStore()?.getSummary(key).catch(() => null))?.payload as CourseRating | null | undefined;
+  if (saved && Date.now() - Date.parse(saved.createdAt) < RATING_TTL_MS) {
+    hot.set(key, saved);
+    return saved;
   }
-  const cfg = geminiConfig();
-  if (!cfg) return null;
+  return undefined;
+}
+
+/** A new rating; null when students have not written enough to rate the course. An old one stands in when this fails. */
+async function courseRating(archive: Archive, official: OfficialCorpus | null, catalog: Catalog, code: string): Promise<CourseRating | null> {
+  const key = ratingKey(code);
+  const store = boardStore();
+  const saved = (await store?.getSummary(key).catch(() => null))?.payload as CourseRating | null | undefined;
+  const gemini = geminiConfig();
+  const backups = providersFromEnv();
+  if (!gemini && backups.length === 0) {
+    if (saved) return saved;
+    throw new ApiError(503, 'Ratings are off on this server.', 'no_model');
+  }
+  const hits = await courseThreads(archive, catalog, official, code);
+  if (hits.length === 0) {
+    hot.set(key, null);
+    return null;
+  }
   const doc = bulletinEntry(official, code);
   const history = courseHistory(catalog, code);
   const title = titleOf(catalog, official, code) || code;
-  const hits = await courseThreads(archive, catalog, official, code);
-  const cards = toSourceCards(archive, hits.slice(0, 6), [], doc ? 2 : 1);
-  const summary = await write(cfg, archive, { title: `${code} ${title}`, doc, description: history?.description ?? '', cards });
-  if (!summary) return cached ?? null;
-  hot.set(key, summary);
-  await store?.putSummary(key, summary).catch((error) => console.warn('[courses] could not cache the summary:', (error as Error).message));
-  return summary;
+  const bulletin = doc ? `Bulletin entry:\n${truncate(collapseWhitespace(doc.text), 2500)}` : history?.description ? `Description: ${truncate(history.description, 800)}` : '';
+  const threads = sourcesBlock(archive, toSourceCards(archive, hits.slice(0, 7), [], 1));
+  let rating: CourseRating | null;
+  try {
+    const result = await siteJson<Partial<CourseRating>>(gemini, backups, {
+      system: RATING_SYSTEM,
+      prompt: `Course: ${code} ${title}\n${bulletin}\n\nWhat students wrote:\n${threads}`,
+      schema: RATING_SCHEMA,
+      tier: 'main',
+      temperature: 0.2,
+      maxOutputTokens: 2048,
+      timeoutMs: 25_000,
+    });
+    rating = cleanRating(result, gemini?.chatModel ?? backups[0]?.models[0] ?? '');
+  } catch (error) {
+    console.warn('[courses] rating failed:', (error as Error).message);
+    if (saved) return saved;
+    throw new ApiError(503, 'The rating could not be written right now.', 'busy');
+  }
+  hot.set(key, rating);
+  // Only a real rating is kept; a course students have not described yet is looked at again after the next cold start.
+  if (rating) await store?.putSummary(key, rating).catch((error) => console.warn('[courses] could not cache the rating:', (error as Error).message));
+  return rating;
 }
 
-async function write(cfg: GeminiConfig, archive: Archive, input: { title: string; doc: OfficialDoc | null; description: string; cards: ReturnType<typeof toSourceCards> }): Promise<CourseSummary | null> {
-  const officialBlock = input.doc ? `[1] Bulletin entry: ${input.doc.title} · ${input.doc.url}\n${truncate(collapseWhitespace(input.doc.text), 5000)}` : '';
-  const threads = input.cards.length ? sourcesBlock(archive, input.cards) : '';
-  if (!threads) return null;
-  try {
-    const result = await generateJson<Partial<CourseSummary>>(
-      cfg,
-      {
-        model: cfg.liteModels,
-        temperature: 0.2,
-        maxOutputTokens: 2048,
-        responseSchema: SUMMARY_SCHEMA,
-        system: [
-          'You write the "what students say" panel for one NYU Abu Dhabi course, from the numbered sources only. The schedule, credits and description are shown elsewhere; do not repeat them.',
-          'overview: one or two plain sentences with an honest verdict on what taking the course is like, according to students: who it suits, and what the main complaint is if there is one. Cite sources as [n] after facts.',
-          'facts: up to three short bullets of rules from the bulletin entry that students trip on (prerequisites, who may take it, what it counts towards); empty if none.',
-          'students: up to five short bullets of what students said: workload, exams and grading, professors, tips, how it really went. Report complaints as plainly as praise, and say how many people said something when it is one or two. Prefer first-hand accounts. Each cites its source and gives the year when it is older than a year.',
-          'keepInMind: up to two bullets: disagreements (with which side has more support), or things that change with the professor or year.',
-          'confidence: high when several recent threads agree, medium when there are few or older ones, low when they are thin or disagree.',
-          'Never invent. No filler. No headings inside strings. Under 200 words in total.',
-        ].join(' '),
-        messages: [{ role: 'user', text: `Course: ${input.title}\n${input.description ? `Description: ${truncate(input.description, 600)}\n` : ''}\nSources:\n${[officialBlock, threads].filter(Boolean).join('\n\n')}` }],
-      },
-      { retries: 1, timeoutMs: 25_000 },
-    );
-    const list = (value: unknown, max: number) => (Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0).map((entry) => collapseWhitespace(entry)).slice(0, max) : []);
-    const level = String(result.confidence ?? 'medium').toLowerCase();
-    return {
-      overview: collapseWhitespace(String(result.overview ?? '')),
-      facts: list(result.facts, 3),
-      students: list(result.students, 5),
-      keepInMind: list(result.keepInMind, 2),
-      confidence: level === 'high' || level === 'low' ? level : 'medium',
-      model: cfg.liteModel,
-      createdAt: new Date().toISOString(),
-      sources: [
-        ...(input.doc ? [{ n: 1, kind: 'official', title: 'Bulletin entry', url: input.doc.url }] : []),
-        ...input.cards.map((card) => ({ n: card.n, kind: card.kind, title: card.title || truncate(card.text, 80), url: card.url, postId: card.postId })),
-      ],
-    };
-  } catch (error) {
-    console.warn('[courses] summary failed:', (error as Error).message);
-    return null;
-  }
+function cleanRating(raw: Partial<CourseRating>, model: string): CourseRating | null {
+  const basis = Math.max(0, Math.round(Number(raw.basis) || 0));
+  const score = Math.round(Math.min(5, Math.max(1, Number(raw.score) || 0)) * 10) / 10;
+  if (basis === 0 || !Number.isFinite(score)) return null;
+  const scale = (value: unknown) => (Number.isFinite(Number(value)) && value !== null ? Math.min(5, Math.max(1, Math.round(Number(value)))) : null);
+  // Citations are not shown, so any the model writes anyway are taken out.
+  const tidy = (value: unknown) => collapseWhitespace(String(value ?? '').replace(/\s*\[\d+\](?:\[\d+\])*/g, ''));
+  const list = (value: unknown, max: number) => (Array.isArray(value) ? value.map(tidy).filter((entry) => entry.length > 2).slice(0, max) : []);
+  const level = String(raw.confidence ?? '').toLowerCase();
+  return {
+    score,
+    difficulty: scale(raw.difficulty),
+    workload: scale(raw.workload),
+    verdict: tidy(raw.verdict),
+    pros: list(raw.pros, 4),
+    cons: list(raw.cons, 4),
+    tips: list(raw.tips, 3),
+    basis,
+    confidence: level === 'high' || level === 'low' ? level : 'medium',
+    model,
+    createdAt: new Date().toISOString(),
+  };
 }

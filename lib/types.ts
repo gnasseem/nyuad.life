@@ -99,7 +99,6 @@ export interface Confidence {
 export interface AskResponse {
   answer: string;
   sources: SourceCard[];
-  followups: string[];
   model: string;
   confidence: Confidence | null;
   /** The answer stopped early, at the time or length limit. */

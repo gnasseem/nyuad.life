@@ -73,7 +73,6 @@ export default route(['POST'], async (req, res) => {
         redirect: (redirect) => sse.send('redirect', redirect),
         sources: (sources) => sse.send('sources', { sources }),
         delta: (text) => sse.send('delta', { text }),
-        followups: (questions) => sse.send('followups', { questions }),
       },
       controller.signal,
       { board, official, deadline, chatgpt, backups, defer },

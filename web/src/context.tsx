@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { ChatGPTStatus, Health, HomePayload, Profile } from './api';
+import type { ChatGPTStatus, Health, Profile } from './api';
 import type { Theme } from './store';
 
 export interface Prefill {
@@ -13,7 +13,6 @@ export interface ProfileRequest {
 }
 
 export interface AppState {
-  home: HomePayload | null;
   health: Health | null;
   /** Why the board cannot be used right now (not set up, schema missing, wrong key...), or null when it works. */
   boardProblem: string | null;
@@ -35,7 +34,6 @@ export interface AppState {
 }
 
 export const AppContext = createContext<AppState>({
-  home: null,
   health: null,
   boardProblem: null,
   profile: null,

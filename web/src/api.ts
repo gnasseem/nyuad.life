@@ -1,4 +1,5 @@
 /** Typed client for the API, including the streaming /api/ask protocol and the student board. */
+import type { Rules } from '../../lib/schedule.ts';
 import { askerKey } from './store';
 
 export interface PostSummary {
@@ -57,10 +58,6 @@ export interface Redirect {
   link: { url: string; label: string };
 }
 
-/** The parts of /api/home the client reads. */
-export interface HomePayload {
-  suggestions: Array<{ topic: string; question: string }>;
-}
 
 /** The parts of /api/health the client reads. */
 export interface Health {
@@ -264,6 +261,8 @@ export interface Section {
   waitlist?: number;
   /** "First 7 weeks", "Second 7 weeks", a date range, or empty for the whole term. */
   session: string;
+  startDate: string;
+  endDate: string;
   meetings: Meeting[];
   instructors: string[];
   notes: string;
@@ -285,13 +284,13 @@ export interface CourseRow {
   sections: Section[];
 }
 
-export interface CourseSummary {
-  overview: string;
-  facts: string[];
-  students: string[];
-  keepInMind: string[];
-  confidence: 'high' | 'medium' | 'low';
-  sources: Array<{ n: number; kind: SourceKind; title: string; url: string; postId?: string }>;
+/** A course once, for the course list. */
+export interface CourseEntry {
+  code: string;
+  title: string;
+  subject: string;
+  core: boolean;
+  people: string[];
 }
 
 export interface CourseDetail {
@@ -300,10 +299,18 @@ export interface CourseDetail {
   credits: string;
   core: boolean;
   description: string;
-  /** Every term in the schedule, newest first. */
-  offerings: Array<{ term: string; sections: Section[] }>;
-  bulletin: { url: string; text: string } | null;
-  current: string;
+}
+
+export interface CourseRating {
+  score: number;
+  difficulty: number | null;
+  workload: number | null;
+  verdict: string;
+  pros: string[];
+  cons: string[];
+  tips: string[];
+  basis: number;
+  confidence: 'high' | 'medium' | 'low';
 }
 
 export class ApiError extends Error {
@@ -369,7 +376,6 @@ export const api = {
     me: () => request<ChatGPTStatus>('/api/chatgpt?op=me'),
     logout: () => post<{ ok: true }>('/api/chatgpt', { op: 'logout' }),
   },
-  home: () => request<HomePayload>('/api/home'),
   search: (params: { q?: string; topic?: string; sort?: string; page?: number }) => {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(params)) if (value) query.set(key, String(value));
@@ -401,12 +407,16 @@ export const api = {
     leaderboard: (netId?: string) => request<{ helpers: LeaderboardEntry[] }>(`/api/board?op=leaderboard${netId ? `&netId=${encodeURIComponent(netId)}` : ''}`),
     contact: (type: 'offer' | 'listing', id: string) => request<{ contactKind: ContactKind; contact: string }>(`/api/board?op=contact&type=${type}&id=${encodeURIComponent(id)}`),
   },
+  plan: {
+    read: (body: { term: string; text: string; current: { wants: Array<{ label: string; codes: string[] }>; rules: Rules }; major?: string; year?: string }) =>
+      post<{ wants: Array<{ label: string; codes: string[] }>; rules: Rules; missing: string[] }>('/api/plan', body),
+  },
   courses: {
     terms: () => cached('terms', () => request<{ terms: Term[]; current: string; scraped: string }>('/api/courses')),
     list: (term: string) => cached(`courses:${term}`, () => request<{ term: string; courses: CourseRow[] }>(`/api/courses?term=${encodeURIComponent(term)}`)),
+    all: () => cached('courses:all', () => request<{ courses: CourseEntry[] }>('/api/courses?all=1')),
     detail: (code: string) => request<CourseDetail>(`/api/courses?code=${encodeURIComponent(code)}`),
-    threads: (code: string) => cached(`threads:${code}`, () => request<{ threads: PostSummary[] }>(`/api/courses?code=${encodeURIComponent(code)}&threads=1`)),
-    summary: (code: string) => cached(`summary:${code}`, () => request<{ summary: CourseSummary | null }>(`/api/courses?code=${encodeURIComponent(code)}&summary=1`)),
+    rating: (code: string) => cached(`rating:${code}`, () => request<{ rating: CourseRating | null }>(`/api/courses?code=${encodeURIComponent(code)}&rating=1`)),
   },
 };
 
@@ -415,7 +425,6 @@ interface AskHandlers {
   onRedirect?(redirect: Redirect): void;
   onSources?(sources: SourceCard[]): void;
   onDelta?(text: string): void;
-  onFollowups?(questions: string[]): void;
   onDone?(info: { model: string; confidence: Confidence | null; truncated: boolean }): void;
 }
 
@@ -459,9 +468,6 @@ export async function askStream(question: string, history: ChatTurn[], handlers:
       case 'delta':
         answer += String(payload.text ?? '');
         handlers.onDelta?.(String(payload.text ?? ''));
-        break;
-      case 'followups':
-        handlers.onFollowups?.((payload.questions as string[]) ?? []);
         break;
       case 'done':
         finished = true;
