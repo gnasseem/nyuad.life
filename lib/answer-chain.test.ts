@@ -86,6 +86,11 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => backup.listen(0, '127.0.0.1', resolve));
   process.env.GEMINI_API_KEY = 'test-key';
   process.env.GEMINI_BASE_URL = `http://127.0.0.1:${(gemini.address() as { port: number }).port}/v1beta`;
+  // The tests walk a fixed chain; the defaults themselves are checked in gemini.test.ts.
+  process.env.GEMINI_CHAT_MODEL = 'gemini-3.5-flash';
+  process.env.GEMINI_CHAT_FALLBACK_MODELS = 'gemini-3-flash-preview,gemini-2.5-flash';
+  process.env.GEMINI_LITE_MODEL = 'gemini-3.1-flash-lite';
+  process.env.GEMINI_LITE_FALLBACK_MODELS = 'gemini-2.5-flash-lite';
   backupUrl = `http://127.0.0.1:${(backup.address() as { port: number }).port}/openai/v1`;
 
   dataRoot = mkdtempSync(path.join(tmpdir(), 'ror-chain-'));

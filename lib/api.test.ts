@@ -138,6 +138,11 @@ beforeAll(async () => {
   const geminiPort = (fakeGemini.address() as { port: number }).port;
   process.env.GEMINI_API_KEY = 'test-key';
   process.env.GEMINI_BASE_URL = `http://127.0.0.1:${geminiPort}/v1beta`;
+  // The tests walk a fixed chain; the defaults themselves are checked in gemini.test.ts.
+  process.env.GEMINI_CHAT_MODEL = 'gemini-3.5-flash';
+  process.env.GEMINI_CHAT_FALLBACK_MODELS = 'gemini-3-flash-preview,gemini-2.5-flash';
+  process.env.GEMINI_LITE_MODEL = 'gemini-3.1-flash-lite';
+  process.env.GEMINI_LITE_FALLBACK_MODELS = 'gemini-2.5-flash-lite';
   process.env.GEMINI_EMBED_DIMENSIONS = String(DIMS);
 
   dataRoot = mkdtempSync(path.join(tmpdir(), 'ror-test-'));

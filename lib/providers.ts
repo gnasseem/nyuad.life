@@ -43,9 +43,9 @@ interface Preset {
 // Newest and strongest first. Providers rename and retire free models often; a model that answers 404 is skipped for
 // hours, so a stale name costs one request, and the lists can be replaced from the environment.
 const PRESETS: Preset[] = [
-  { id: 'groq', label: 'Groq', key: 'GROQ_API_KEY', baseUrl: 'https://api.groq.com/openai/v1', models: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'openai/gpt-oss-20b'], liteModels: ['llama-3.1-8b-instant', 'openai/gpt-oss-20b'], maxPromptChars: 20_000, maxOutputTokens: 1_600 },
+  { id: 'groq', label: 'Groq', key: 'GROQ_API_KEY', baseUrl: 'https://api.groq.com/openai/v1', models: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'openai/gpt-oss-20b'], liteModels: ['openai/gpt-oss-20b', 'llama-3.1-8b-instant'], maxPromptChars: 20_000, maxOutputTokens: 1_600 },
   { id: 'mistral', label: 'Mistral', key: 'MISTRAL_API_KEY', baseUrl: 'https://api.mistral.ai/v1', models: ['mistral-medium-latest', 'mistral-small-latest'], liteModels: ['mistral-small-latest'], maxPromptChars: 60_000, maxOutputTokens: 2_000 },
-  { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['openai/gpt-oss-120b:free', 'deepseek/deepseek-chat-v3.1:free', 'meta-llama/llama-3.3-70b-instruct:free'], liteModels: ['meta-llama/llama-3.3-70b-instruct:free', 'openai/gpt-oss-20b:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000 },
+  { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['google/gemma-4-31b-it:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'google/gemma-4-26b-a4b-it:free'], liteModels: ['google/gemma-4-26b-a4b-it:free', 'google/gemma-4-31b-it:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000 },
 ];
 
 export const DEFAULT_ORDER = ['gemini', ...PRESETS.map((preset) => preset.id)];

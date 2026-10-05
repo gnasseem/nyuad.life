@@ -63,7 +63,7 @@ search, courses, plan and the board are rate-limited per IP.
 Free model tiers fail in two ways: a model is overloaded (Gemini's 503 "The model is overloaded") or its daily quota is
 spent (429). Ask handles both by moving down a chain of models before it has written a word:
 
-1. Gemini 3.5 Flash, 3 Flash and 2.5 Flash.
+1. Gemini 3.8, 3.7, 3.6, 3.5, 3 and 2.5 Flash, then Gemma 4. Each has its own free daily quota.
 2. Every backup provider with a key set, each with several models: Groq, Mistral and OpenRouter, over the
    OpenAI-compatible API (`lib/providers.ts`). Their free tiers are counted per provider and mostly per model, so each
    key adds capacity. Groq caps a request at about 8,000 tokens, so the sources are cut down to fit it.

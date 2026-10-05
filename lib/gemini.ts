@@ -19,11 +19,12 @@ export interface GeminiConfig {
 }
 
 export const DEFAULT_EMBED_MODEL = 'gemini-embedding-001';
-// Newest first. Google retires models on short notice (the 2.5 family is being shut down in October 2026) and the free
-// tier is granted per model, so each call walks down its list and skips, for a while, any model that answered 404 or
-// ran out of quota. Pinned names rather than "-latest" aliases, which can move to a model without a free tier.
-const DEFAULT_CHAT_MODELS = ['gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash'];
-const DEFAULT_LITE_MODELS = ['gemini-3.1-flash-lite', 'gemini-2.5-flash-lite'];
+// Newest first. The free tier is granted per model, so every model here adds its own daily free requests; each call
+// walks down its list and skips, for a while, any model that answered 404 or ran out of quota. Google retires models on
+// short notice (2.5 is closed to new projects and shutting down). Gemma 4 is free as well and goes after the Flash
+// models. Pinned names rather than "-latest" aliases, which can move to a model without a free tier.
+const DEFAULT_CHAT_MODELS = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemma-4-31b-it'];
+const DEFAULT_LITE_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-2.5-flash-lite'];
 export const DEFAULT_DIMENSIONS = 768;
 
 function modelList(value: string | undefined): string[] | null {

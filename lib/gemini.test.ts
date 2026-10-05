@@ -6,11 +6,11 @@ afterEach(() => resetModelState());
 describe('geminiConfig', () => {
   it('defaults to the newest models with older ones behind them', () => {
     const cfg = geminiConfig({ GEMINI_API_KEY: 'k' })!;
-    expect([cfg.chatModel, ...cfg.chatFallbacks]).toEqual(['gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash']);
-    expect(cfg.liteModels).toEqual(['gemini-3.1-flash-lite', 'gemini-2.5-flash-lite']);
+    expect([cfg.chatModel, ...cfg.chatFallbacks]).toEqual(['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemma-4-31b-it']);
+    expect(cfg.liteModels).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-2.5-flash-lite']);
   });
   it('keeps the default fallbacks behind a pinned model, unless fallbacks are set too', () => {
-    expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_MODEL: 'gemini-2.5-flash' })!.chatFallbacks).toEqual(['gemini-3.5-flash', 'gemini-3-flash-preview']);
+    expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_MODEL: 'gemini-2.5-flash' })!.chatFallbacks).toEqual(['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemma-4-31b-it']);
     expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_MODEL: 'a', GEMINI_CHAT_FALLBACK_MODELS: 'b, c' })!.chatFallbacks).toEqual(['b', 'c']);
     expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_FALLBACK_MODELS: '' })!.chatFallbacks).toEqual([]);
   });
