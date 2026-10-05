@@ -1,4 +1,7 @@
-/** Per-device state in localStorage: theme, past conversations, the helper profile, the anonymous asker key and the contact last used. */
+/**
+ * Per-device state in localStorage: theme, past conversations, the helper profile, the anonymous asker key and the
+ * contact last used. The conversation open on Ask is per tab, in sessionStorage.
+ */
 import type { ChatTurn, Confidence, ContactKind, Profile, Redirect, SourceCard } from './api';
 
 export interface Message {
@@ -14,7 +17,7 @@ export interface Message {
   /** The server's code for the error, so the page can offer the fix (signing in to ChatGPT again, for one). */
   errorCode?: string;
   pending?: boolean;
-  /** The answer stopped before it finished: the time or length limit, or a dropped connection. */
+  /** The answer stopped before it finished: the time or length limit, a dropped connection, or the page was left. */
   truncated?: boolean;
 }
 
@@ -32,6 +35,8 @@ const PROFILE_KEY = 'room.profile';
 const KEY_KEY = 'room.key';
 const ANNOUNCED_KEY = 'room.announced';
 const CONTACT_KEY = 'room.contact';
+/** In sessionStorage: one per tab, gone when the tab closes. */
+const ACTIVE_KEY = 'room.active';
 const MAX_CONVERSATIONS = 60;
 
 function read<T>(key: string, fallback: T): T {
@@ -72,11 +77,15 @@ export function loadConversations(): Conversation[] {
   return read<Conversation[]>(CONVERSATIONS_KEY, []);
 }
 
+/**
+ * Saves a conversation as it stands. An answer still coming in is saved as cut short, so a conversation saved the moment
+ * a question is sent, or as the page is left mid-answer, comes back with its "Ask again" rather than a spinner.
+ */
 export function saveConversation(conversation: Conversation): void {
   const list = loadConversations().filter((entry) => entry.id !== conversation.id);
   const cleaned: Conversation = {
     ...conversation,
-    messages: conversation.messages.filter((message) => !message.pending && !message.error).map(({ status: _status, ...rest }) => rest),
+    messages: conversation.messages.map(({ status: _status, pending, ...rest }) => (pending ? { ...rest, truncated: true } : rest)),
   };
   if (cleaned.messages.length === 0) return;
   list.unshift(cleaned);
@@ -86,11 +95,34 @@ export function saveConversation(conversation: Conversation): void {
 
 export function deleteConversation(id: string): void {
   write(CONVERSATIONS_KEY, loadConversations().filter((entry) => entry.id !== id));
+  if (loadActiveConversation() === id) setActiveConversation(null);
   notify();
 }
 
 export function clearConversations(): void {
   write(CONVERSATIONS_KEY, []);
+  setActiveConversation(null);
+  notify();
+}
+
+/** The conversation open on Ask in this tab, so going to another page and back to Ask finds it again. */
+export function loadActiveConversation(): string | null {
+  try {
+    return sessionStorage.getItem(ACTIVE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Sets the conversation Ask returns to; null ("New question") makes Ask start empty. */
+export function setActiveConversation(id: string | null): void {
+  if (loadActiveConversation() === id) return;
+  try {
+    if (id) sessionStorage.setItem(ACTIVE_KEY, id);
+    else sessionStorage.removeItem(ACTIVE_KEY);
+  } catch {
+    // storage unavailable: Ask simply starts empty
+  }
   notify();
 }
 
@@ -161,6 +193,7 @@ export function forgetDevice(): void {
       // ignore
     }
   }
+  setActiveConversation(null);
   notify();
 }
 

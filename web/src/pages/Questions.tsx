@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { api, ApiError, type Answer, type LeaderboardEntry, type PostSummary, type Question, type QuestionWithAnswers, type Redirect } from '../api';
 import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { PostRow } from '../components/PostRow';
 import { RedirectCard } from '../components/RedirectCard';
 import { Segmented } from '../components/Segmented';
-import { Sign } from '../components/Sign';
 import { useApp } from '../context';
 import { initials, plural, relativeDate } from '../format';
 import { IconBack, IconChat, IconLink } from '../icons';
@@ -35,7 +35,7 @@ export function QuestionsPage({ search }: Props) {
 
   return (
     <div className="page">
-      <Sign title="Questions" ar="الأسئلة" />
+      <PageHeader title="Questions" description="Ask other students, or answer what they have asked." />
       <div className="tabs-wrap">
         <Segmented variant="tabs" value={tab} onChange={setTab} label="Questions" options={[{ id: 'ask', label: 'Ask' }, { id: 'help', label: 'Answer' }]} />
       </div>
@@ -243,15 +243,17 @@ function QuestionThread({ question, answers, compact = false }: { question: Ques
         ))}
       </div>
       {shown.length > 0 && (
-        <div className="stations qa-answers">
+        <div className="qa-answers">
           {shown.map((answer) => (
             <div key={answer.id} className="qa-answer">
-              <span className="meta">
-                <span className="avatar sm">{initials(answer.helperName)}</span>
-                <b>{answer.helperName}</b>
-                <span>{answer.helperMajor}</span>
-              </span>
-              <div className={`text${compact ? ' clamped' : ''}`}>{answer.text}</div>
+              <span className="avatar sm">{initials(answer.helperName)}</span>
+              <div className="qa-answer-body">
+                <span className="meta">
+                  <b>{answer.helperName}</b>
+                  <span>{answer.helperMajor}</span>
+                </span>
+                <div className={`text${compact ? ' clamped' : ''}`}>{answer.text}</div>
+              </div>
             </div>
           ))}
         </div>
@@ -270,7 +272,7 @@ function HelpOut() {
   const [card, setCard] = useState<{ question: Question | null; remaining: number; answered: number } | null>(null);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
-  const [leaving, setLeaving] = useState<'answer' | 'skip' | null>(null);
+  const [leaving, setLeaving] = useState(false);
   const [error, setError] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // After an answer or a skip, the next card's box takes the focus; on first load it does not, so phones keep the keyboard down.
@@ -321,14 +323,14 @@ function HelpOut() {
         const result = await api.board.answer({ netId: profile.netId, questionId: card.question.id, text: text.trim() });
         setProfile({ ...profile, answers: result.answered });
       } else await api.board.skip({ netId: profile.netId, questionId: card.question.id });
-      setLeaving(kind);
+      setLeaving(true);
       refocus.current = true;
       await sleep(220);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not send the answer.');
     } finally {
-      setLeaving(null);
+      setLeaving(false);
       setBusy(false);
     }
   };
@@ -347,42 +349,40 @@ function HelpOut() {
   return (
     <div>
       {question ? (
-        <div className={`deck${card.remaining > 1 ? ' stacked' : ''}`}>
-          <div className={`flashcard${leaving ? ` leaving-${leaving}` : ''}`} key={question.id}>
-            <div className="stack" style={{ gap: 12 }}>
-              <div className={`question${question.text.length > 140 ? ' long' : ''}`}>{question.text}</div>
-              <div className="meta">
-                <span>
-                  {question.askerName ? `${question.askerName}, ` : ''}
-                  {relativeDate(question.createdAt)}
+        <div className={`flashcard${leaving ? ' leaving' : ''}`} key={question.id}>
+          <div className="stack" style={{ gap: 12 }}>
+            <div className={`question${question.text.length > 140 ? ' long' : ''}`}>{question.text}</div>
+            <div className="meta">
+              <span>
+                {question.askerName ? `${question.askerName}, ` : ''}
+                {relativeDate(question.createdAt)}
+              </span>
+              {question.courses.map((code) => (
+                <span key={code} className="code">
+                  {code}
                 </span>
-                {question.courses.map((code) => (
-                  <span key={code} className="code">
-                    {code}
-                  </span>
-                ))}
-              </div>
+              ))}
             </div>
-            <textarea
-              ref={textareaRef}
-              className="input"
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              onKeyDown={(event) => submitOnShortcut(event, () => void act('answer'))}
-              placeholder="Your answer"
-              rows={4}
-              maxLength={1200}
-              aria-label="Your answer"
-            />
-            {error && <div className="alert error">{error}</div>}
-            <div className="flashcard-actions">
-              <button type="button" className="btn ghost" onClick={() => void act('skip')} disabled={busy}>
-                Skip
-              </button>
-              <button type="button" className="btn primary" onClick={() => void act('answer')} disabled={busy || text.trim().length < 2}>
-                Send answer
-              </button>
-            </div>
+          </div>
+          <textarea
+            ref={textareaRef}
+            className="input"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => submitOnShortcut(event, () => void act('answer'))}
+            placeholder="Your answer"
+            rows={4}
+            maxLength={1200}
+            aria-label="Your answer"
+          />
+          {error && <div className="alert error">{error}</div>}
+          <div className="flashcard-actions">
+            <button type="button" className="btn ghost" onClick={() => void act('skip')} disabled={busy}>
+              Skip
+            </button>
+            <button type="button" className="btn primary" onClick={() => void act('answer')} disabled={busy || text.trim().length < 2}>
+              Send answer
+            </button>
           </div>
         </div>
       ) : (

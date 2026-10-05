@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { GROUP_URL } from '../brand';
 import { ChatGPTSignIn } from '../components/ChatGPT';
-import { Sign } from '../components/Sign';
+import { PageHeader } from '../components/PageHeader';
 import { useApp } from '../context';
 import { plural, standingLabel } from '../format';
 import { IconExternal } from '../icons';
@@ -14,18 +14,18 @@ const THEMES: Array<{ id: Theme; label: string }> = [
   { id: 'dark', label: 'Dark' },
 ];
 
-/** A tiny line map in each theme's own colours, so the choice is seen rather than described. */
+/** A tiny page in each theme's own colours, so the choice is seen rather than described. */
 function ThemeArt({ theme }: { theme: Theme }) {
-  const day = { ground: '#eef1f6', plate: '#ffffff', ink: '#0b1230' };
-  const night = { ground: '#0a1130', plate: '#0f1839', ink: '#f0f2fa' };
+  const day = { ground: '#f4f4f5', plate: '#ffffff', line: '#e4e4e7', ink: '#a1a1aa', accent: '#57068c' };
+  const night = { ground: '#18181b', plate: '#09090b', line: '#2a2a2e', ink: '#52525b', accent: '#8a3fc7' };
   const art = (c: typeof day, clip?: string) => (
     <g clipPath={clip}>
       <rect width="200" height="80" fill={c.ground} />
-      <path d="M -10 22 H 70 L 100 52 H 210" fill="none" stroke="#e0281e" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M -10 62 H 60 L 90 32 H 210" fill="none" stroke="#1e5bff" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M 140 -10 V 90" fill="none" stroke="#f5b400" strokeWidth="6" strokeLinecap="round" />
-      <circle cx="95" cy="42" r="9" fill={c.plate} stroke={c.ink} strokeWidth="4" />
-      <circle cx="140" cy="52" r="5.5" fill={c.plate} stroke="#f5b400" strokeWidth="3.5" />
+      <rect x="24" y="14" width="152" height="80" rx="6" fill={c.plate} stroke={c.line} />
+      <rect x="40" y="30" width="64" height="7" rx="3.5" fill={c.ink} />
+      <rect x="40" y="46" width="112" height="5" rx="2.5" fill={c.line} />
+      <rect x="40" y="58" width="92" height="5" rx="2.5" fill={c.line} />
+      <rect x="132" y="28" width="28" height="11" rx="3" fill={c.accent} />
     </g>
   );
   return (
@@ -62,7 +62,7 @@ export function SettingsPage() {
 
   return (
     <div className="page settings">
-      <Sign title="Settings" ar="الإعدادات" />
+      <PageHeader title="Settings" description="Theme, your details and what this browser keeps." />
 
       <section className="settings-section">
         <h2>Theme</h2>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type Announcement, type AnnouncementKind } from '../api';
 import { EmptyState } from '../components/EmptyState';
 import { Modal } from '../components/Modal';
-import { Sign } from '../components/Sign';
+import { PageHeader } from '../components/PageHeader';
 import { useApp } from '../context';
 import { groupByDay, startsIn } from '../format';
 import { IconCalendar, IconExternal, IconMegaphone, IconPlus } from '../icons';
@@ -114,7 +114,7 @@ export function AnnouncementsPage() {
   );
   const undated = shown.filter((entry) => !entry.startsAt);
 
-  // The coming seven days as stops on a line; a day with notices on it is a filled stop that jumps to its group.
+  // The coming seven days; a day with notices on it is marked and jumps to its group.
   const week = useMemo(() => {
     const today = startOfDay(now);
     return Array.from({ length: 7 }, (_, diff) => {
@@ -128,13 +128,13 @@ export function AnnouncementsPage() {
 
   return (
     <div className="page">
-      <Sign title="Notices" ar="الإعلانات">
+      <PageHeader title="Notices" description="Events, deadlines and opportunities posted by students.">
         {!boardProblem && (
           <button type="button" className="btn primary" onClick={() => void startPosting()}>
             <IconPlus /> Post a notice
           </button>
         )}
-      </Sign>
+      </PageHeader>
       {boardProblem && <div className="alert">{boardProblem}</div>}
       {error && <div className="alert error">{error}</div>}
       {!boardProblem && items && items.length > 0 && (
@@ -142,8 +142,8 @@ export function AnnouncementsPage() {
           {week.map(({ diff, date, count }) => (
             <button key={diff} type="button" className={`day-btn${count ? ' has' : ''}${diff === 0 ? ' today' : ''}`} onClick={() => jump(diff)} disabled={!count} aria-label={`${date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}, ${count} notices`}>
               <span className="dn">{diff === 0 ? 'Today' : date.toLocaleDateString('en-GB', { weekday: 'short' })}</span>
-              <span className="ds" />
               <span className="dd">{date.getDate()}</span>
+              <span className="ds" />
             </button>
           ))}
         </div>
@@ -155,7 +155,7 @@ export function AnnouncementsPage() {
           </button>
           {KINDS.filter((kind) => counts.has(kind.id)).map((kind) => (
             <button key={kind.id} type="button" role="radio" aria-checked={filter === kind.id} className={`chip${filter === kind.id ? ' on' : ''}`} onClick={() => setFilter(filter === kind.id ? '' : kind.id)}>
-              <span className="glyph" data-kind={kind.id} style={{ width: 10, height: 10, color: filter === kind.id ? 'currentColor' : undefined }} /> {kind.label}
+              {kind.label}
             </button>
           ))}
         </div>
@@ -176,14 +176,14 @@ export function AnnouncementsPage() {
       )}
       {items && items.length > 0 && (
         <div className="split">
-          <div className="agenda">
+          <div>
             {dated.map((group) => (
-              <section key={group.key} id={`agenda-${group.key}`} className="agenda-day">
-                <div className="agenda-head">
+              <section key={group.key} id={`agenda-${group.key}`} className="day-group">
+                <div className="day-head">
                   <h2>{group.label}</h2>
                   {group.sub && <span>{group.sub}</span>}
                 </div>
-                <div className="agenda-items">
+                <div className="list">
                   {group.items.map((entry) => (
                     <Item key={entry.id} entry={entry} now={now} mine={mine.includes(entry.id)} onRemove={() => void remove(entry.id)} />
                   ))}
@@ -191,11 +191,11 @@ export function AnnouncementsPage() {
               </section>
             ))}
             {undated.length > 0 && (
-              <section className="agenda-day" id="agenda-open">
-                <div className="agenda-head">
+              <section className="day-group" id="agenda-open">
+                <div className="day-head">
                   <h2>Any time</h2>
                 </div>
-                <div className="agenda-items">
+                <div className="list">
                   {undated.map((entry) => (
                     <Item key={entry.id} entry={entry} now={now} mine={mine.includes(entry.id)} onRemove={() => void remove(entry.id)} />
                   ))}
@@ -207,13 +207,13 @@ export function AnnouncementsPage() {
           <aside className="rail">
             <div className="rail-block rail-kinds">
               <h2>Show</h2>
-              <div className="kind-filter" role="radiogroup" aria-label="Kind">
+              <div className="side-list" role="radiogroup" aria-label="Kind">
                 <button type="button" role="radio" aria-checked={!filter} className={filter ? undefined : 'on'} onClick={() => setFilter('')}>
-                  <span className="glyph" data-kind="event" style={{ color: 'var(--ink-3)' }} /> All
+                  All <span className="n">{items.length}</span>
                 </button>
                 {KINDS.filter((kind) => counts.has(kind.id)).map((kind) => (
                   <button key={kind.id} type="button" role="radio" aria-checked={filter === kind.id} className={filter === kind.id ? 'on' : undefined} onClick={() => setFilter(filter === kind.id ? '' : kind.id)}>
-                    <span className="glyph" data-kind={kind.id} /> {kind.label}
+                    {kind.label} <span className="n">{counts.get(kind.id)}</span>
                   </button>
                 ))}
               </div>
@@ -245,51 +245,42 @@ function Item({ entry, now, mine, onRemove }: { entry: Announcement; now: Date; 
   const soon = when ? startsIn(when, now) : null;
   const hasTime = when ? when.getHours() !== 0 || when.getMinutes() !== 0 : false;
   return (
-    <article className={`ann${when ? '' : ' undated'}`}>
-      <span className="glyph-stop" aria-hidden="true">
-        <span className="glyph" data-kind={entry.kind} />
-      </span>
-      {when && (
-        <div className="when">
-          <b>{hasTime ? when.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : 'All day'}</b>
+    <article className="ann">
+      {when && <div className="when">{hasTime ? when.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : 'All day'}</div>}
+      <div className="ann-body">
+        <div className="ann-title">
+          <h3>{entry.title}</h3>
+          {soon?.live && (
+            <span className="pill tone-alert">
+              <span className="dot" /> {soon.text}
+            </span>
+          )}
         </div>
-      )}
-      <div className="ann-title">
-        <h3>{entry.title}</h3>
-        {soon?.live && (
-          <span className="pill soon now live">
-            <span className="dot" /> {soon.text}
-          </span>
-        )}
-      </div>
-      {entry.location && (
-        <div className="meta">
-          <span>{entry.location}</span>
-        </div>
-      )}
-      {entry.body && <div className={`details${long && !open ? ' clamped' : ''}`}>{entry.body}</div>}
-      {long && !open && (
-        <button type="button" className="link-btn small" style={{ justifySelf: 'start' }} onClick={() => setOpen(true)}>
-          Read more
-        </button>
-      )}
-      <div className="foot">
-        <span>{entry.posterName}</span>
-        {entry.link && (
-          <a href={entry.link} target="_blank" rel="noreferrer">
-            <IconExternal /> Link
-          </a>
-        )}
-        {when && (
-          <button type="button" onClick={() => addToCalendar(entry)}>
-            <IconCalendar /> Calendar
+        <div className="meta">{[KINDS.find((kind) => kind.id === entry.kind)?.label ?? entry.kind, entry.location].filter(Boolean).join(' · ')}</div>
+        {entry.body && <div className={`details${long && !open ? ' clamped' : ''}`}>{entry.body}</div>}
+        {long && !open && (
+          <button type="button" className="link-btn small" style={{ justifySelf: 'start' }} onClick={() => setOpen(true)}>
+            Read more
           </button>
         )}
-        {mine && (
-          <button type="button" onClick={onRemove}>
-            Remove
-          </button>
-        )}
+        <div className="foot">
+          <span>{entry.posterName}</span>
+          {entry.link && (
+            <a href={entry.link} target="_blank" rel="noreferrer">
+              <IconExternal /> Link
+            </a>
+          )}
+          {when && (
+            <button type="button" onClick={() => addToCalendar(entry)}>
+              <IconCalendar /> Calendar
+            </button>
+          )}
+          {mine && (
+            <button type="button" onClick={onRemove}>
+              Remove
+            </button>
+          )}
+        </div>
       </div>
     </article>
   );
@@ -336,7 +327,7 @@ function Compose({ onDone, onCancel }: { onDone(announcement: Announcement): voi
         <div className="chips" role="radiogroup" aria-label="Kind">
           {KINDS.map((entry) => (
             <button key={entry.id} type="button" role="radio" aria-checked={kind === entry.id} className={`chip${kind === entry.id ? ' on' : ''}`} onClick={() => setKind(entry.id)}>
-              <span className="glyph" data-kind={entry.id} style={{ width: 10, height: 10, color: kind === entry.id ? 'currentColor' : undefined }} /> {entry.label}
+              {entry.label}
             </button>
           ))}
         </div>

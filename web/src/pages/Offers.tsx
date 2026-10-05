@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { api, type ContactKind, type MarketSummary, type Offer, type OfferCurrency, type OfferSide } from '../api';
 import { ContactFields, ContactReveal } from '../components/Contact';
-import { Flap } from '../components/Flap';
 import { EmptyState } from '../components/EmptyState';
 import { useApp } from '../context';
 import { IconCoins } from '../icons';
@@ -23,7 +22,7 @@ export function currencyOf(offer: Offer): OfferCurrency {
   return offer.currency ?? 'falcon';
 }
 
-/** One currency's offers: the board up top, then the order book, cheapest sell and best buy first, each with its depth behind it. */
+/** One currency's offers: the best prices up top, then the order book, cheapest sell and best buy first, each with its depth beside it. */
 export function OffersTab({ currency, data, onClose, onPost }: { currency: OfferCurrency; data: OffersData; onClose(offer: Offer, remove: boolean): void; onPost(side: OfferSide): void }) {
   const info = CURRENCIES[currency];
   const offers = data.offers.filter((offer) => currencyOf(offer) === currency);
@@ -50,17 +49,17 @@ export function OffersTab({ currency, data, onClose, onPost }: { currency: Offer
     <>
       <p className="currency-note">{info.about}</p>
       <div className="ticker">
-        <div className="sell">
+        <div>
+          <span>Lowest sell</span>
           <b>
-            <Flap text={market.bestAsk === null ? '–' : market.bestAsk.toFixed(2)} />
+            {market.bestAsk === null ? '–' : market.bestAsk.toFixed(2)} <small>AED</small>
           </b>
-          <span>Lowest sell, AED</span>
         </div>
-        <div className="buy">
+        <div>
+          <span>Highest buy</span>
           <b>
-            <Flap text={market.bestBid === null ? '–' : market.bestBid.toFixed(2)} />
+            {market.bestBid === null ? '–' : market.bestBid.toFixed(2)} <small>AED</small>
           </b>
-          <span>Highest buy, AED</span>
         </div>
       </div>
       <div className="book">
@@ -106,11 +105,7 @@ function OfferRow({ currency, offer, depth, mine, onClose }: { currency: OfferCu
       {offer.note && <div className="note">{offer.note}</div>}
       <div className="meta">
         <span>{offer.posterName}</span>
-        {mine && (
-          <span className="pill tone-line">
-            <span className="dot" /> Yours
-          </span>
-        )}
+        {mine && <span className="pill">Yours</span>}
       </div>
       <div className="order-actions">
         {mine ? (

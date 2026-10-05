@@ -3,12 +3,11 @@ import type { ReactNode } from 'react';
 
 interface MarkdownProps {
   text: string;
-  onCitation?(n: number): void;
-  /** Hover with the pill's position, so a preview can be anchored to it. */
+  /** A click or tap on a citation, with its position, so a preview can be anchored to it. */
+  onCitation?(n: number, rect: DOMRect): void;
+  /** Hover with the citation's position, for the same preview. */
   onCitationHover?(n: number | null, rect?: DOMRect): void;
   hot?: number | null;
-  /** The kind of source behind a citation number, so its pill takes that source's line colour. */
-  citeKind?(n: number): string | undefined;
 }
 
 /** Lines an answer may set apart: the downsides, what may have changed, and what to do next. */
@@ -22,8 +21,8 @@ function calloutKind(block: Block | undefined): string | undefined {
   return block?.type === 'p' ? CALLOUTS.find((entry) => entry.label.test(block.text))?.kind : undefined;
 }
 
-export function Markdown({ text, onCitation, onCitationHover, hot, citeKind }: MarkdownProps) {
-  const options = { onCitation, onCitationHover, hot, citeKind };
+export function Markdown({ text, onCitation, onCitationHover, hot }: MarkdownProps) {
+  const options = { onCitation, onCitationHover, hot };
   const blocks = parseBlocks(text);
   const out: ReactNode[] = [];
   for (let index = 0; index < blocks.length; index++) {
@@ -136,10 +135,9 @@ function parseBlocks(text: string): Block[] {
 }
 
 interface InlineOptions {
-  onCitation?(n: number): void;
+  onCitation?(n: number, rect: DOMRect): void;
   onCitationHover?(n: number | null, rect?: DOMRect): void;
   hot?: number | null;
-  citeKind?(n: number): string | undefined;
 }
 
 const INLINE = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*\s][^*]*\*|_[^_\s][^_]*_|\[(?:\d+)(?:\]\[\d+)*\]|\[\d+(?:,\s*\d+)+\]|\[[^\]]+\]\((?:https?:\/\/)[^)\s]+\)|https?:\/\/[^\s)\[\]<>"]*[^\s)\[\].,;:!?'"<>])/g;
@@ -150,12 +148,17 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
   let key = 0;
   for (const match of text.matchAll(INLINE)) {
     const start = match.index ?? 0;
-    if (start > cursor) nodes.push(text.slice(cursor, start));
     const token = match[0];
+    const citation = /^\[\d/.test(token);
+    // A citation sits right against the word it backs ("fairly³") and wraps with it: the space the model leaves before
+    // it goes, and that last word moves into the citation's unbreakable run.
+    const before = citation ? text.slice(cursor, start).trimEnd() : text.slice(cursor, start);
+    const lead = citation ? (/\S*$/.exec(before)?.[0] ?? '') : '';
+    if (before.length > lead.length) nodes.push(before.slice(0, before.length - lead.length));
     if (token.startsWith('**') || token.startsWith('__')) nodes.push(<strong key={key++}>{inline(token.slice(2, -2), options)}</strong>);
     else if (token.startsWith('`')) nodes.push(<code key={key++}>{token.slice(1, -1)}</code>);
     else if ((token.startsWith('*') || token.startsWith('_')) && token.length > 2) nodes.push(<em key={key++}>{inline(token.slice(1, -1), options)}</em>);
-    else if (/^\[\d/.test(token)) {
+    else if (citation) {
       const numbers = [...new Set(token.match(/\d+/g)?.map(Number) ?? [])];
       // A long run of citations reads as noise: show the first two and fold the rest into "+n".
       const shown = numbers.length > 3 ? numbers.slice(0, 2) : numbers;
@@ -166,9 +169,8 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
             key={key++}
             type="button"
             className={`cite${options.hot === n ? ' hot' : ''}`}
-            data-kind={options.citeKind?.(n) ?? 'archive'}
             aria-label={`Source ${n}`}
-            onClick={() => options.onCitation?.(n)}
+            onClick={(event) => options.onCitation?.(n, event.currentTarget.getBoundingClientRect())}
             onMouseEnter={(event) => options.onCitationHover?.(n, event.currentTarget.getBoundingClientRect())}
             onMouseLeave={() => options.onCitationHover?.(null)}
           >
@@ -179,16 +181,17 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
       if (numbers.length > shown.length) {
         const rest = numbers.slice(shown.length);
         pills.push(
-          <button key={key++} type="button" className="cite more" aria-label={`Sources ${rest.join(', ')}`} title={`Sources ${rest.join(', ')}`} onClick={() => options.onCitation?.(rest[0]!)}>
+          <button key={key++} type="button" className="cite" aria-label={`Sources ${rest.join(', ')}`} title={`Sources ${rest.join(', ')}`} onClick={(event) => options.onCitation?.(rest[0]!, event.currentTarget.getBoundingClientRect())}>
             +{rest.length}
           </button>,
         );
       }
       // Punctuation right after the citations stays on their line, rather than wrapping to start the next one.
       const trail = /^[.,;:!?)]+/.exec(text.slice(start + token.length))?.[0] ?? '';
-      if (trail) {
+      if (lead || trail) {
         nodes.push(
           <span key={key++} className="cite-run">
+            {lead}
             {pills}
             {trail}
           </span>,
