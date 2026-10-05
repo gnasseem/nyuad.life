@@ -23,7 +23,9 @@ interface Hot {
   rect?: DOMRect;
 }
 
-const CONFIDENCE_LABEL = { medium: 'Partly sourced', low: 'Weakly sourced' };
+const CONFIDENCE_LABEL = { high: 'Well sourced', medium: 'Partly sourced', low: 'Weakly sourced' };
+/** Failures worth simply asking again: busy or spent models, a timeout, a dropped connection. */
+const RETRYABLE = new Set(['busy', 'quota', 'timeout', 'model_error', 'empty_answer', 'error', 'network', 'stream_error']);
 const STAGES: Array<{ label: string; match: RegExp }> = [
   { label: 'Reading', match: /^reading/i },
   { label: 'Searching', match: /^search/i },
@@ -138,8 +140,11 @@ export function AskPage({ resumeId }: Props) {
           patchMessage(modelMessage.id, (message) => ({ pending: false, status: undefined, error: message.content ? undefined : 'Stopped' }));
           if (conversationRef.current.messages.some((m) => m.role === 'model' && m.content && !m.error)) saveConversation(conversationRef.current);
         } else {
-          const code = error instanceof ApiError ? error.code : undefined;
-          patchMessage(modelMessage.id, { pending: false, status: undefined, error: error instanceof Error ? error.message : 'The request failed.', errorCode: code });
+          // fetch() itself failing means the network, not the server: say so in words a student can act on.
+          const offline = error instanceof TypeError;
+          const code = error instanceof ApiError ? error.code : offline ? 'network' : undefined;
+          const text = offline ? 'Could not reach the server. Check your connection and try again.' : error instanceof Error ? error.message : 'The request failed.';
+          patchMessage(modelMessage.id, { pending: false, status: undefined, error: text, errorCode: code });
           // The server cleared an expired ChatGPT sign-in; show the page as signed out.
           if (code === 'chatgpt_expired' || code === 'chatgpt_required') refreshChatGPT();
         }
@@ -203,6 +208,16 @@ export function AskPage({ resumeId }: Props) {
   }, [empty]);
 
   const stop = () => abortRef.current?.abort();
+
+  /** Asks a failed question again in place of the failed turn, rather than below it. */
+  const retry = (modelId: string) => {
+    const messages = conversationRef.current.messages;
+    const index = messages.findIndex((message) => message.id === modelId);
+    const question = questionBefore(messages, modelId);
+    if (index < 1 || !question) return;
+    update((current) => ({ ...current, messages: current.messages.filter((_, i) => i !== index && i !== index - 1) }));
+    void send(question);
+  };
 
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -302,7 +317,7 @@ export function AskPage({ resumeId }: Props) {
         composer={composer}
         suggestions={home?.suggestions ?? []}
         onSuggestion={(question) => void send(question)}
-        answersOff={Boolean(health && !health.gemini.configured && !chatgpt?.available)}
+        answersOff={Boolean(health && !(health.answers?.available ?? health.gemini.configured) && !chatgpt?.available)}
       />
     );
   }
@@ -348,11 +363,21 @@ export function AskPage({ resumeId }: Props) {
                   </div>
                 )}
                 {message.error && (
-                  <div className="alert error">
+                  <div className="alert error" role="alert">
                     {message.error}
                     {(message.errorCode === 'chatgpt_required' || message.errorCode === 'chatgpt_expired' || message.errorCode === 'chatgpt_plan') && (
                       <div style={{ marginTop: 10 }}>
                         <ChatGPTSignIn className="btn sm primary" />
+                      </div>
+                    )}
+                    {message.error !== 'Stopped' && (!message.errorCode || RETRYABLE.has(message.errorCode)) && (
+                      <div className="alert-actions">
+                        <button type="button" className="link-btn" onClick={() => retry(message.id)} disabled={running}>
+                          Try again
+                        </button>
+                        <a className="link-btn" href={`/threads?q=${encodeURIComponent(questionBefore(conversation.messages, message.id))}`} onClick={onLinkClick}>
+                          Search the group's threads instead
+                        </a>
                       </div>
                     )}
                   </div>
@@ -367,9 +392,12 @@ export function AskPage({ resumeId }: Props) {
                 )}
                 {!message.pending && message.content && (
                   <div className="answer-foot">
-                    {message.confidence && message.confidence.level !== 'high' && (
-                      <span className={`pill confidence ${message.confidence.level}`} title={message.confidence.reason || undefined}>
-                        <span className="dot" /> {CONFIDENCE_LABEL[message.confidence.level]}
+                    {message.confidence && (
+                      <span className="confidence-line">
+                        <span className={`pill confidence ${message.confidence.level}`}>
+                          <span className="dot" /> {CONFIDENCE_LABEL[message.confidence.level]}
+                        </span>
+                        {message.confidence.reason && <span className="confidence-reason">{message.confidence.reason}</span>}
                       </span>
                     )}
                     {message.sources && message.sources.length > 0 && (
@@ -406,7 +434,7 @@ export function AskPage({ resumeId }: Props) {
                     </div>
                   </div>
                 )}
-                {!message.pending && message.followups && message.followups.length > 0 && (
+                {!message.pending && !message.error && message.followups && message.followups.length > 0 && (
                   <div className="followups">
                     {message.followups.map((question) => (
                       <button key={question} type="button" className="followup" onClick={() => void send(question)} disabled={running}>
@@ -534,7 +562,8 @@ function useHomeData(): HomeData {
 }
 
 function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: ReactNode; suggestions: Array<{ topic: string; question: string }>; onSuggestion(question: string): void; answersOff: boolean }) {
-  const { boardProblem } = useApp();
+  const { boardProblem, health } = useApp();
+  const threads = health?.archive?.posts ? `${(Math.floor(health.archive.posts / 500) * 500).toLocaleString('en-US')}+` : 'thousands of';
   const data = useHomeData();
   const rootRef = useRef<HTMLDivElement>(null);
   const now = useNow();
@@ -550,6 +579,9 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
             المركز
           </span>
         </div>
+        <p className="central-lede">
+          Ask anything about NYUAD. Answers come from <b>{threads} Room of Requirement threads</b>, official pages and the class schedule, with sources.
+        </p>
         <div className="central-ask">
           {composer}
           {answersOff && <p className="central-note">Answers are paused right now.</p>}
@@ -572,7 +604,12 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
             (data.notices === null ? (
               <Loading />
             ) : upcoming.length === 0 ? (
-              <p className="stops-note">Nothing coming up.</p>
+              <p className="stops-note">
+                Nothing coming up.{' '}
+                <a href="/notices" onClick={onLinkClick}>
+                  Post an event or deadline
+                </a>
+              </p>
             ) : (
               upcoming.map((entry) => (
                 <a key={entry.id} className="stn" href="/notices" onClick={onLinkClick}>
@@ -590,7 +627,12 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
             ) : (
               <>
                 {data.rides.length === 0 ? (
-                  <p className="stops-note">No rides yet.</p>
+                  <p className="stops-note">
+                    {data.listings ? `${plural(data.listings, 'listing')} for sale or wanted. ` : 'No rides yet. '}
+                    <a href={data.listings ? '/market' : '/market/rides'} onClick={onLinkClick}>
+                      {data.listings ? 'Browse' : 'Share a ride or sell something'}
+                    </a>
+                  </p>
                 ) : (
                   data.rides.slice(0, 3).map((ride) => {
                     const soon = startsIn(new Date(ride.happensAt!), now, 60);
@@ -621,7 +663,12 @@ function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: R
             (data.answered === null ? (
               <Loading />
             ) : data.answered.length === 0 ? (
-              <p className="stops-note">{data.open ? `${plural(data.open, 'question')} waiting` : 'Nothing yet.'}</p>
+              <p className="stops-note">
+                {data.open ? `${plural(data.open, 'question')} waiting for an answer. ` : 'No answered questions yet. '}
+                <a href={data.open ? '/questions?tab=help' : '/questions'} onClick={onLinkClick}>
+                  {data.open ? 'Help answer' : 'Ask other students'}
+                </a>
+              </p>
             ) : (
               data.answered.slice(0, 3).map((question) => (
                 <a key={question.id} className="stn" href={`/questions/${question.id}`} onClick={onLinkClick}>

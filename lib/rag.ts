@@ -9,9 +9,11 @@ import { detectRedirect } from './domains.ts';
 import { embedderForIndex, type Embedder } from './embeddings.ts';
 import { ChatGPTError, liteText, markChatGPTModelUnusable, streamResponse, usableChatGPTModels, type ChatGPTConfig } from './chatgpt.ts';
 import { abuDhabiDate, courseScheduleText, instructorScheduleText, loadCatalog, matchSchedule, type Catalog } from './courses.ts';
-import { generateJson, generateStream, generateText, isDailyQuota, isModelUnavailable, markUnavailable, usableModels, type GeminiConfig, type Message } from './gemini.ts';
+import { cachedAnswer, saveAnswer } from './answer-cache.ts';
+import { generateJson, generateStream, generateText, isDailyQuota, isModelUnavailable, liveModels, markUnavailable, type GeminiConfig, type GeminiError, type Message } from './gemini.ts';
 import { ApiError } from './http.ts';
 import { officialCards, officialSourceBlock, retrieveOfficial, type OfficialCorpus } from './official.ts';
+import { liteChat, markFailed, modelOrder, ProviderError, providersFromEnv, streamChat, usable, type Provider } from './providers.ts';
 import { rerankerFromEnv, type Reranker } from './rerank.ts';
 import { bm25Query, denseQuery, fuse, type Hit } from './search.ts';
 import type { Archive } from './store.ts';
@@ -263,27 +265,36 @@ function age(date: string, today: number): string {
   return `${(days / 365).toFixed(1)} years ago`;
 }
 
-/** Renders the numbered sources the model may cite: whole threads with their signals, board answers, announcements. */
-export function sourcesBlock(archive: Archive, cards: SourceCard[], live: LiveSource[] = [], today = Date.now() / 86_400_000): string {
+/** Most of a thread a source may carry: the post and as many comments as fit. */
+const THREAD_CHARS = 4200;
+
+/**
+ * Renders the numbered sources the model may cite: whole threads with their signals, board answers, announcements.
+ * `perSource` caps each one, for models whose free tier only takes a short prompt.
+ */
+export function sourcesBlock(archive: Archive, cards: SourceCard[], live: LiveSource[] = [], today = Date.now() / 86_400_000, perSource = Infinity): string {
   const liveByN = new Map(live.map((entry) => [entry.card.n, entry]));
+  const cap = (text: string) => (text.length > perSource ? truncate(text, perSource) : text);
   return cards
     .map((card) => {
       const entry = liveByN.get(card.n);
-      if (card.kind === 'official' && entry?.officialText) return entry.officialText;
-      if (card.kind === 'schedule' && entry?.scheduleText) return `[${card.n}] ${entry.scheduleText}`;
+      if (card.kind === 'official' && entry?.officialText) return cap(entry.officialText);
+      if (card.kind === 'schedule' && entry?.scheduleText) return cap(`[${card.n}] ${entry.scheduleText}`);
       if (card.kind === 'board' && entry?.question) {
         const lines = entry.answers!.map((answer) => `- ${answer.helperName} (${answer.helperMajor}, ${STANDING_LABELS[answer.helperYear].toLowerCase()}, ${formatDate(answer.createdAt.slice(0, 10))}): ${truncate(collapseWhitespace(answer.text), 700)}`);
-        return [`[${card.n}] Student answers on this site, to the question: "${truncate(collapseWhitespace(entry.question.text), 300)}"`, ...lines].join('\n');
+        return cap([`[${card.n}] Student answers on this site, to the question: "${truncate(collapseWhitespace(entry.question.text), 300)}"`, ...lines].join('\n'));
       }
       if (card.kind === 'announcement' && entry?.announcement) {
         const a = entry.announcement;
         const when = a.startsAt ? `happens ${abuDhabiTime(a.startsAt)}` : `posted ${formatDate(abuDhabiDate(new Date(a.createdAt)))}`;
-        return [`[${card.n}] Announcement (${a.kind}) by ${a.posterName}, ${when}${a.location ? `, at ${a.location}` : ''}: ${a.title}`, truncate(collapseWhitespace(a.body), 800), a.link ? `Link: ${a.link}` : ''].filter(Boolean).join('\n');
+        return cap([`[${card.n}] Announcement (${a.kind}) by ${a.posterName}, ${when}${a.location ? `, at ${a.location}` : ''}: ${a.title}`, truncate(collapseWhitespace(a.body), 800), a.link ? `Link: ${a.link}` : ''].filter(Boolean).join('\n'));
       }
       const post = archive.posts[archive.postPosition.get(card.postId)!]!;
       const header = `[${card.n}] Post by ${post.author || 'Unknown'} on ${formatDate(post.date)} (${age(post.date, today)}) · ${card.commentCount} comments · ${card.reactions} reactions`;
-      const body = truncate(collapseWhitespace(post.text) || '(no text)', 2200);
-      let budget = 4200 - header.length - body.length;
+      const total = Math.min(THREAD_CHARS, perSource);
+      // A short budget still leaves room for some comments: the replies are usually where the answer is.
+      const body = truncate(collapseWhitespace(post.text) || '(no text)', Math.min(2200, Math.max(200, Math.floor(total * 0.55))));
+      let budget = total - header.length - body.length;
       const comments: string[] = [];
       for (const comment of post.comments) {
         const line = `- ${comment.author || 'Someone'}${comment.date ? ` (${formatDate(comment.date)})` : ''}: ${truncate(collapseWhitespace(comment.text), 500)}`;
@@ -318,26 +329,38 @@ export function systemPrompt(today = new Date(), term = ''): string {
   const weekday = today.toLocaleDateString('en-GB', { timeZone: 'Asia/Dubai', weekday: 'long' });
   return `You answer questions from NYU Abu Dhabi students using only the numbered sources you are given: official NYUAD pages (the university website, the student portal and the bulletin), the Albert class schedule, threads from the Room of Requirement Facebook group, answers other students wrote on this site, and current announcements. Today is ${date}, a ${weekday}, in Abu Dhabi${term ? `; the term now is ${term}` : ''}.
 
-Which source to trust for what:
-- The Albert class schedule is the authority on which courses run in which term, their times, rooms, professors, credits and whether seats are open.
-- Official pages are the authority on requirements, deadlines, policies, programme structure and what an office does.
-- Student threads and answers are the authority on experience: what a course or professor is like, workload, what actually happens, what people recommend.
+Who to believe about what:
+- The Albert class schedule: which courses run in which term, their times, rooms, professors, credits and whether seats are open.
+- Official pages: requirements, deadlines, policies, programme structure and what an office does.
+- Students: what something is really like: workload, grading, professors, what actually happens, what to avoid.
 When they disagree, give the official or schedule fact first, then what students report, and say which is which.
 
-Write like a helpful senior talking to a friend: plain words, short sentences, no filler, no hedging beyond what the sources justify. Answer the question that was asked, using everything relevant across the sources rather than summarising each source in turn.
+Think like a sharp senior who has read every thread, not like a summariser. Before you write, weigh the evidence:
+- Who is talking. First-hand experience ("I took it") beats hearsay ("I heard"). Someone selling, recruiting or promoting has a stake; say so if it matters.
+- How many. One loud post is not a consensus. Count people when opinions matter ("4 of the 6 who replied recommend her").
+- How recent. Anything more than two years old may be out of date: professors, prices, policies and offices change.
+- Whether they agree. When students split, say so and say which side has the stronger evidence. Never blend opposite views into something vague.
+- Whether it fits. Ignore sources that only share a word with the question.
+Then commit. Give a clear verdict or recommendation when the evidence supports one; when it does not, say exactly what it depends on. If the question rests on a wrong assumption, correct it first.
 
-Shape of every answer:
-1. First, the answer itself in one or two sentences. If the sources only partly cover it, answer the part they cover and say plainly what is missing ("Nobody in the group has covered the 2026 version", "Only one person mentioned this, in 2024").
-2. Then the useful specifics as short bullets: names, times, prices, dates, steps, what people actually said. Count people when opinions matter ("4 of the 5 who replied recommend her"). Prefer first-hand experience over hearsay, and say which is which when it matters.
-3. If something is old, changes year to year, or people disagree, add one short "Keep in mind" line, for example "as of Spring 2025" or "two people had the opposite experience".
-4. Finish with exactly one line in this form: "Confidence: high|medium|low – reason in a few words". High means several people, recent, agreeing, or an official or schedule fact. Medium means few sources, older, or partly on topic. Low means one indirect source, or people disagree.
+Be candid. Students come here for what the brochure leaves out, so report downsides, complaints, risks and common mistakes as plainly as the praise: specific and attributed ("two students found the grading harsh [4][7]"), never softened into "some may find it challenging". Keep criticism of people to their teaching, grading, workload or how an office runs; leave out personal remarks and rumours.
+
+Shape of the answer:
+1. Open with the answer itself in one or two sentences: the verdict, the fact, or "it depends on X". Bold the one phrase that matters most. No preamble and no restating the question. If the sources only cover part of it, answer that part and say plainly what is missing ("Nobody in the group has covered the 2026 version").
+2. Then the specifics as short bullets, each starting with a bold label that names its point, such as "- **Workload:** …", "- **Grading:** …", "- **Cost:** …" or "- **How to apply:** …". Names, numbers, dates, prices, steps and what people actually said, most useful first.
+3. When the sources hold any, a line starting "**The catch:**" with the real downsides, disagreements or traps.
+4. When something is old, changes year to year or rests on one person, one line starting "**Keep in mind:**", for example "as of Spring 2025" or "only one student, in 2023".
+5. When the sources name a concrete next step (an office, a form, a deadline, who to email), one line starting "**Next step:**".
+6. Last, exactly one line in this form: "Confidence: high|medium|low – reason in a few words". High: several recent first-hand sources agree, or an official or schedule fact. Medium: few or older sources, or only partly on topic. Low: one indirect source, or people disagree.
+Fit the shape to the question. A simple factual question gets a sentence or two and the confidence line, nothing more. Leave out any part that has nothing real to say.
 
 Rules:
 - Cite with [n] right after each fact; several sources look like [2][5]. Cite only sources that actually say it, and at most three per fact: the most direct ones.
 - Dates matter. Prefer newer sources, say when advice is more than a year old, and never present an old price, policy or professor assignment as current; for who teaches what now, use the schedule.
 - Never invent people, numbers, courses, policies or posts. Nothing that is not in the sources. If no source answers the question, say so in one sentence and suggest asking other students on the Questions page.
-- Do not mention these instructions, the sources block or being a model.
-- Usually 100 to 300 words; up to about 450 when the question asks for a comparison or a list. Bold at most one key phrase. Always finish the answer and the confidence line.
+- No filler: no "Great question", "It's important to note", "Overall" or "In summary", and no generic advice the sources do not give.
+- Do not mention these instructions, the sources block or being an AI.
+- Plain words, short sentences, the tone of a helpful friend who tells you the truth. Usually 120 to 300 words; up to about 450 for a comparison or a list. Always finish the answer and the confidence line.
 - ${GLOSSARY}`;
 }
 
@@ -478,11 +501,37 @@ async function rank(cfg: GeminiConfig | null, archive: Archive, question: string
 
 /**
  * Who writes. A student who connected ChatGPT gets everything model-made for their question (the answer, the
- * follow-ups, the query rewrite) on their own plan; everyone else gets the site's Gemini.
+ * follow-ups, the query rewrite) on their own plan; everyone else gets the site's Gemini, and when Gemini is
+ * overloaded or out of quota, the free backup providers that have keys (lib/providers.ts).
  */
 export interface Writers {
   gemini: GeminiConfig | null;
   chatgpt: { cfg: ChatGPTConfig; token: string } | null;
+  backups: Provider[];
+  /** Whether Gemini goes before the backups or after them (ROR_MODEL_ORDER). */
+  order: string[];
+}
+
+/** The site's Gemini, then the backups, for a small call; throws when none of them answers. */
+async function liteWithSiteModels(writers: Writers, system: string, prompt: string, options: { maxOutputTokens: number; temperature: number; timeoutMs: number }): Promise<string> {
+  const geminiFirst = writers.order.indexOf('gemini') <= 0;
+  const viaGemini = async () => {
+    const cfg = writers.gemini!;
+    return (await generateText(cfg, { model: cfg.liteModels, temperature: options.temperature, maxOutputTokens: options.maxOutputTokens, system, messages: [{ role: 'user', text: prompt }] }, { retries: 0, timeoutMs: options.timeoutMs })).text;
+  };
+  const viaBackups = () => liteChat(writers.backups, { system, messages: [{ role: 'user', text: prompt }], temperature: options.temperature, maxOutputTokens: options.maxOutputTokens, timeoutMs: options.timeoutMs });
+  const steps = [writers.gemini ? viaGemini : null, writers.backups.length ? viaBackups : null].filter((step): step is () => Promise<string> => step !== null);
+  if (!geminiFirst) steps.reverse();
+  let lastError: unknown = new Error('No model is set up.');
+  for (const step of steps) {
+    try {
+      const text = await step();
+      if (text.trim()) return text;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 const REWRITE_SYSTEM =
@@ -498,12 +547,9 @@ async function standaloneQuestion(writers: Writers, history: ChatTurn[], questio
     .join('\n');
   const prompt = `Conversation:\n${transcript}\n\nLatest message: ${question}`;
   try {
-    let text = '';
-    if (writers.chatgpt) text = await liteText(writers.chatgpt.cfg, writers.chatgpt.token, REWRITE_SYSTEM + GLOSSARY, prompt, 8_000);
-    else if (writers.gemini) {
-      const cfg = writers.gemini;
-      text = (await generateText(cfg, { model: cfg.liteModels, temperature: 0, maxOutputTokens: 512, system: REWRITE_SYSTEM + GLOSSARY, messages: [{ role: 'user', text: prompt }] }, { retries: 1, timeoutMs: 8_000 })).text;
-    } else return question;
+    const text = writers.chatgpt
+      ? await liteText(writers.chatgpt.cfg, writers.chatgpt.token, REWRITE_SYSTEM + GLOSSARY, prompt, 8_000)
+      : await liteWithSiteModels(writers, REWRITE_SYSTEM + GLOSSARY, prompt, { maxOutputTokens: 512, temperature: 0, timeoutMs: 8_000 });
     const rewritten = collapseWhitespace(text).replace(/^["“]|["”]$/g, '');
     return rewritten && rewritten.length <= MAX_QUESTION_CHARS ? rewritten : question;
   } catch {
@@ -527,20 +573,23 @@ export async function followups(writers: Writers, question: string, cards: Sourc
     .map((card) => `- ${card.title ? `${card.title}: ` : ''}${truncate(card.text, 160)}`)
     .join('\n');
   const prompt = `Question asked: ${question}\n\nPosts found:\n${context}`;
+  const lines = (text: string) =>
+    text
+      .split('\n')
+      .map((line) => collapseWhitespace(line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').replace(/^["“]|["”]$/g, '')))
+      .filter((line) => line.length > 3)
+      .slice(0, 3);
+  const plain = `${FOLLOWUP_SYSTEM}Write one question per line and nothing else. ${GLOSSARY}`;
   if (writers.chatgpt) {
     try {
-      const text = await liteText(writers.chatgpt.cfg, writers.chatgpt.token, `${FOLLOWUP_SYSTEM}Write one question per line and nothing else. ${GLOSSARY}`, prompt);
-      return text
-        .split('\n')
-        .map((line) => collapseWhitespace(line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '')))
-        .filter((line) => line.length > 3)
-        .slice(0, 3);
+      return lines(await liteText(writers.chatgpt.cfg, writers.chatgpt.token, plain, prompt));
     } catch {
       return [];
     }
   }
   const cfg = writers.gemini;
-  if (!cfg) return [];
+  const backups = () => liteWithSiteModels({ ...writers, gemini: null }, plain, prompt, { maxOutputTokens: 400, temperature: 0.7, timeoutMs: 10_000 }).then(lines, () => []);
+  if (!cfg) return backups();
   try {
     const result = await generateJson<{ questions: string[] }>(
       cfg,
@@ -556,7 +605,7 @@ export async function followups(writers: Writers, question: string, cards: Sourc
     );
     return (result.questions ?? []).map((item) => collapseWhitespace(item)).filter(Boolean).slice(0, 3);
   } catch {
-    return [];
+    return writers.backups.length ? backups() : [];
   }
 }
 
@@ -590,9 +639,13 @@ interface AskContext {
   reranker?: Reranker | null;
   /** The student's own ChatGPT plan, when they connected it; then the answer runs there instead of on Gemini. */
   chatgpt?: Writers['chatgpt'];
+  /** Free backup models after Gemini; taken from the environment when not given. */
+  backups?: Provider[];
   /** When to stop writing, in ms since the epoch; defaults to ANSWER_DEADLINE_MS after the call starts. The route
    * passes one counted from the request, since loading the archive on a cold start eats into the same 60 s. */
   deadline?: number;
+  /** False skips the answer cache, both reading and writing; by default it is on unless ROR_ANSWER_CACHE=0. */
+  cache?: boolean;
 }
 
 function catalogOrNull(): Catalog | null {
@@ -605,12 +658,14 @@ function catalogOrNull(): Catalog | null {
   }
 }
 
+const NO_SOURCES = "I couldn't find anything on this in the group's threads, the official NYUAD pages or the class schedule. Students on the Questions page can probably help.";
+
 /** The full pipeline. Emits sources first, then answer deltas, then follow-ups; also returns everything at the end. */
 export async function ask(archive: Archive, cfg: GeminiConfig | null, request: AskRequest, events: AskEvents = {}, signal?: AbortSignal, context: AskContext = {}): Promise<AskResponse> {
   const started = Date.now();
-  const writers: Writers = { gemini: cfg, chatgpt: context.chatgpt ?? null };
-  if (!writers.gemini && !writers.chatgpt) throw new ApiError(503, 'No model is set up to write answers.', 'no_model');
-  const writerName = writers.chatgpt ? `chatgpt:${writers.chatgpt.cfg.chatModels[0]}` : writers.gemini!.chatModel;
+  const writers: Writers = { gemini: cfg, chatgpt: context.chatgpt ?? null, backups: context.backups ?? providersFromEnv(), order: modelOrder() };
+  if (!writers.gemini && !writers.chatgpt && writers.backups.length === 0) throw new ApiError(503, 'No model is set up to write answers.', 'no_model');
+  const writerName = writers.chatgpt ? `chatgpt:${writers.chatgpt.cfg.chatModels[0]}` : (answerWriters(writers)[0]?.name ?? 'none');
   const deadline = context.deadline ?? started + ANSWER_DEADLINE_MS;
   const history = request.history ?? [];
   const board = context.board ?? null;
@@ -623,6 +678,16 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
     events.sources?.([]);
     events.followups?.([]);
     return { answer: '', sources: [], followups: [], model: writerName, confidence: null, redirect, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
+  }
+
+  // An opening question someone asked in the last few hours is answered again from the cache: no model call at all.
+  const useCache = (context.cache ?? process.env.ROR_ANSWER_CACHE !== '0') && history.length === 0;
+  const cached = useCache ? await cachedAnswer(board, request.question) : null;
+  if (cached) {
+    events.sources?.(cached.sources);
+    events.delta?.(cached.answer);
+    events.followups?.(cached.followups);
+    return { answer: cached.answer, sources: cached.sources, followups: cached.followups, model: cached.model, confidence: cached.confidence, cached: true, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
   }
 
   events.status?.('Reading the question');
@@ -641,10 +706,9 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
   events.sources?.(cards);
 
   if (cards.length === 0) {
-    const answer = 'No source covers this. Ask students on the Questions page.';
-    events.delta?.(answer);
+    events.delta?.(NO_SOURCES);
     events.followups?.([]);
-    return { answer, sources: [], followups: [], model: writerName, confidence: { level: 'low', reason: 'no matching threads' }, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
+    return { answer: NO_SOURCES, sources: [], followups: [], model: writerName, confidence: { level: 'low', reason: 'nothing on this in the sources' }, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
   }
 
   const followupsPromise = followups(writers, request.question, cards).then((questions) => {
@@ -653,14 +717,23 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
   });
 
   events.status?.('Writing');
-  const messages: Message[] = history.slice(-6).map((turn) => ({ role: turn.role, text: truncate(turn.content, 2500) }));
-  messages.push({ role: 'user', text: `Question: ${request.question}\n\nSources:\n${sourcesBlock(archive, cards, [...official, ...schedule, ...live])}` });
   const term = catalog?.current ?? '';
-  const { answer, model, truncated } = writers.chatgpt ? await writeWithChatGPT(writers.chatgpt, messages, events, signal, deadline, term) : await writeAnswer(writers.gemini!, messages, events, signal, deadline, term);
+  const system = systemPrompt(new Date(), term);
+  const liveEntries = [...official, ...schedule, ...live];
+  // The prompt for a model, cut down to fit when its free tier only takes a short one.
+  const prompt = (maxChars = Infinity): Message[] => {
+    const turns = history.slice(maxChars === Infinity ? -6 : -4).map((turn) => ({ role: turn.role, text: truncate(turn.content, maxChars === Infinity ? 2500 : 1200) }));
+    const room = maxChars - system.length - turns.reduce((sum, turn) => sum + turn.text.length, 0) - request.question.length - 40;
+    const perSource = maxChars === Infinity ? Infinity : Math.max(400, Math.floor(room / cards.length) - 2);
+    let sources = sourcesBlock(archive, cards, liveEntries, undefined, perSource);
+    if (sources.length > room) sources = truncate(sources, Math.max(2000, room));
+    return [...turns, { role: 'user', text: `Question: ${request.question}\n\nSources:\n${sources}` }];
+  };
+  const { answer, model, truncated } = writers.chatgpt ? await writeWithChatGPT(writers.chatgpt, prompt(), events, signal, deadline, term) : await writeAnswer(writers, system, prompt, events, signal, deadline);
   if (!answer.trim()) throw new ApiError(502, 'The model returned an empty answer.', 'empty_answer');
   const questions = await followupsPromise;
   const parsed = parseConfidence(answer);
-  return {
+  const response: AskResponse = {
     answer: parsed.text,
     sources: cards,
     followups: questions,
@@ -669,6 +742,8 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
     ...(truncated ? { truncated: true } : {}),
     retrieval: { candidates: retrieval.hits.length, reranked: ranked.reranked, ms: Date.now() - started },
   };
+  if (useCache && !truncated && !signal?.aborted) await saveAnswer(board, request.question, response);
+  return response;
 }
 
 async function withStatus<T>(events: AskEvents, message: string, work: Promise<T>): Promise<T> {
@@ -676,58 +751,158 @@ async function withStatus<T>(events: AskEvents, message: string, work: Promise<T
   return work;
 }
 
-const QUOTA_MESSAGE = 'Answers are paused: the free model quota is used up for now. Try again in a while, or search the threads in the meantime.';
-const BUSY_MESSAGE = 'Answers are busy right now. Try again in a minute.';
+const QUOTA_MESSAGE = "Answers are paused: today's free model quota is used up. Try again in a while, or search the group's threads in the meantime.";
+const BUSY_MESSAGE = 'Answers are busy right now: every model we use is overloaded. Try again in a minute.';
+/** How long a model that is not the last one may take to start writing before the next one is tried. */
+const FIRST_TEXT_MS = 25_000;
+
+interface Chunk {
+  text?: string;
+  truncated?: boolean;
+}
+
+/** One model that can write the answer, in the order they are tried. */
+interface AnswerWriter {
+  name: string;
+  /** The most prompt it takes, in characters, when its free tier is small. */
+  maxPromptChars?: number;
+  stream(system: string, messages: Message[], signal: AbortSignal, last: boolean): AsyncGenerator<Chunk>;
+  /** Records a failure before any text, resting the model for a while when it is busy, gone or out of quota. */
+  failed(error: unknown): void;
+  /** Whether a failure is the model's capacity (overloaded, rate limited, out of quota) rather than this request. */
+  busy(error: unknown): boolean;
+  /** Whether a failure means the day's free quota is spent, rather than a passing overload. */
+  quota(error: unknown): boolean;
+}
 
 /**
- * Streams the answer, moving down the model list when a model is gone or out of quota (free tiers are per model and
- * reset daily). Only switches before any text has been sent. Stops at the deadline, or when the model hits its token
- * limit, and says so rather than ending mid-sentence without a word.
+ * Gemini's answer models, then each backup provider's (or the other way round, per ROR_MODEL_ORDER), then Gemini's
+ * lite models as the last resort. Models resting after a recent failure are left out, unless that leaves nothing.
  */
-async function writeAnswer(cfg: GeminiConfig, messages: Message[], events: AskEvents, signal: AbortSignal | undefined, deadline: number, term: string): Promise<{ answer: string; model: string; truncated: boolean }> {
-  const models = usableModels([cfg.chatModel, ...cfg.chatFallbacks]);
-  const system = systemPrompt(new Date(), term);
-  for (let i = 0; i < models.length; i++) {
-    const model = models[i]!;
-    const last = i === models.length - 1;
+export function answerWriters(writers: Writers, now = Date.now()): AnswerWriter[] {
+  const build = (strict: boolean): AnswerWriter[] => {
+    const out: AnswerWriter[] = [];
+    const cfg = writers.gemini;
+    const gemini = (models: string[]) => {
+      if (!cfg) return;
+      for (const model of strict ? liveModels(models, now) : models) {
+        out.push({
+          name: model,
+          stream: (system, messages, signal, last) => geminiChunks(cfg, model, system, messages, signal, last),
+          failed: (error) => {
+            if (isModelUnavailable(error)) markUnavailable(model, error);
+          },
+          busy: (error) => isModelUnavailable(error),
+          quota: (error) => isModelUnavailable(error) && isDailyQuota(error as GeminiError),
+        });
+      }
+    };
+    const main = cfg ? [...new Set([cfg.chatModel, ...cfg.chatFallbacks])] : [];
+    const lite = cfg ? cfg.liteModels.filter((model) => !main.includes(model)) : [];
+    for (const id of writers.order) {
+      if (id === 'gemini') gemini(main);
+      const provider = writers.backups.find((entry) => entry.id === id);
+      if (!provider) continue;
+      for (const model of strict ? usable(provider, provider.models, now) : provider.models) {
+        out.push({
+          name: `${provider.id}:${model}`,
+          maxPromptChars: provider.maxPromptChars,
+          stream: (system, messages, signal) => streamChat(provider, model, { system, messages, temperature: 0.2, signal }),
+          failed: (error) => markFailed(provider, model, error),
+          busy: (error) => !(error instanceof ProviderError) || error.status === 429 || error.status === 413 || error.status >= 500,
+          quota: (error) => error instanceof ProviderError && error.status === 429 && /day|quota|credits/i.test(error.message),
+        });
+      }
+    }
+    gemini(lite);
+    return out;
+  };
+  const strict = build(true);
+  return strict.length ? strict : build(false);
+}
+
+async function* geminiChunks(cfg: GeminiConfig, model: string, system: string, messages: Message[], signal: AbortSignal, last: boolean): AsyncGenerator<Chunk> {
+  // The last model may wait out a short per-minute limit (until the deadline); the others move on at once.
+  for await (const event of generateStream(cfg, { model, system, messages, temperature: 0.2, maxOutputTokens: 8192, thinking: 'low' }, { retries: last ? 1 : 0, signal, waitOutQuota: last })) {
+    if (event.text) yield { text: event.text };
+    if (event.finishReason === 'MAX_TOKENS') yield { truncated: true };
+    else if (event.finishReason && event.finishReason !== 'STOP') console.warn('[ask] generation finished with', event.finishReason);
+  }
+}
+
+/**
+ * Streams the answer from the first model that can write it, moving down the chain when a model is overloaded, gone
+ * or out of quota (free tiers are per model and reset daily), or is too slow to start. Only switches before any text
+ * has been sent. Stops at the deadline, or when the model hits its token limit, and says so rather than ending
+ * mid-sentence without a word.
+ */
+async function writeAnswer(writers: Writers, system: string, prompt: (maxChars?: number) => Message[], events: AskEvents, signal: AbortSignal | undefined, deadline: number): Promise<{ answer: string; model: string; truncated: boolean }> {
+  const chain = answerWriters(writers);
+  let allQuota = true;
+  let anyBusy = false;
+  for (let i = 0; i < chain.length; i++) {
+    const writer = chain[i]!;
+    const last = i === chain.length - 1;
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     signal?.addEventListener('abort', onAbort, { once: true });
     let timedOut = false;
+    let slow = false;
     const timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
     }, Math.max(1_000, deadline - Date.now()));
+    // A model that has not started writing in time is skipped while there is still time for the next one.
+    const firstText = last ? null : setTimeout(() => {
+      slow = true;
+      controller.abort();
+    }, Math.max(5_000, Math.min(FIRST_TEXT_MS, deadline - Date.now() - 15_000)));
     let answer = '';
     let truncated = false;
     try {
-      // The last model may wait out a short per-minute limit (until the deadline); the others move on at once.
-      for await (const event of generateStream(cfg, { model, system, messages, temperature: 0.2, maxOutputTokens: 8192, thinking: 'low' }, { retries: last ? 1 : 0, signal: controller.signal, waitOutQuota: last })) {
-        if (event.text) {
-          answer += event.text;
-          events.delta?.(event.text);
+      for await (const chunk of writer.stream(system, prompt(writer.maxPromptChars), controller.signal, last)) {
+        if (chunk.text) {
+          if (firstText) clearTimeout(firstText);
+          answer += chunk.text;
+          events.delta?.(chunk.text);
         }
-        if (event.finishReason === 'MAX_TOKENS') truncated = true;
-        else if (event.finishReason && event.finishReason !== 'STOP') console.warn('[ask] generation finished with', event.finishReason);
+        if (chunk.truncated) truncated = true;
       }
-      return { answer, model, truncated };
+      if (!answer.trim() && !last) throw new Error('empty answer');
+      return { answer, model: writer.name, truncated };
     } catch (error) {
-      if (timedOut && !signal?.aborted) {
-        console.warn(`[ask] ${model} ran past the deadline; ending the answer early.`);
-        if (answer) return { answer, model, truncated: true };
+      if (signal?.aborted) throw error;
+      if (timedOut) {
+        console.warn(`[ask] ${writer.name} ran past the deadline; ending the answer early.`);
+        if (answer) return { answer, model: writer.name, truncated: true };
         throw new ApiError(504, 'The answer took too long. Try again, or ask a narrower question.', 'timeout');
       }
-      if (!isModelUnavailable(error) || answer) throw error;
-      markUnavailable(model, error);
-      if (last) throw error.status === 429 && !isDailyQuota(error) ? new ApiError(503, BUSY_MESSAGE, 'busy') : new ApiError(503, QUOTA_MESSAGE, 'quota');
-      console.warn(`[ask] ${model} unavailable (${error.message.slice(0, 100)}); trying ${models[i + 1]}.`);
+      if (answer) {
+        // Text already went out: switching models now would start a second answer under the first.
+        console.warn(`[ask] ${writer.name} failed mid-answer:`, (error as Error).message);
+        return { answer, model: writer.name, truncated: true };
+      }
+      // Whatever went wrong before the first word (overload, quota, a model gone, a refused prompt), the next model
+      // may well answer, so it is tried; only the kind of failure decides the message if none of them does.
+      if (slow) console.warn(`[ask] ${writer.name} had not started after ${FIRST_TEXT_MS / 1000}s; trying the next model.`);
+      else {
+        writer.failed(error);
+        console.warn(`[ask] ${writer.name} failed: ${String((error as Error).message).slice(0, 160)}`);
+      }
+      const busy = slow || writer.busy(error);
+      anyBusy ||= busy;
+      allQuota &&= busy && !slow && writer.quota(error);
+      if (last) break;
       events.status?.('Switching to a backup model');
     } finally {
       clearTimeout(timer);
+      if (firstText) clearTimeout(firstText);
       signal?.removeEventListener('abort', onAbort);
     }
   }
-  throw new ApiError(503, QUOTA_MESSAGE, 'quota');
+  if (allQuota) throw new ApiError(503, QUOTA_MESSAGE, 'quota');
+  if (anyBusy) throw new ApiError(503, BUSY_MESSAGE, 'busy');
+  throw new ApiError(502, 'The answer could not be written this time. Try again, or rephrase the question.', 'model_error');
 }
 
 /**

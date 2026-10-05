@@ -140,6 +140,7 @@ export function SettingsPage() {
             <div className="settings-row">
               <div className="text">
                 <b>No details saved</b>
+                <span>Name, NetID, major and year. Asked once, the first time you answer questions or post something</span>
               </div>
               <button type="button" className="btn sm primary" onClick={() => void requestProfile()}>
                 Add details
@@ -165,10 +166,11 @@ export function SettingsPage() {
           )}
           <div className="settings-row">
             <div className="text">
-              <b>Everything</b>
+              <b>All data on this browser</b>
+              <span>Conversations, your details and the key that lets you edit or remove what you posted</span>
             </div>
             <button type="button" className="btn sm danger" onClick={forget}>
-              Delete
+              Delete all
             </button>
           </div>
         </div>

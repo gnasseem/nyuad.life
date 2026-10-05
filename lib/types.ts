@@ -102,6 +102,8 @@ export interface AskResponse {
   confidence: Confidence | null;
   /** The answer stopped early, at the time or length limit. */
   truncated?: boolean;
+  /** The same question was answered recently, and that answer was served again without a model call. */
+  cached?: boolean;
   /** Set when the question belongs somewhere else; then there is no answer to speak of. */
   redirect?: { domain: string; title: string; message: string; link: { url: string; label: string } };
   retrieval: {

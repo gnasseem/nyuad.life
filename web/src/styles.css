@@ -495,6 +495,11 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .central .send { background: #ffc21a; color: #0b1230; }
 .central .send:disabled { background: #e8ecf3; color: #5f688e; }
 .central-note { margin-top: 12px; color: rgba(240, 242, 250, 0.62); font-size: 13.5px; }
+.central-lede { position: relative; z-index: 3; max-width: 62ch; margin: -6px 0 20px; color: rgba(240, 242, 250, 0.78); font-size: 15.5px; line-height: 1.5; animation: rise-in 0.6s 0.05s var(--ease) both; }
+.central-lede b { color: #ffffff; font-weight: 650; }
+.stops-note a { color: var(--line-ink); font-weight: 600; }
+.stops-note a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.page-lede { margin: 0; color: var(--ink-2); font-size: 14px; line-height: 1.55; }
 .chatgpt-btn { gap: 8px; }
 .chatgpt-btn svg { width: 16px; height: 16px; }
 .chatgpt-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 12px; font-size: 13.5px; }
@@ -585,6 +590,7 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 [data-kind] { --k: var(--cobalt); --k-fill: var(--cobalt-fill); --k-ink: var(--cobalt-ink); --k-soft: var(--cobalt-soft); --k-on: #ffffff; }
 .cite { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; margin-left: 3px; border: 2px solid var(--k); border-radius: 10px; background: var(--plate); color: var(--k-ink); font: 780 10.5px/1 var(--sign); font-variant-numeric: tabular-nums; vertical-align: 2px; cursor: pointer; transition: background 0.15s, color 0.15s, transform 0.2s var(--ease); }
 .cite:hover, .cite.hot { background: var(--k-fill); color: var(--k-on); transform: translateY(-1px); }
+.cite-run { white-space: nowrap; }
 .cite.more { --k: var(--rule-2); --k-fill: var(--ink-2); --k-ink: var(--ink-2); --k-on: var(--plate); }
 .answer-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding-top: 2px; color: var(--ink-3); font-size: 13px; }
 .foot-btn { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; color: var(--ink-2); font: 620 13px/1 var(--text); transition: color 0.15s, transform 0.12s var(--ease); }
@@ -595,6 +601,19 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .foot-btn.open .chev { transform: rotate(180deg); }
 .confidence.medium { --tone: var(--amber); --tone-soft: var(--amber-soft); --tone-ink: var(--amber-ink); }
 .confidence.low { --tone: var(--scarlet); --tone-soft: var(--scarlet-soft); --tone-ink: var(--scarlet-ink); }
+.confidence.high { --tone: var(--green); --tone-soft: var(--green-soft); --tone-ink: var(--green-ink); }
+.confidence-line { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.confidence-reason { color: var(--ink-3); font-size: 12.5px; }
+/* The downsides, what may have changed and the next step, set apart from the rest of the answer. */
+.answer .callout { margin: 14px 0; padding: 10px 14px; border-left: 3px solid var(--tone); border-radius: 4px 12px 12px 4px; background: var(--tone-soft); }
+.answer .callout:last-child { margin-bottom: 0; }
+.answer .callout p { margin: 0; }
+.answer .callout ul, .answer .callout ol { margin: 6px 0 0; }
+.answer .callout > p > strong:first-child { color: var(--tone-ink); }
+.answer .callout[data-callout='catch'] { --tone: var(--scarlet); --tone-soft: var(--scarlet-soft); --tone-ink: var(--scarlet-ink); }
+.answer .callout[data-callout='mind'] { --tone: var(--amber); --tone-soft: var(--amber-soft); --tone-ink: var(--amber-ink); }
+.answer .callout[data-callout='next'] { --tone: var(--green); --tone-soft: var(--green-soft); --tone-ink: var(--green-ink); }
+.alert-actions { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
 .sources { display: grid; padding: 4px; border: 1px solid var(--rule); border-radius: var(--r-lg); background: var(--plate); }
 .source { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 3px 12px; padding: 12px 12px 12px 10px; border-radius: 11px; transition: background 0.3s; }
 .source.hot { background: var(--k-soft); }
@@ -1073,6 +1092,7 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
   .central-sign { margin-bottom: 12px; }
   .central-sign h1 { font-size: 34px; }
   .central-sign span { font-size: 19px; }
+  .central-lede { margin: -4px 0 12px; font-size: 13.5px; }
   .line-cards { margin-top: 16px; gap: 12px; }
   .line-card { padding: 14px 16px 8px; border-radius: 16px; }
   .tabs-wrap { margin: -2px -16px 18px; }

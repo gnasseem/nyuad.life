@@ -64,6 +64,8 @@ export interface BoardStore {
   /** A cached AI summary for the guide, or null. */
   getSummary(key: string): Promise<{ payload: unknown; createdAt: string } | null>;
   putSummary(key: string, payload: unknown): Promise<void>;
+  /** Drops cached entries whose key starts with `prefix` and that were written before `before` (an ISO time). */
+  deleteSummaries(prefix: string, before: string): Promise<void>;
 }
 
 /* ---------- In memory ---------- */
@@ -211,6 +213,9 @@ export class MemoryBoardStore implements BoardStore {
   }
   async putSummary(key: string, payload: unknown): Promise<void> {
     this.summaries.set(key, { payload, createdAt: new Date().toISOString() });
+  }
+  async deleteSummaries(prefix: string, before: string): Promise<void> {
+    for (const [key, entry] of this.summaries) if (key.startsWith(prefix) && entry.createdAt < before) this.summaries.delete(key);
   }
   private sorted(): Question[] {
     return [...this.questions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -517,6 +522,9 @@ export class SupabaseBoardStore implements BoardStore {
   }
   async putSummary(key: string, payload: unknown): Promise<void> {
     await this.write('POST', 'guide_summaries?on_conflict=key', { key, payload, created_at: new Date().toISOString() }, 'resolution=merge-duplicates,return=minimal');
+  }
+  async deleteSummaries(prefix: string, before: string): Promise<void> {
+    await this.call(`guide_summaries?key=like.${enc(`${prefix}*`)}&created_at=lt.${enc(before)}`, { method: 'DELETE', headers: this.headers('return=minimal') });
   }
 
   private headers(prefer?: string): Record<string, string> {

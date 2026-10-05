@@ -9,6 +9,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { resetAnswerCache } from './answer-cache.ts';
 import { chatgptConfig, readSession, resetChatGPTModels, safeReturnTo, seal, sessionCookies, unseal, type ChatGPTSession } from './chatgpt.ts';
 import { createApiServer } from './devserver.ts';
 import { resetArchive } from './store.ts';
@@ -109,6 +110,8 @@ beforeEach(() => {
   fake.expiresIn = 3600;
   delete process.env.ROR_REQUIRE_CHATGPT;
   resetChatGPTModels();
+  process.env.ROR_ANSWER_CACHE = '0';
+  resetAnswerCache();
 });
 
 /** Cookies from Set-Cookie lines, as a browser would send them back. */

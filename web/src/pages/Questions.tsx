@@ -152,19 +152,22 @@ function AskStudents() {
             value={text}
             onChange={(event) => setText(event.target.value)}
             onKeyDown={(event) => submitOnShortcut(event, () => void submit())}
-            placeholder="Ask other students"
+            placeholder="What do you want to ask other students?"
             maxLength={QUESTION_MAX}
             rows={3}
             aria-label="Your question"
           />
           <div className="ask-card-foot">
-            <input className="input" value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" maxLength={40} aria-label="Your name" />
+            <input className="input" value={name} onChange={(event) => setName(event.target.value)} placeholder="Name (optional)" maxLength={40} aria-label="Your name (optional)" />
             <button type="button" className="btn primary" onClick={() => void submit()} disabled={!ready}>
               {posting ? 'Posting' : 'Post question'}
             </button>
           </div>
         </div>
         {error && <div className="alert error">{error}</div>}
+        <p className="page-lede">
+          For what Ask couldn't answer. Your question goes to students in the right major and year; their answers show up below, and Ask cites them from then on.
+        </p>
       </div>
 
       {posted?.redirect && <RedirectCard redirect={posted.redirect} />}

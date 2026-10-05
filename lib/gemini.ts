@@ -63,15 +63,28 @@ const unavailable = new Map<string, number>();
 /** Models that rejected a thinking setting; they are called without one from then on. */
 const noThinking = new Set<string>();
 
+/** The models not marked unavailable, in order; possibly none. */
+export function liveModels(models: string[], now = Date.now()): string[] {
+  return models.filter((model) => (unavailable.get(model) ?? 0) <= now);
+}
+
 /** The models still worth trying, in order; all of them again when every one is marked unavailable. */
 export function usableModels(models: string[], now = Date.now()): string[] {
-  const live = models.filter((model) => (unavailable.get(model) ?? 0) <= now);
+  const live = liveModels(models, now);
   return live.length ? live : models;
 }
 
-/** Whether an error means "try the next model": the model is gone (404) or out of quota (429). */
+/**
+ * Whether an error means "try the next model": the model is gone (404), out of quota (429), or overloaded or failing
+ * on Google's side (500, 502, 503 "The model is overloaded", 504). Overload is per model, so the next one usually works.
+ */
 export function isModelUnavailable(error: unknown): error is GeminiError {
-  return error instanceof GeminiError && (error.status === 404 || error.status === 429);
+  return error instanceof GeminiError && (error.status === 404 || error.status === 429 || isOverloaded(error));
+}
+
+/** A server-side failure (overloaded, internal error, timeout) rather than anything about this request or quota. */
+export function isOverloaded(error: GeminiError): boolean {
+  return error.status === 500 || error.status === 502 || error.status === 503 || error.status === 504;
 }
 
 /** Whether a 429 means the day's quota is gone rather than a short per-minute limit. */
@@ -79,9 +92,12 @@ export function isDailyQuota(error: GeminiError): boolean {
   return error.status === 429 && /per ?day|perday|daily/i.test(error.message);
 }
 
-/** Skips a model for a while: hours when it no longer exists, an hour when its daily quota is spent, else its retry delay. */
+/**
+ * Skips a model for a while: hours when it no longer exists, an hour when its daily quota is spent, a minute when it
+ * is overloaded (that usually passes quickly), else its retry delay.
+ */
 export function markUnavailable(model: string, error: GeminiError, now = Date.now()): void {
-  const ms = error.status === 404 ? 6 * 3_600_000 : isDailyQuota(error) ? 3_600_000 : Math.max(10_000, error.retryAfterMs ?? 30_000);
+  const ms = error.status === 404 ? 6 * 3_600_000 : isDailyQuota(error) ? 3_600_000 : isOverloaded(error) ? 60_000 : Math.max(10_000, error.retryAfterMs ?? 30_000);
   unavailable.set(model, now + ms);
 }
 
@@ -202,9 +218,12 @@ export async function generateText(cfg: GeminiConfig, params: GenerateParams, op
   const models = Array.isArray(params.model) ? params.model : [params.model ?? cfg.chatModel];
   if (models.length === 1) return generateOnce(cfg, models[0]!, params, options);
   let lastError: unknown;
-  for (const model of usableModels(models)) {
+  const usable = usableModels(models);
+  for (const [i, model] of usable.entries()) {
+    // Only the last model retries an overload; before that, the next model is the faster way out.
+    const last = i === usable.length - 1;
     try {
-      return await generateOnce(cfg, model, params, { ...options, waitOutQuota: false });
+      return await generateOnce(cfg, model, params, { ...options, waitOutQuota: false, retries: last ? options.retries : 0 });
     } catch (error) {
       if (!isModelUnavailable(error)) throw error;
       markUnavailable(model, error);

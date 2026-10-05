@@ -3,6 +3,7 @@ import { addCookies, chatgptConfig, ChatGPTError, freshSession, readSession, ses
 import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, rateLimit, readJson, route, sendJson, startSse } from '../lib/http.ts';
 import { loadOfficial } from '../lib/official.ts';
+import { providersFromEnv } from '../lib/providers.ts';
 import { ask, validateAsk } from '../lib/rag.ts';
 import { loadArchive } from '../lib/store.ts';
 import type { AskRequest } from '../lib/types.ts';
@@ -34,8 +35,9 @@ export default route(['POST'], async (req, res) => {
       throw error;
     }
   }
-  if (!chatgpt && chatgptCfg && (chatgptCfg.required || !cfg)) throw new ApiError(401, 'Connect your ChatGPT account to ask. Answers run on your own plan.', 'chatgpt_required');
-  if (!chatgpt && !cfg) throw new ApiError(503, 'GEMINI_API_KEY is not set on the server.', 'no_model');
+  const backups = providersFromEnv();
+  if (!chatgpt && chatgptCfg && (chatgptCfg.required || (!cfg && backups.length === 0))) throw new ApiError(401, 'Connect your ChatGPT account to ask. Answers run on your own plan.', 'chatgpt_required');
+  if (!chatgpt && !cfg && backups.length === 0) throw new ApiError(503, 'No model key is set on the server (GEMINI_API_KEY, GROQ_API_KEY, …).', 'no_model');
   const archive = await loadArchive();
   const official = await loadOfficial().catch((error) => {
     console.warn('[ask] official pages could not be loaded:', (error as Error).message);
@@ -44,7 +46,7 @@ export default route(['POST'], async (req, res) => {
   const board = boardStore();
 
   if (!request.stream) {
-    sendJson(res, 200, await ask(archive, cfg, request, {}, undefined, { board, official, deadline, chatgpt }));
+    sendJson(res, 200, await ask(archive, cfg, request, {}, undefined, { board, official, deadline, chatgpt, backups }));
     return;
   }
 
@@ -68,12 +70,13 @@ export default route(['POST'], async (req, res) => {
         followups: (questions) => sse.send('followups', { questions }),
       },
       controller.signal,
-      { board, official, deadline, chatgpt },
+      { board, official, deadline, chatgpt, backups },
     );
-    sse.send('done', { model: result.model, confidence: result.confidence, truncated: result.truncated ?? false, retrieval: result.retrieval });
+    sse.send('done', { model: result.model, confidence: result.confidence, truncated: result.truncated ?? false, cached: result.cached ?? false, retrieval: result.retrieval });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     if (!(error instanceof ApiError) || error.status >= 500) console.error('[ask]', error);
+    // Only our own errors are worded for students; anything else ("Gemini 503: …") stays in the log.
+    const message = error instanceof ApiError ? error.message : 'Something went wrong while answering. Try again in a moment.';
     sse.send('error', { message, code: error instanceof ApiError ? error.code : 'error' });
   } finally {
     sse.close();

@@ -156,7 +156,7 @@ const hot = new Map<string, CourseSummary>();
 
 /** The cached summary when fresh, otherwise a new one from the lite model; null when there is nothing to summarise. */
 async function courseSummary(archive: Archive, official: OfficialCorpus | null, catalog: Catalog, code: string): Promise<CourseSummary | null> {
-  const key = `course:v2:${code}`;
+  const key = `course:v3:${code}`;
   const store = boardStore();
   const cached = hot.get(key) ?? ((await store?.getSummary(key).catch(() => null))?.payload as CourseSummary | undefined);
   if (cached && Date.now() - Date.parse(cached.createdAt) < SUMMARY_TTL_MS) {
@@ -191,10 +191,10 @@ async function write(cfg: GeminiConfig, archive: Archive, input: { title: string
         responseSchema: SUMMARY_SCHEMA,
         system: [
           'You write the "what students say" panel for one NYU Abu Dhabi course, from the numbered sources only. The schedule, credits and description are shown elsewhere; do not repeat them.',
-          'overview: one or two plain sentences on what taking the course is like, according to students. Cite sources as [n] after facts.',
+          'overview: one or two plain sentences with an honest verdict on what taking the course is like, according to students: who it suits, and what the main complaint is if there is one. Cite sources as [n] after facts.',
           'facts: up to three short bullets of rules from the bulletin entry that students trip on (prerequisites, who may take it, what it counts towards); empty if none.',
-          'students: up to five short bullets of what students said: workload, exams and grading, professors, tips, how it really went. Each cites its source and gives the year when it is older than a year.',
-          'keepInMind: up to two bullets: disagreements, or things that change with the professor or year.',
+          'students: up to five short bullets of what students said: workload, exams and grading, professors, tips, how it really went. Report complaints as plainly as praise, and say how many people said something when it is one or two. Prefer first-hand accounts. Each cites its source and gives the year when it is older than a year.',
+          'keepInMind: up to two bullets: disagreements (with which side has more support), or things that change with the professor or year.',
           'confidence: high when several recent threads agree, medium when there are few or older ones, low when they are thin or disagree.',
           'Never invent. No filler. No headings inside strings. Under 200 words in total.',
         ].join(' '),

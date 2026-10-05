@@ -65,6 +65,8 @@ export interface HomePayload {
 export interface Health {
   ok: boolean;
   gemini: { configured: boolean; chatModel?: string };
+  /** Whether any model (Gemini or a free backup) can write answers; older servers leave it out. */
+  answers?: { available: boolean };
   embeddings?: { semanticSearch: boolean; provider?: string | null };
   archive?: { posts: number; comments: number; newestPost: string };
   official?: { pages: number; courses?: number; fetchedAt?: string; hint?: string };

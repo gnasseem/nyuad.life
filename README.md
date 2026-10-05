@@ -5,7 +5,9 @@ level: threads from the Room of Requirement Facebook group, official NYUAD pages
 other students wrote here.
 
 - **Ask.** Hybrid keyword and vector search over the archive and the official pages, reranked by Voyage's cross-encoder
-  and written up by Gemini, or on the student's own ChatGPT plan when they sign in with ChatGPT. A question that names a course or a professor also gets their Albert schedule as a source.
+  and written up by Gemini, with free backup models when Gemini is overloaded, or on the student's own ChatGPT plan
+  when they sign in with ChatGPT. A question that names a course or a professor also gets their Albert schedule as a
+  source. Answers lead with a verdict, then the specifics, the catch, what may have changed and the next step.
 - **Questions.** When the archive falls short, a question goes to students. Helpers give a name, NetID, major and class
   year once, then get questions one at a time, matched by major and year. Answered questions are cited by Ask.
 - **Notices.** Events, deadlines and opportunities posted by students, by day, with a calendar file for dated ones.
@@ -30,6 +32,7 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
    | Variable | Needed for |
    | --- | --- |
    | `GEMINI_API_KEY` | Answers for students not signed in with ChatGPT, question tagging, course summaries. |
+   | `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY` | Free backup models for answers when Gemini is overloaded or out of quota (below). Any or all. |
    | `OPENAI_CLIENT_ID`, `SESSION_SECRET`, `ROR_SITE_URL` | Sign in with ChatGPT: answers on each student's own plan (below). |
    | `VOYAGE_API_KEY` | Semantic search (must be the provider that built the index) and the reranker. |
    | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | The board: questions, notices, offers, listings, course summaries. |
@@ -44,9 +47,39 @@ Routes: `GET /api/health`, `/api/home`, `/api/search` (`q=`, `topic=`, `sort=`, 
 `profile|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer|listing|listing_done|unlisting` on POST). Ask,
 search, courses and the board are rate-limited per IP.
 
-Gemini models are tried newest first (3.5 Flash, 3 Flash, 2.5 Flash for answers; 3.1 Flash-Lite, 2.5 Flash-Lite for
-the small calls), and a model that is shut down or out of quota is skipped for a while, so a retirement or a spent free
-tier degrades to the next model instead of breaking Ask. `GET /api/health` shows the lists.
+## Keeping answers up for free
+
+Free model tiers fail in two ways: a model is overloaded (Gemini's 503 "The model is overloaded") or its daily quota is
+spent (429). Ask handles both by moving down a chain of models before it has written a word:
+
+1. Gemini 3.5 Flash, 3 Flash and 2.5 Flash.
+2. Every backup provider with a key set, each with several models: Groq, Cerebras, Mistral and OpenRouter, over the
+   OpenAI-compatible API (`lib/providers.ts`). Their free tiers are counted per provider and mostly per model, so each
+   key adds capacity. Groq and Cerebras cap a request at about 8,000 tokens, so the sources are cut down to fit them.
+3. Gemini's Flash-Lite models, as the last resort.
+
+A model that failed rests for a while (a minute when overloaded, an hour when its day's quota is spent, hours when it
+no longer exists), and one that has not started writing within 25 seconds is skipped while there is time for the next.
+If every model is down, the student is told answers are busy and offered a retry. `GET /api/health` shows the chain as
+it stands (`answers.chain`).
+
+| Provider | Free tier, roughly (they change) | Key |
+| --- | --- | --- |
+| Gemini | per model, resets daily | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| Groq | about 1,000 requests a day per model, no card | [console.groq.com/keys](https://console.groq.com/keys) |
+| Cerebras | about a million tokens a day, no card | [cloud.cerebras.ai](https://cloud.cerebras.ai) |
+| Mistral | "Experiment" plan, phone check | [console.mistral.ai](https://console.mistral.ai) |
+| OpenRouter | `:free` models, 50 requests a day, 1,000 after a one-time $10 top-up | [openrouter.ai/keys](https://openrouter.ai/keys) |
+
+Opening questions are also cached for six hours (`lib/answer-cache.ts`): the same question asked again, in any case or
+punctuation, is answered from the cache with no model call. Suggestions on the home page and registration-week
+questions are asked many times a day, so this saves much of the quota. The cache lives in memory and in the board's
+`guide_summaries` table when Supabase is set up, so every serverless instance shares it; expired entries are removed.
+Follow-ups are never cached.
+
+Settings: `ROR_MODEL_ORDER=groq,gemini` puts a backup first; `<PROVIDER>_MODELS` and `<PROVIDER>_LITE_MODELS` (for
+example `GROQ_MODELS`) replace a provider's model lists; `ROR_ANSWER_CACHE=0` turns the cache off. Gemini's own lists
+are `GEMINI_CHAT_MODEL`, `GEMINI_CHAT_FALLBACK_MODELS`, `GEMINI_LITE_MODEL` and `GEMINI_LITE_FALLBACK_MODELS`.
 
 ## Sign in with ChatGPT
 
@@ -150,5 +183,5 @@ npx vite                        # web app with hot reload on http://localhost:51
 npm run check                   # typecheck, tests, production build
 ```
 
-Without a Gemini key the API still serves the guide and keyword search. The tests run the whole API against a fake
+Without any model key the API still serves the course search and keyword search. The tests run the whole API against a fake
 Gemini, the board schema against PGlite, and the scraper against a fake Facebook (skipped without Playwright's Chromium).

@@ -7,7 +7,8 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { resetAnswerCache } from './answer-cache.ts';
 import { createApiServer } from './devserver.ts';
 import { embedderFromEnv } from './embeddings.ts';
 import { geminiConfig, normalize } from './gemini.ts';
@@ -166,6 +167,12 @@ afterAll(async () => {
 const headers = { 'content-type': 'application/json' };
 
 describe('api', () => {
+  // Each test asks afresh; the cache has its own test.
+  beforeEach(() => {
+    process.env.ROR_ANSWER_CACHE = '0';
+    resetAnswerCache();
+  });
+
   it('reports health, including which embedding provider the index needs', async () => {
     const health = await getJson(`${apiUrl}/api/health`);
     expect(health.ok).toBe(true);

@@ -11,39 +11,67 @@ interface MarkdownProps {
   citeKind?(n: number): string | undefined;
 }
 
+/** Lines an answer may set apart: the downsides, what may have changed, and what to do next. */
+const CALLOUTS: Array<{ kind: string; label: RegExp }> = [
+  { kind: 'catch', label: /^\*\*(?:the catch|downsides?|watch out)\s*:?\s*\*\*\s*:?/i },
+  { kind: 'mind', label: /^\*\*keep in mind\s*:?\s*\*\*\s*:?/i },
+  { kind: 'next', label: /^\*\*next steps?\s*:?\s*\*\*\s*:?/i },
+];
+
+function calloutKind(block: Block | undefined): string | undefined {
+  return block?.type === 'p' ? CALLOUTS.find((entry) => entry.label.test(block.text))?.kind : undefined;
+}
+
 export function Markdown({ text, onCitation, onCitationHover, hot, citeKind }: MarkdownProps) {
+  const options = { onCitation, onCitationHover, hot, citeKind };
   const blocks = parseBlocks(text);
-  return (
-    <>
-      {blocks.map((block, index) => {
-        const key = `${block.type}-${index}`;
-        switch (block.type) {
-          case 'heading':
-            return <h3 key={key}>{inline(block.text, { onCitation, onCitationHover, hot, citeKind })}</h3>;
-          case 'ul':
-            return (
-              <ul key={key}>
-                {block.items.map((item, i) => (
-                  <li key={i}>{inline(item, { onCitation, onCitationHover, hot, citeKind })}</li>
-                ))}
-              </ul>
-            );
-          case 'ol':
-            return (
-              <ol key={key} start={block.start}>
-                {block.items.map((item, i) => (
-                  <li key={i}>{inline(item, { onCitation, onCitationHover, hot, citeKind })}</li>
-                ))}
-              </ol>
-            );
-          case 'quote':
-            return <blockquote key={key}>{inline(block.text, { onCitation, onCitationHover, hot, citeKind })}</blockquote>;
-          default:
-            return <p key={key}>{inline(block.text, { onCitation, onCitationHover, hot, citeKind })}</p>;
-        }
-      })}
-    </>
-  );
+  const out: ReactNode[] = [];
+  for (let index = 0; index < blocks.length; index++) {
+    const block = blocks[index]!;
+    const kind = calloutKind(block);
+    if (kind) {
+      // A label on its own line ("**The catch:**") with bullets under it is one callout.
+      const next = blocks[index + 1];
+      const list = next && (next.type === 'ul' || next.type === 'ol') ? next : null;
+      if (list) index++;
+      out.push(
+        <div key={`callout-${index}`} className="callout" data-callout={kind}>
+          <p>{inline(block.type === 'p' ? block.text : '', options)}</p>
+          {list && renderBlock(list, `callout-list-${index}`, options)}
+        </div>,
+      );
+      continue;
+    }
+    out.push(renderBlock(block, `${block.type}-${index}`, options));
+  }
+  return <>{out}</>;
+}
+
+function renderBlock(block: Block, key: string, options: InlineOptions): ReactNode {
+  switch (block.type) {
+    case 'heading':
+      return <h3 key={key}>{inline(block.text, options)}</h3>;
+    case 'ul':
+      return (
+        <ul key={key}>
+          {block.items.map((item, i) => (
+            <li key={i}>{inline(item, options)}</li>
+          ))}
+        </ul>
+      );
+    case 'ol':
+      return (
+        <ol key={key} start={block.start}>
+          {block.items.map((item, i) => (
+            <li key={i}>{inline(item, options)}</li>
+          ))}
+        </ol>
+      );
+    case 'quote':
+      return <blockquote key={key}>{inline(block.text, options)}</blockquote>;
+    default:
+      return <p key={key}>{inline(block.text, options)}</p>;
+  }
 }
 
 type Block =
@@ -131,8 +159,9 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
       const numbers = [...new Set(token.match(/\d+/g)?.map(Number) ?? [])];
       // A long run of citations reads as noise: show the first two and fold the rest into "+n".
       const shown = numbers.length > 3 ? numbers.slice(0, 2) : numbers;
+      const pills: ReactNode[] = [];
       shown.forEach((n) => {
-        nodes.push(
+        pills.push(
           <button
             key={key++}
             type="button"
@@ -149,12 +178,25 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
       });
       if (numbers.length > shown.length) {
         const rest = numbers.slice(shown.length);
-        nodes.push(
+        pills.push(
           <button key={key++} type="button" className="cite more" aria-label={`Sources ${rest.join(', ')}`} title={`Sources ${rest.join(', ')}`} onClick={() => options.onCitation?.(rest[0]!)}>
             +{rest.length}
           </button>,
         );
       }
+      // Punctuation right after the citations stays on their line, rather than wrapping to start the next one.
+      const trail = /^[.,;:!?)]+/.exec(text.slice(start + token.length))?.[0] ?? '';
+      if (trail) {
+        nodes.push(
+          <span key={key++} className="cite-run">
+            {pills}
+            {trail}
+          </span>,
+        );
+        cursor = start + token.length + trail.length;
+        continue;
+      }
+      nodes.push(...pills);
     } else if (token.startsWith('[')) {
       const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
       if (link) nodes.push(<a key={key++} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>);
