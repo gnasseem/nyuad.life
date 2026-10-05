@@ -278,7 +278,7 @@ function HistoryMenu({ open, setOpen, conversations, current }: { open: boolean;
         <IconClock />
       </button>
       {open && (
-        <div className="popover" role="menu">
+        <div className="popover" role="dialog" aria-label="Your questions">
           <div className="popover-head">
             <span className="popover-title">Your questions</span>
             {conversations.length > 0 && (

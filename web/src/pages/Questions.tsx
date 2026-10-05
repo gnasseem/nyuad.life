@@ -398,6 +398,7 @@ export function QuestionPage({ id }: { id: string }) {
   const [error, setError] = useState('');
   useEffect(() => {
     setData(null);
+    setError('');
     api.board
       .question(id)
       .then(setData)

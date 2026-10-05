@@ -16,7 +16,14 @@ export type MarketTab = 'items' | 'falcons' | 'campus' | 'rides' | 'lost';
 const MARKET_TABS: MarketTab[] = ['items', 'falcons', 'campus', 'rides', 'lost'];
 
 export function parseRoute(pathname: string): Route {
-  const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  // A malformed escape ("/post/%E0") would throw outside every error boundary and leave a blank page; keep it as typed.
+  const parts = pathname.split('/').filter(Boolean).map((part) => {
+    try {
+      return decodeURIComponent(part);
+    } catch {
+      return part;
+    }
+  });
   switch (parts[0]) {
     case 'questions':
       return parts[1] ? { name: 'question', id: parts[1] } : { name: 'questions' };
