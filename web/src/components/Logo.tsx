@@ -12,12 +12,17 @@ export function Mark(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** The mark and the domain. */
+/** The mark and the domain, with the dot in the colour of the line you are on. */
 export function Wordmark() {
+  const [left, right] = APP_NAME.split('.');
   return (
     <>
       <Mark className="brand-mark" />
-      <span className="brand-name">{APP_NAME}</span>
+      <span className="brand-name">
+        {left}
+        <i>.</i>
+        {right}
+      </span>
     </>
   );
 }

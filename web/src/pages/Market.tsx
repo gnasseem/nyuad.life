@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError, type ContactKind, type Listing, type ListingKind, type Offer, type OfferCurrency, type OfferSide } from '../api';
 import { ContactFields, ContactReveal } from '../components/Contact';
 import { EmptyState } from '../components/EmptyState';
+import { Flap } from '../components/Flap';
 import { Modal } from '../components/Modal';
-import { PageHeader } from '../components/PageHeader';
 import { Segmented } from '../components/Segmented';
+import { Sign } from '../components/Sign';
 import { useApp } from '../context';
 import { formatTime, groupByDay, plural, shortDate, startsIn } from '../format';
 import { IconArrow, IconBag, IconPin, IconPlus, IconQuestions, IconSearch } from '../icons';
@@ -34,7 +35,7 @@ const LOST_KINDS: Array<{ id: ListingKind; label: string }> = [
   { id: 'found', label: 'Found' },
 ];
 
-const KIND_CLASS: Record<ListingKind, string> = { sell: 'tone-slate', want: 'tone-slate', free: 'tone-ok', ride: 'tone-slate', lost: 'tone-alert', found: 'tone-ok' };
+const KIND_CLASS: Record<ListingKind, string> = { sell: 'tone-line', want: 'tone-info', free: 'tone-ok', ride: 'tone-slate', lost: 'tone-alert', found: 'tone-ok' };
 
 function tabOf(kind: ListingKind): MarketTab {
   return kind === 'ride' ? 'rides' : kind === 'lost' || kind === 'found' ? 'lost' : 'items';
@@ -130,7 +131,7 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
 
   return (
     <div className="page">
-      <PageHeader title="Market" description="Buy, sell and share rides with other students.">
+      <Sign title="Market" ar="السوق">
         {!boardProblem &&
           (currency ? (
             <>
@@ -148,7 +149,7 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
               </button>
             )
           ))}
-      </PageHeader>
+      </Sign>
       <div className="tabs-wrap">
         <Segmented
           variant="tabs"
@@ -204,20 +205,20 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
 function Loading() {
   return (
     <div className="items" aria-busy="true">
-      <div className="skeleton" style={{ height: 180 }} />
-      <div className="skeleton" style={{ height: 180 }} />
-      <div className="skeleton" style={{ height: 180 }} />
+      <div className="skeleton" style={{ height: 190, borderRadius: 15 }} />
+      <div className="skeleton" style={{ height: 190, borderRadius: 15 }} />
+      <div className="skeleton" style={{ height: 190, borderRadius: 15 }} />
     </div>
   );
 }
 
-/** A pickup or a sighting: campus building codes (A2, C3, D2) read as a small badge, anything else as a pin and words. */
+/** A pickup or a sighting: campus building codes (A2, C3, D2) read as roundels, anything else as a pin and words. */
 function Place({ place }: { place: string }) {
   const match = /^([A-H]\d{1,2}[A-C]?)\b[\s,]*(.*)$/i.exec(place.trim());
   if (match) {
     return (
       <span className="place">
-        <span className="building">{match[1]!.toUpperCase()}</span>
+        <span className="roundel sm">{match[1]!.toUpperCase()}</span>
         {match[2]}
       </span>
     );
@@ -309,7 +310,7 @@ function Price({ listing }: { listing: Listing }) {
   const amount = listing.price.toLocaleString('en-GB', { maximumFractionDigits: 2 });
   return (
     <span className="price" title={listing.kind === 'want' ? 'Budget' : 'Price'}>
-      {listing.kind === 'want' && <small className="lead">up to</small>}
+      {listing.kind === 'want' && <small style={{ marginLeft: 0, marginRight: 4 }}>UP TO</small>}
       {amount}
       <small>AED</small>
     </span>
@@ -342,7 +343,9 @@ function ListingActions({ listing, mine, onClose }: { listing: Listing; mine: bo
     <div className="item-actions">
       {mine ? (
         <>
-          <span className="pill">Yours</span>
+          <span className="pill tone-line">
+            <span className="dot" /> Yours
+          </span>
           <button type="button" className="btn sm" onClick={() => onClose(listing, false)}>
             {listing.kind === 'lost' || listing.kind === 'found' ? 'Mark returned' : listing.kind === 'ride' ? 'Mark full' : 'Mark done'}
           </button>
@@ -387,36 +390,36 @@ function RidesTab({ listings, mineIds, onClose, onPost }: TabProps) {
   return (
     <>
       {groupByDay(rides, (ride) => new Date(ride.happensAt!), now).map((group) => (
-        <section key={group.key} className="day-group" aria-label={`Rides ${group.label}`}>
-          <div className="day-head">
+        <section key={group.key} className="board" aria-label={`Rides ${group.label}`}>
+          <div className="board-head">
             <h2>{group.label}</h2>
             {group.sub && <span>{group.sub}</span>}
           </div>
-          <div className="list">
-            {group.items.map((ride) => {
-              const boarding = startsIn(new Date(ride.happensAt!), now, 60)?.live;
-              return (
-                <article key={ride.id} className="ride">
-                  <div className="ride-time">{formatTime(ride.happensAt!)}</div>
-                  <div className="ride-main">
-                    <b className="ride-route">
-                      {ride.place} <IconArrow /> {ride.destination}
-                    </b>
-                    <span className="meta">{[ride.seats !== null ? plural(ride.seats, 'seat') : '', ride.posterName].filter(Boolean).join(' · ')}</span>
-                    {ride.body && <Details text={ride.body} />}
-                  </div>
-                  <div className="ride-side">
-                    {boarding && (
-                      <span className="pill tone-ok">
-                        <span className="dot" /> Boarding
-                      </span>
-                    )}
-                    <ListingActions listing={ride} mine={mineIds.has(ride.id)} onClose={onClose} />
-                  </div>
-                </article>
-              );
-            })}
-          </div>
+          {group.items.map((ride) => {
+            const boarding = startsIn(new Date(ride.happensAt!), now, 60)?.live;
+            return (
+              <article key={ride.id} className="board-row">
+                <div className="board-time">
+                  <Flap text={formatTime(ride.happensAt!)} />
+                </div>
+                <div className="board-route">
+                  <b>
+                    {ride.place} <IconArrow /> {ride.destination}
+                  </b>
+                  <span>{[ride.seats !== null ? plural(ride.seats, 'seat') : '', ride.posterName].filter(Boolean).join(' · ')}</span>
+                  {ride.body && <Details text={ride.body} />}
+                </div>
+                <div className="board-side">
+                  {boarding && (
+                    <span className="board-status now">
+                      <Flap text="Boarding" />
+                    </span>
+                  )}
+                  <ListingActions listing={ride} mine={mineIds.has(ride.id)} onClose={onClose} />
+                </div>
+              </article>
+            );
+          })}
         </section>
       ))}
     </>

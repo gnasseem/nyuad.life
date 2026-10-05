@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, boardProblem as describeBoardProblem, type ChatGPTStatus, type Health, type HomePayload, type Profile } from './api';
 import { APP_NAME } from './brand';
 import { Wordmark } from './components/Logo';
@@ -17,24 +17,31 @@ import { navigate, onLinkClick, routePath, useRoute, type Route } from './router
 import { applyTheme, clearConversations, deleteConversation, loadActiveConversation, loadConversations, loadProfile, loadTheme, onConversationsChange, saveProfile, type Conversation, type Theme } from './store';
 import { standingFor } from './year';
 
-const NAV: Array<{ route: Route; label: string; icon: typeof IconAsk; matches: Route['name'][] }> = [
-  { route: { name: 'ask' }, label: 'Ask', icon: IconAsk, matches: ['ask'] },
-  { route: { name: 'questions' }, label: 'Questions', icon: IconQuestions, matches: ['questions', 'question'] },
-  { route: { name: 'announcements' }, label: 'Notices', icon: IconMegaphone, matches: ['announcements'] },
-  { route: { name: 'market', tab: 'items' }, label: 'Market', icon: IconBag, matches: ['market'] },
-  { route: { name: 'courses' }, label: 'Courses', icon: IconBook, matches: ['courses', 'threads', 'post'] },
+type Line = 'ask' | 'questions' | 'notices' | 'market' | 'guide';
+
+const NAV: Array<{ route: Route; label: string; line: Line; icon: typeof IconAsk; matches: Route['name'][] }> = [
+  { route: { name: 'ask' }, label: 'Ask', line: 'ask', icon: IconAsk, matches: ['ask'] },
+  { route: { name: 'questions' }, label: 'Questions', line: 'questions', icon: IconQuestions, matches: ['questions', 'question'] },
+  { route: { name: 'announcements' }, label: 'Notices', line: 'notices', icon: IconMegaphone, matches: ['announcements'] },
+  { route: { name: 'market', tab: 'items' }, label: 'Market', line: 'market', icon: IconBag, matches: ['market'] },
+  { route: { name: 'courses' }, label: 'Courses', line: 'guide', icon: IconBook, matches: ['courses', 'threads', 'post'] },
 ];
 
 const THEME_LABEL: Record<Theme, string> = { system: 'Theme: auto', light: 'Theme: light', dark: 'Theme: dark' };
 const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Notices', market: 'Market', courses: 'Courses', threads: 'Threads', post: 'Thread', settings: 'Settings' };
 const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: '' };
 
-/** Saved conversations, and the one Ask returns to in this tab, kept up to date as they change. */
-function useConversations(): { conversations: Conversation[]; active: string | null } {
-  const read = () => ({ conversations: loadConversations(), active: loadActiveConversation() });
-  const [state, setState] = useState(read);
-  useEffect(() => onConversationsChange(() => setState(read())), []);
-  return state;
+function useConversations(): Conversation[] {
+  const [items, setItems] = useState(loadConversations);
+  useEffect(() => onConversationsChange(() => setItems(loadConversations())), []);
+  return items;
+}
+
+/** The conversation open on Ask in this tab; the Ask links lead back to it until "New question". */
+function useActiveConversation(): string | null {
+  const [active, setActive] = useState(loadActiveConversation);
+  useEffect(() => onConversationsChange(() => setActive(loadActiveConversation())), []);
+  return active;
 }
 
 export function App() {
@@ -50,7 +57,10 @@ export function App() {
   const [history, setHistory] = useState(false);
   const [profileAsk, setProfileAsk] = useState<{ title: string; reason: string } | null>(null);
   const profileRequest = useRef<((saved: boolean) => void) | null>(null);
-  const { conversations, active } = useConversations();
+  const conversations = useConversations();
+  const active = useActiveConversation();
+  const askHref = active ? `/?c=${encodeURIComponent(active)}` : '/';
+  const hrefOf = (target: Route) => (target.name === 'ask' ? askHref : routePath(target));
 
   // Class years roll over on 1 May; the stored standing is brought up to date so the board routes correctly.
   useEffect(() => {
@@ -96,9 +106,10 @@ export function App() {
   }, [route.name]);
 
   const activeIndex = NAV.findIndex((item) => item.matches.includes(route.name));
-  // Ask, from the nav or the logo, goes back to the conversation open in this tab until "New question" clears it.
-  const askHref = active ? `/?c=${encodeURIComponent(active)}` : '/';
-  const hrefOf = (target: Route) => (target.name === 'ask' ? askHref : routePath(target));
+  const line: Line = NAV[activeIndex]?.line ?? 'ask';
+  useEffect(() => {
+    document.documentElement.dataset.line = line;
+  }, [line]);
 
   const toastTimers = useRef<number[]>([]);
   const toast = useCallback((message: string) => {
@@ -184,6 +195,7 @@ export function App() {
 
   // A new key per page replays its entrance. Market tabs and a course opening beside the list keep the key, so they do not.
   const pageKey = route.name === 'market' ? 'market' : route.name === 'courses' || route.name === 'threads' ? 'courses' : routePath(route);
+  const settingsActive = route.name === 'settings';
 
   const me = (
     <button type="button" className="me-btn" onClick={() => (profile ? navigate({ name: 'settings' }) : void requestProfile())} title={profile ? `${profile.name}, settings` : 'Add your details'} aria-label={profile ? 'Settings' : 'Add your details'}>
@@ -200,23 +212,18 @@ export function App() {
   return (
     <AppContext.Provider value={context}>
       <div className="app">
+        <div className="ground" aria-hidden="true" />
         <header className="appbar">
           <a href={askHref} className="brand" onClick={onLinkClick} aria-label={`${APP_NAME}, home`}>
             <Wordmark />
           </a>
-          <nav className="nav" aria-label="Sections">
-            {NAV.map((item, index) => (
-              <a key={item.label} href={hrefOf(item.route)} className="nav-link" aria-current={index === activeIndex ? 'page' : undefined} onClick={onLinkClick}>
-                {item.label}
-              </a>
-            ))}
-          </nav>
+          <LineNav activeIndex={activeIndex} hrefOf={hrefOf} />
           <div className="bar-tools">
             <HistoryMenu open={history} setOpen={setHistory} conversations={conversations} current={currentConversation} />
             <button type="button" className="icon-btn" onClick={cycleTheme} title={THEME_LABEL[theme]} aria-label={THEME_LABEL[theme]}>
-              <ThemeIcon />
+              <ThemeIcon key={theme} className="turn-in" />
             </button>
-            {me}
+            <span className={settingsActive ? 'is-settings' : undefined}>{me}</span>
           </div>
         </header>
 
@@ -226,7 +233,7 @@ export function App() {
 
         <nav className="tabbar" aria-label="Sections">
           {NAV.map((item, index) => (
-            <a key={item.label} href={hrefOf(item.route)} aria-current={index === activeIndex ? 'page' : undefined} onClick={onLinkClick}>
+            <a key={item.label} href={hrefOf(item.route)} data-line={item.line} aria-current={index === activeIndex ? 'page' : undefined} onClick={onLinkClick}>
               <item.icon />
               <span>{item.label}</span>
             </a>
@@ -240,6 +247,50 @@ export function App() {
       )}
       <ProfileModal open={profileAsk !== null} title={profileAsk?.title ?? ''} reason={profileAsk?.reason ?? ''} onClose={() => finishProfile(false)} onDone={() => finishProfile(true)} />
     </AppContext.Provider>
+  );
+}
+
+/** The five lines as tabs, with one enamel plate that slides to the line you are on and takes its colour. */
+function LineNav({ activeIndex, hrefOf }: { activeIndex: number; hrefOf(route: Route): string }) {
+  const ref = useRef<HTMLElement>(null);
+  const [plate, setPlate] = useState<{ x: number; w: number } | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const measure = () => {
+      const active = element.querySelector<HTMLElement>('[aria-current="page"]');
+      setPlate(active ? { x: active.offsetLeft, w: active.offsetWidth } : null);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    void document.fonts?.ready.then(measure);
+    return () => observer.disconnect();
+  }, [activeIndex]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => setReady(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  return (
+    <nav ref={ref} className="lines" aria-label="Sections">
+      <span
+        className="lines-plate"
+        style={{ transform: `translateX(${plate?.x ?? 0}px)`, width: plate?.w ?? 0, opacity: plate ? 1 : 0, transition: ready ? undefined : 'none' }}
+        aria-hidden="true"
+      >
+        <i key={activeIndex} className="shine" />
+      </span>
+      {NAV.map((item, index) => (
+        <a key={item.label} href={hrefOf(item.route)} className="line-tab" data-line={item.line} aria-current={index === activeIndex ? 'page' : undefined} onClick={onLinkClick}>
+          <span className="swatch" />
+          {item.label}
+        </a>
+      ))}
+    </nav>
   );
 }
 
@@ -280,7 +331,7 @@ function HistoryMenu({ open, setOpen, conversations, current }: { open: boolean;
       {open && (
         <div className="popover" role="dialog" aria-label="Your questions">
           <div className="popover-head">
-            <span className="popover-title">Your questions</span>
+            <span className="label">Your questions</span>
             {conversations.length > 0 && (
               <button type="button" className="btn ghost sm" onClick={clearAll}>
                 Clear all

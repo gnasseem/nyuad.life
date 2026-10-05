@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api, type CourseDetail, type CourseRow, type CourseSummary, type PostSummary, type SeatStatus, type Section, type Term } from '../api';
-import { PageHeader } from '../components/PageHeader';
 import { PostRow } from '../components/PostRow';
 import { Segmented } from '../components/Segmented';
+import { Sign } from '../components/Sign';
 import { useApp } from '../context';
 import { plural } from '../format';
 import { IconCheck, IconClose, IconCopy, IconExternal, IconSearch } from '../icons';
@@ -34,7 +34,7 @@ const SECONDARY = /recitation|laboratory|lab\b/i;
 export function CoursesPage({ view, code }: { view: View; code?: string }) {
   return (
     <div className="page">
-      <PageHeader title="Courses" description="Every course in the Albert schedule, and what the group has said about them." />
+      <Sign title="Courses" ar="المساقات" />
       <div className="tabs-wrap">
         <Segmented variant="tabs" label="Courses" value={view} onChange={(next) => navigate(next === 'threads' ? { name: 'threads' } : { name: 'courses' }, { replace: true })} options={VIEWS} />
       </div>
@@ -367,7 +367,7 @@ function Sheet({ label, closing, onClose, children }: { label: string; closing: 
     };
   }, [closing, onClose]);
   return createPortal(
-    <div className={closing ? 'closing' : undefined}>
+    <div className={closing ? 'closing' : undefined} data-line="guide">
       <div className="drawer-scrim" onClick={onClose} aria-hidden="true" />
       <aside ref={ref} className="drawer" role="dialog" aria-modal="true" aria-label={label}>
         {children}
@@ -579,7 +579,7 @@ function SectionCard({ section, showNotes, onInstructor }: { section: Section; s
               ))}
         </span>
         <button type="button" className="class-no" onClick={() => void copy()} title="Copy the class number for Albert">
-          #{section.classNumber} {copied ? <IconCheck /> : <IconCopy />}
+          #{section.classNumber} {copied ? <IconCheck className="pop-in" /> : <IconCopy />}
         </button>
       </div>
       {showNotes && section.notes && <Folded text={section.notes} lines={2} />}
@@ -669,6 +669,7 @@ function Summary({ summary }: { summary: CourseSummary }) {
           <a
             key={`${index}-${n}`}
             className="cite"
+            data-kind={source?.kind ?? 'archive'}
             title={source?.title}
             href={href}
             target={source?.kind === 'official' ? '_blank' : undefined}
@@ -706,7 +707,9 @@ function Summary({ summary }: { summary: CourseSummary }) {
         ))}
       {summary.confidence !== 'high' && (
         <div className="meta">
-          <span className={`confidence ${summary.confidence}`}>{CONFIDENCE_LABEL[summary.confidence]}</span>
+          <span className={`pill confidence ${summary.confidence}`}>
+            <span className="dot" /> {CONFIDENCE_LABEL[summary.confidence]}
+          </span>
         </div>
       )}
     </div>

@@ -153,7 +153,7 @@ export function ThreadSearch() {
       <aside className="rail threads-topics">
         <div className="rail-block">
           <h2>Topics</h2>
-          <div className="side-list">{topicButtons}</div>
+          <div className="topic-list">{topicButtons}</div>
         </div>
       </aside>
     </div>

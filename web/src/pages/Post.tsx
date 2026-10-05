@@ -10,7 +10,7 @@ interface Props {
   id: string;
 }
 
-/** One thread from the group: the post, its comments, and what to do next beside it. */
+/** One thread from the group: the post, its comments as stops down a line, and what to do next beside it. */
 export function PostPage({ id }: Props) {
   const { setAskPrefill } = useApp();
   const [post, setPost] = useState<PostDetail | null>(null);
@@ -78,15 +78,17 @@ export function PostPage({ id }: Props) {
               <p className="muted">No comments.</p>
             ) : (
               <div className="comments">
-                {post.comments.map((comment, index) => (
-                  <div key={index} className="comment">
-                    <span className="who">
-                      <b>{comment.author || 'Unknown'}</b>
-                      <span>{formatDate(comment.date)}</span>
-                    </span>
-                    <div className="what">{comment.text}</div>
-                  </div>
-                ))}
+                <div className="stations">
+                  {post.comments.map((comment, index) => (
+                    <div key={index} className="comment">
+                      <span className="who">
+                        <b>{comment.author || 'Unknown'}</b>
+                        <span>{formatDate(comment.date)}</span>
+                      </span>
+                      <div className="what">{comment.text}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -109,7 +111,7 @@ export function PostPage({ id }: Props) {
                 <h2>Tags</h2>
                 <div className="chips">
                   {post.courses.map((code) => (
-                    <button key={code} type="button" className="chip" onClick={() => navigate({ name: 'courses', code })}>
+                    <button key={code} type="button" className="chip mono" onClick={() => navigate({ name: 'courses', code })}>
                       {code}
                     </button>
                   ))}

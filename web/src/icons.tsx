@@ -8,11 +8,11 @@ export const IconSearch = (p: SVGProps<SVGSVGElement>) => (
     <path d="m20 20-4.4-4.4" />
   </svg>
 );
-/** Ask: a spark, for an answer written on the spot. */
+/** Ask: an interchange, four lines meeting at one ring. */
 export const IconAsk = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
-    <path d="M12 3.5c.6 4.3 2.2 6.4 6.5 7-4.3.6-5.9 2.7-6.5 7-.6-4.3-2.2-6.4-6.5-7 4.3-.6 5.9-2.7 6.5-7z" />
-    <path d="M18.5 16.5v4M16.5 18.5h4" />
+    <circle cx="12" cy="12" r="3.6" />
+    <path d="M12 3v5.4M12 15.6V21M3 12h5.4M15.6 12H21" />
   </svg>
 );
 export const IconQuestions = (p: SVGProps<SVGSVGElement>) => (

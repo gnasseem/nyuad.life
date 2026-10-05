@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api, ApiError, askStream, type Announcement, type Listing, type MarketSummary, type QuestionWithAnswers } from '../api';
 import { ChatGPTLine, ChatGPTSignIn } from '../components/ChatGPT';
+import { Flap } from '../components/Flap';
 import { RedirectCard } from '../components/RedirectCard';
-import { SourcePreview, SourceRow } from '../components/SourceRow';
+import { SourceRow } from '../components/SourceRow';
 import { useApp } from '../context';
 import { formatTime, plural, relativeDate, startsIn } from '../format';
 import { IconArrow, IconCheck, IconChevron, IconCopy, IconPlus, IconStop } from '../icons';
@@ -19,21 +20,25 @@ interface Props {
 interface Hot {
   messageId: string;
   n: number;
-  /** Where the citation is on screen; with it, the source is previewed beside the citation. */
   rect?: DOMRect;
-  /** Opened by a tap rather than a hover: the preview stays until the next tap, and its links work. */
-  pinned?: boolean;
 }
 
 const CONFIDENCE_LABEL = { high: 'Well sourced', medium: 'Partly sourced', low: 'Weakly sourced' };
 /** Failures worth simply asking again: busy or spent models, a timeout, a dropped connection. */
 const RETRYABLE = new Set(['busy', 'quota', 'timeout', 'model_error', 'empty_answer', 'error', 'network', 'stream_error']);
+const STAGES: Array<{ label: string; match: RegExp }> = [
+  { label: 'Reading', match: /^reading/i },
+  { label: 'Searching', match: /^search/i },
+  { label: 'Ranking sources', match: /^rank/i },
+  { label: 'Writing', match: /^writ/i },
+];
 
 export function AskPage({ resumeId }: Props) {
   const { home, health, toast, askPrefill, setAskPrefill, setBoardPrefill, chatgpt, refreshChatGPT } = useApp();
   const [conversation, setConversation] = useState<Conversation>(() => (resumeId && loadConversations().find((entry) => entry.id === resumeId)) || fresh());
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
+  const [departing, setDeparting] = useState(0);
   const [hot, setHot] = useState<Hot | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [copied, setCopied] = useState<string | null>(null);
@@ -62,7 +67,6 @@ export function AskPage({ resumeId }: Props) {
     setConversation(conversationRef.current);
     setInput('');
     setExpanded(new Set());
-    setHot(null);
   }, []);
 
   useEffect(() => {
@@ -80,7 +84,7 @@ export function AskPage({ resumeId }: Props) {
         conversationRef.current = saved;
         setConversation(saved);
         setExpanded(new Set());
-        setActiveConversation(saved.id);
+            setActiveConversation(saved.id);
       }
     } else if (current.messages.length > 0) {
       reset();
@@ -116,7 +120,7 @@ export function AskPage({ resumeId }: Props) {
       update((c) => ({ ...c, title: c.title || question.slice(0, 80), updatedAt: new Date().toISOString(), messages: [...c.messages, userMessage, modelMessage] }));
       setInput('');
       setRunning(true);
-      setHot(null);
+      setDeparting((n) => n + 1);
       // Saved and given an address straight away, so the question survives a reload or a trip to another page.
       saveConversation(conversationRef.current);
       setActiveConversation(current.id);
@@ -186,33 +190,14 @@ export function AskPage({ resumeId }: Props) {
     element.style.height = `${Math.min(220, element.scrollHeight)}px`;
   }, [input]);
 
-  // A preview opened by a tap closes on the next tap elsewhere, on scroll, or with Escape.
-  const pinned = Boolean(hot?.pinned);
+  const empty = conversation.messages.length === 0;
   useEffect(() => {
-    if (!pinned) return;
-    const close = () => setHot(null);
-    const onDown = (event: PointerEvent) => {
-      const target = event.target as Element;
-      if (!target.closest('.cite-pop, .cite')) close();
-    };
-    const onKey = (event: globalThis.KeyboardEvent) => event.key === 'Escape' && close();
-    document.addEventListener('pointerdown', onDown);
-    document.addEventListener('keydown', onKey);
-    window.addEventListener('scroll', close, { passive: true });
-    return () => {
-      document.removeEventListener('pointerdown', onDown);
-      document.removeEventListener('keydown', onKey);
-      window.removeEventListener('scroll', close);
-    };
-  }, [pinned]);
+    document.documentElement.toggleAttribute('data-conv', !empty);
+    return () => document.documentElement.removeAttribute('data-conv');
+  }, [empty]);
+
 
   const stop = () => abortRef.current?.abort();
-
-  const startOver = () => {
-    reset();
-    setActiveConversation(null);
-    navigate({ name: 'ask' });
-  };
 
   /** Asks a failed question again in place of the failed turn, rather than below it. */
   const retry = (modelId: string) => {
@@ -249,26 +234,20 @@ export function AskPage({ resumeId }: Props) {
       return next;
     });
 
-  /** Opens the answer's source list and brings the source into view, lit for a moment. */
+  // Sources stay folded under the answer until asked for: a citation opens the list and lights its source up.
   const jumpToSource = (messageId: string, n: number) => {
     setExpanded((current) => new Set(current).add(messageId));
     setHot({ messageId, n });
-    window.setTimeout(() => document.getElementById(`source-${messageId}-${n}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 30);
+    window.setTimeout(() => {
+      document.getElementById(`source-${messageId}-${n}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 30);
     window.setTimeout(() => setHot((current) => (current?.messageId === messageId && current.n === n && !current.rect ? null : current)), 1800);
   };
 
-  // With a mouse, hovering a citation previews its source and clicking goes to it in the list. A touch screen has no
-  // hover, so a tap previews the source instead, and the preview links on to the list.
-  const canHover = () => window.matchMedia('(hover: hover)').matches;
-
+  // Hovering a citation previews its source beside it.
   const hoverCitation = (messageId: string, n: number | null, rect?: DOMRect) => {
-    if (!canHover()) return;
-    setHot(n === null ? null : { messageId, n, rect });
-  };
-
-  const clickCitation = (messageId: string, n: number, rect: DOMRect) => {
-    if (canHover()) return jumpToSource(messageId, n);
-    setHot((current) => (current?.pinned && current.messageId === messageId && current.n === n ? null : { messageId, n, rect, pinned: true }));
+    if (n === null) return setHot(null);
+    setHot({ messageId, n, rect });
   };
 
   const askStudents = (question: string) => {
@@ -276,25 +255,22 @@ export function AskPage({ resumeId }: Props) {
     navigate({ name: 'questions' });
   };
 
-  const preview = (() => {
+  const popover = useMemo(() => {
     if (!hot?.rect) return null;
     const message = conversation.messages.find((entry) => entry.id === hot.messageId);
     const source = message?.sources?.find((entry) => entry.n === hot.n);
     if (!source) return null;
-    const width = Math.min(360, window.innerWidth - 32);
-    const left = Math.max(16, Math.min(hot.rect.left - 12, window.innerWidth - width - 16));
-    const below = hot.rect.bottom + 6;
-    const style = below + 200 < window.innerHeight ? { top: below, left, width } : { bottom: window.innerHeight - hot.rect.top + 6, left, width };
-    const { messageId, n } = hot;
+    const width = Math.min(380, window.innerWidth - 32);
+    const left = Math.max(16, Math.min(hot.rect.left, window.innerWidth - width - 16));
+    const below = hot.rect.bottom + 8;
+    const style = below + 180 < window.innerHeight ? { top: below, left } : { bottom: window.innerHeight - hot.rect.top + 8, left };
     return createPortal(
-      <div className={`cite-pop${hot.pinned ? ' pinned' : ''}`} style={style} role={hot.pinned ? 'dialog' : 'tooltip'} aria-label={`Source ${n}`}>
-        <SourcePreview source={source} onLocate={hot.pinned ? () => jumpToSource(messageId, n) : undefined} />
+      <div className="cite-pop" style={style}>
+        <SourceRow source={source} hot />
       </div>,
       document.body,
     );
-  })();
-
-  const empty = conversation.messages.length === 0;
+  }, [hot, conversation.messages]);
 
   const composer = (
     <div className="composer">
@@ -314,7 +290,7 @@ export function AskPage({ resumeId }: Props) {
           <IconStop />
         </button>
       ) : (
-        <button type="button" className="send" onClick={() => void send(input)} disabled={!input.trim()} aria-label="Ask">
+        <button key={departing} type="button" className={`send${departing ? ' depart' : ''}`} onClick={() => void send(input)} disabled={!input.trim()} aria-label="Ask">
           <IconArrow />
         </button>
       )}
@@ -332,122 +308,153 @@ export function AskPage({ resumeId }: Props) {
     );
   }
 
+
   return (
     <div className="conv">
-      <div className="conv-head">
-        <button type="button" className="btn ghost sm" onClick={startOver}>
-          <IconPlus /> New question
-        </button>
-      </div>
-      <div className="thread">
-        {conversation.messages.map((message) =>
-          message.role === 'user' ? (
-            <h2 key={message.id} className="turn user">
-              {message.content}
-            </h2>
-          ) : (
-            <div key={message.id} className="turn model">
-              {message.status && <Status text={message.status} />}
-              {message.redirect && <RedirectCard redirect={message.redirect} />}
-              {message.content && (
-                <div className="answer">
-                  <Markdown
-                    text={message.content}
-                    hot={hot?.messageId === message.id ? hot.n : null}
-                    onCitation={(n, rect) => clickCitation(message.id, n, rect)}
-                    onCitationHover={(n, rect) => hoverCitation(message.id, n, rect)}
-                  />
-                  {message.pending && <span className="cursor" />}
-                </div>
-              )}
-              {message.error && (
-                <div className="alert error" role="alert">
-                  {message.error}
-                  {(message.errorCode === 'chatgpt_required' || message.errorCode === 'chatgpt_expired' || message.errorCode === 'chatgpt_plan') && (
-                    <div style={{ marginTop: 10 }}>
-                      <ChatGPTSignIn className="btn sm primary" />
-                    </div>
-                  )}
-                  {message.error !== 'Stopped' && (!message.errorCode || RETRYABLE.has(message.errorCode)) && (
-                    <div className="alert-actions">
-                      <button type="button" className="link-btn" onClick={() => retry(message.id)} disabled={running}>
-                        Try again
-                      </button>
-                      <a className="link-btn" href={`/threads?q=${encodeURIComponent(questionBefore(conversation.messages, message.id))}`} onClick={onLinkClick}>
-                        Search the group's threads instead
-                      </a>
-                    </div>
-                  )}
-                </div>
-              )}
-              {message.truncated && !message.pending && (
-                <div className="alert cut">
-                  This answer was cut short.{' '}
-                  <button type="button" className="link-btn" onClick={() => void send(questionBefore(conversation.messages, message.id))} disabled={running}>
-                    Ask again
-                  </button>
-                </div>
-              )}
-              {!message.pending && message.content && (
-                <div className="answer-foot">
-                  {message.confidence && (
-                    <span className="confidence-line">
-                      <span className={`confidence ${message.confidence.level}`}>{CONFIDENCE_LABEL[message.confidence.level]}</span>
-                      {message.confidence.reason && <span className="confidence-reason">{message.confidence.reason}</span>}
-                    </span>
-                  )}
-                  <span className="foot-actions">
+      <div className="conv-main">
+        <div className="conv-head">
+          <button
+            type="button"
+            className="btn ghost sm"
+            onClick={() => {
+              reset();
+              setActiveConversation(null);
+              navigate({ name: 'ask' });
+            }}
+          >
+            <IconPlus /> New question
+          </button>
+        </div>
+        <div className="thread">
+          {conversation.messages.map((message) =>
+            message.role === 'user' ? (
+              <div key={message.id} className="turn user">
+                {message.content}
+              </div>
+            ) : (
+              <div key={message.id} data-id={message.id} className={`turn model${message.pending && !message.content ? ' pending' : ''}`}>
+                {message.status && <Route status={message.status} />}
+                {message.redirect && <RedirectCard redirect={message.redirect} />}
+                {message.content && (
+                  <div className="answer">
+                    <Markdown
+                      text={message.content}
+                      hot={hot?.messageId === message.id ? hot.n : null}
+                      citeKind={(n) => message.sources?.find((source) => source.n === n)?.kind}
+                      onCitation={(n) => jumpToSource(message.id, n)}
+                      onCitationHover={(n, rect) => hoverCitation(message.id, n, rect)}
+                    />
+                    {message.pending && <span className="cursor" />}
+                  </div>
+                )}
+                {message.error && (
+                  <div className="alert error" role="alert">
+                    {message.error}
+                    {(message.errorCode === 'chatgpt_required' || message.errorCode === 'chatgpt_expired' || message.errorCode === 'chatgpt_plan') && (
+                      <div style={{ marginTop: 10 }}>
+                        <ChatGPTSignIn className="btn sm primary" />
+                      </div>
+                    )}
+                    {message.error !== 'Stopped' && (!message.errorCode || RETRYABLE.has(message.errorCode)) && (
+                      <div className="alert-actions">
+                        <button type="button" className="link-btn" onClick={() => retry(message.id)} disabled={running}>
+                          Try again
+                        </button>
+                        <a className="link-btn" href={`/threads?q=${encodeURIComponent(questionBefore(conversation.messages, message.id))}`} onClick={onLinkClick}>
+                          Search the group's threads instead
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {message.truncated && !message.pending && (
+                  <div className="alert cut">
+                    This answer was cut short.{' '}
+                    <button type="button" className="link-btn" onClick={() => void send(questionBefore(conversation.messages, message.id))} disabled={running}>
+                      Ask again
+                    </button>
+                  </div>
+                )}
+                {!message.pending && message.content && (
+                  <div className="answer-foot">
+                    {message.confidence && (
+                      <span className="confidence-line">
+                        <span className={`pill confidence ${message.confidence.level}`}>
+                          <span className="dot" /> {CONFIDENCE_LABEL[message.confidence.level]}
+                        </span>
+                        {message.confidence.reason && <span className="confidence-reason">{message.confidence.reason}</span>}
+                      </span>
+                    )}
                     {message.sources && message.sources.length > 0 && (
-                      <button type="button" className={`foot-btn${expanded.has(message.id) ? ' open' : ''}`} onClick={() => toggleSources(message.id)} aria-expanded={expanded.has(message.id)} aria-controls={`sources-${message.id}`}>
-                        Sources ({message.sources.length}) <IconChevron className="chev" />
+                      <button type="button" className={`foot-btn sources-toggle${expanded.has(message.id) ? ' open' : ''}`} onClick={() => toggleSources(message.id)} aria-expanded={expanded.has(message.id)}>
+                        {plural(message.sources.length, 'source')} <IconChevron className="chev" />
                       </button>
                     )}
                     <button type="button" className="foot-btn" onClick={() => void copy(message.id, message.content)}>
-                      {copied === message.id ? <IconCheck /> : <IconCopy />} {copied === message.id ? 'Copied' : 'Copy'}
+                      {copied === message.id ? (
+                        <>
+                          <IconCheck className="pop-in" /> Copied
+                        </>
+                      ) : (
+                        <>
+                          <IconCopy /> Copy
+                        </>
+                      )}
                     </button>
                     {(!message.confidence || message.confidence.level !== 'high') && (
                       <button type="button" className="foot-btn" onClick={() => askStudents(questionBefore(conversation.messages, message.id))}>
-                        Ask students
+                        Ask students <IconArrow />
                       </button>
                     )}
-                  </span>
-                </div>
-              )}
-              {message.sources && message.sources.length > 0 && expanded.has(message.id) && (
-                <div className="sources" id={`sources-${message.id}`}>
-                  {message.sources.map((source) => (
-                    <SourceRow key={source.n} id={`source-${message.id}-${source.n}`} source={source} hot={hot?.messageId === message.id && hot.n === source.n} onHover={(n) => setHot(n === null ? null : { messageId: message.id, n })} />
-                  ))}
-                </div>
-              )}
-              {!message.pending && !message.error && message.followups && message.followups.length > 0 && (
-                <div className="related">
-                  <h3>Related</h3>
-                  {message.followups.map((question) => (
-                    <button key={question} type="button" className="followup" onClick={() => void send(question)} disabled={running}>
-                      {question}
-                      <IconArrow />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ),
-        )}
-        <div ref={endRef} />
+                  </div>
+                )}
+                {message.sources && message.sources.length > 0 && (
+                  <div className={`collapse${expanded.has(message.id) ? ' open' : ''}`} inert={!expanded.has(message.id)}>
+                    <div>
+                      <div className="sources">
+                        {message.sources.map((source) => (
+                          <SourceRow key={source.n} id={`source-${message.id}-${source.n}`} source={source} hot={hot?.messageId === message.id && hot.n === source.n} onHover={(n) => setHot(n === null ? null : { messageId: message.id, n })} />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {!message.pending && !message.error && message.followups && message.followups.length > 0 && (
+                  <div className="followups">
+                    {message.followups.map((question) => (
+                      <button key={question} type="button" className="followup" onClick={() => void send(question)} disabled={running}>
+                        {question}
+                        <IconArrow />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ),
+          )}
+          <div ref={endRef} />
+        </div>
+        <div className="composer-wrap">{composer}</div>
       </div>
-      <div className="composer-wrap">{composer}</div>
-      {preview}
+      {popover}
     </div>
   );
 }
 
-/** What the server is doing while the answer is put together, as one quiet line. */
-function Status({ text }: { text: string }) {
+/** The four stages the server reports, as stops on a short line that fills as the answer is put together. */
+function Route({ status }: { status: string }) {
+  const stage = STAGES.findIndex((entry) => entry.match.test(status));
   return (
-    <div className="status-line" role="status">
-      <span className="pulse" aria-hidden="true" />
-      {/[.…!?]$/.test(text) ? text : `${text}…`}
+    <div className="route" role="status" aria-label={status}>
+      {STAGES.map((entry, index) => (
+        <span key={entry.label} style={{ display: 'contents' }}>
+          {index > 0 && <span className={`route-seg${stage >= index ? ' done' : ''}`} />}
+          <span className={`route-stop${stage > index ? ' done' : stage === index ? ' now' : ''}`}>
+            <i /> {entry.label}
+          </span>
+        </span>
+      ))}
+      {stage < 0 && <span className="route-note">{status}</span>}
     </div>
   );
 }
@@ -489,7 +496,7 @@ function useHomeData(): HomeData {
           set({
             markets: [
               { currency: 'falcon' as const, label: 'Falcons', summary: markets.falcon },
-              { currency: 'campus' as const, label: 'Campus Dirhams', summary: markets.campus! },
+              { currency: 'campus' as const, label: 'Campus Dh', summary: markets.campus! },
             ].filter((entry) => entry.summary && entry.summary.open > 0),
           });
         })
@@ -512,145 +519,152 @@ function useHomeData(): HomeData {
   return data;
 }
 
-/** Ask with nothing asked yet: the question box, a few questions to start from, and what is new around the site. */
 function Home({ composer, suggestions, onSuggestion, answersOff }: { composer: ReactNode; suggestions: Array<{ topic: string; question: string }>; onSuggestion(question: string): void; answersOff: boolean }) {
   const { boardProblem } = useApp();
   const data = useHomeData();
+  const rootRef = useRef<HTMLDivElement>(null);
   const now = useNow();
   const upcoming = (data.notices ?? []).filter((entry) => !entry.startsAt || Date.parse(entry.startsAt) > now.getTime() - 3 * 3_600_000).slice(0, 3);
-  const offline = boardProblem ? <p className="home-empty">Unavailable right now.</p> : null;
+  const offline = boardProblem ? <p className="stops-note">Unavailable right now.</p> : null;
 
   return (
-    <div className="home">
-      <section className="home-hero">
-        <h1>What do you want to know?</h1>
-        {composer}
-        {answersOff && <p className="home-note">Answers are paused right now.</p>}
-        <ChatGPTLine />
+    <div className="home" ref={rootRef}>
+      <section className="central">
+        <div className="central-sign">
+          <h1>Central</h1>
+          <span lang="ar" dir="rtl">
+            المركز
+          </span>
+        </div>
+        <div className="central-ask">
+          {composer}
+          {answersOff && <p className="central-note">Answers are paused right now.</p>}
+          <ChatGPTLine />
+        </div>
         {suggestions.length > 0 && (
-          <div className="suggestions" role="group" aria-label="Suggested questions">
-            {suggestions.slice(0, 4).map((suggestion) => (
-              <button key={suggestion.question} type="button" className="suggestion" onClick={() => onSuggestion(suggestion.question)}>
-                <span>{suggestion.question}</span>
-                <IconArrow />
+          <div className="journeys">
+            {suggestions.slice(0, 3).map((suggestion) => (
+              <button key={suggestion.question} type="button" className="journey" onClick={() => onSuggestion(suggestion.question)}>
+                {suggestion.question}
               </button>
             ))}
           </div>
         )}
       </section>
 
-      <div className="home-grid">
-        <OverviewCard title="Notices" href="/notices">
+      <div className="line-cards">
+        <LineCard line="notices" title="Notices" ar="الإعلانات" href="/notices">
           {offline ??
             (data.notices === null ? (
               <Loading />
             ) : upcoming.length === 0 ? (
-              <p className="home-empty">
+              <p className="stops-note">
                 Nothing coming up.{' '}
-                <a className="link" href="/notices" onClick={onLinkClick}>
+                <a href="/notices" onClick={onLinkClick}>
                   Post an event or deadline
                 </a>
               </p>
             ) : (
-              upcoming.map((entry) => <OverviewRow key={entry.id} href="/notices" title={entry.title} meta={[noticeWhen(entry, now), entry.location].filter(Boolean).join(' · ')} />)
+              upcoming.map((entry) => (
+                <a key={entry.id} className="stn" href="/notices" onClick={onLinkClick}>
+                  <span className="when">{noticeWhen(entry, now)}</span>
+                  <span className="what">{entry.title}</span>
+                  {entry.location && <span className="where">{entry.location}</span>}
+                </a>
+              ))
             ))}
-        </OverviewCard>
-        <OverviewCard title="Market" href="/market">
+        </LineCard>
+        <LineCard line="market" title="Market" ar="السوق" href="/market/rides">
           {offline ??
             (data.rides === null ? (
               <Loading />
             ) : (
               <>
                 {data.rides.length === 0 ? (
-                  <p className="home-empty">
+                  <p className="stops-note">
                     {data.listings ? `${plural(data.listings, 'listing')} for sale or wanted. ` : 'No rides yet. '}
-                    <a className="link" href={data.listings ? '/market' : '/market/rides'} onClick={onLinkClick}>
+                    <a href={data.listings ? '/market' : '/market/rides'} onClick={onLinkClick}>
                       {data.listings ? 'Browse' : 'Share a ride or sell something'}
                     </a>
                   </p>
                 ) : (
                   data.rides.slice(0, 3).map((ride) => {
                     const soon = startsIn(new Date(ride.happensAt!), now, 60);
-                    return <OverviewRow key={ride.id} href="/market/rides" title={`Ride to ${ride.destination}`} meta={soon?.live ? 'Leaving now' : rideWhen(ride.happensAt!, now)} />;
+                    return (
+                      <a key={ride.id} className="stn" href="/market/rides" onClick={onLinkClick}>
+                        <span className="when">{soon?.live ? 'Leaving now' : rideWhen(ride.happensAt!, now)}</span>
+                        <span className="what">To {ride.destination}</span>
+                      </a>
+                    );
                   })
                 )}
                 {data.markets.map(({ currency, label, summary }) => (
-                  <OverviewRow
-                    key={currency}
-                    href={currency === 'falcon' ? '/market/falcons' : '/market/campus'}
-                    title={label}
-                    meta={`Sell from ${summary.bestAsk === null ? '–' : summary.bestAsk.toFixed(2)} · buy up to ${summary.bestBid === null ? '–' : summary.bestBid.toFixed(2)} AED`}
-                  />
+                  <a key={currency} className="rate-board" href={currency === 'falcon' ? '/market/falcons' : '/market/campus'} onClick={onLinkClick} title={`${label}: lowest sell and highest buy, AED each`}>
+                    <span>{label}</span>
+                    <b className="sell">
+                      <Flap text={summary.bestAsk === null ? '–' : summary.bestAsk.toFixed(2)} />
+                    </b>
+                    <b className="buy">
+                      <Flap text={summary.bestBid === null ? '–' : summary.bestBid.toFixed(2)} />
+                    </b>
+                  </a>
                 ))}
               </>
             ))}
-        </OverviewCard>
-        <OverviewCard title="Questions" href="/questions">
+        </LineCard>
+        <LineCard line="questions" title="Questions" ar="الأسئلة" href="/questions">
           {offline ??
             (data.answered === null ? (
               <Loading />
             ) : data.answered.length === 0 ? (
-              <p className="home-empty">
+              <p className="stops-note">
                 {data.open ? `${plural(data.open, 'question')} waiting for an answer. ` : 'No answered questions yet. '}
-                <a className="link" href={data.open ? '/questions?tab=help' : '/questions'} onClick={onLinkClick}>
+                <a href={data.open ? '/questions?tab=help' : '/questions'} onClick={onLinkClick}>
                   {data.open ? 'Help answer' : 'Ask other students'}
                 </a>
               </p>
             ) : (
-              data.answered
-                .slice(0, 3)
-                .map((question) => (
-                  <OverviewRow key={question.id} href={`/questions/${question.id}`} title={question.text} meta={question.answers[0] ? `${question.answers[0].helperName.split(' ')[0]} answered` : relativeDate(question.createdAt)} />
-                ))
+              data.answered.slice(0, 3).map((question) => (
+                <a key={question.id} className="stn" href={`/questions/${question.id}`} onClick={onLinkClick}>
+                  <span className="when">{question.answers[0] ? `${question.answers[0].helperName.split(' ')[0]} answered` : relativeDate(question.createdAt)}</span>
+                  <span className="what">{question.text}</span>
+                </a>
+              ))
             ))}
-        </OverviewCard>
-        <OverviewCard title="Courses" href="/courses">
+        </LineCard>
+        <LineCard line="guide" title="Courses" ar="المساقات" href="/courses">
           {data.courses === null ? (
             <Loading />
           ) : data.courses.total === 0 ? (
-            <p className="home-empty">Search every course, section and professor.</p>
+            <p className="stops-note">Search every course, section and professor.</p>
           ) : (
             <>
-              <OverviewRow href="/courses" title={`${plural(data.courses.total, 'course')} in ${data.courses.term}`} meta={`${data.courses.open} with open seats`} />
-              <OverviewRow href="/courses?core=1" title="Core Curriculum" meta="Core courses this term" />
-              <OverviewRow href="/threads" title="Group threads" meta="Search the group's old posts" />
+              <a className="stn" href="/courses" onClick={onLinkClick}>
+                <span className="when">{data.courses.term}</span>
+                <span className="what">{plural(data.courses.total, 'course')}, {data.courses.open} with open seats</span>
+              </a>
+              <a className="stn" href="/courses?core=1" onClick={onLinkClick}>
+                <span className="when">Core</span>
+                <span className="what">Core Curriculum courses this term</span>
+              </a>
+              <a className="stn" href="/threads" onClick={onLinkClick}>
+                <span className="when">Threads</span>
+                <span className="what">Search the group's old posts</span>
+              </a>
             </>
           )}
-        </OverviewCard>
+        </LineCard>
       </div>
+
+      <HomeLines root={rootRef} deps={[data, suggestions.length, answersOff]} />
     </div>
-  );
-}
-
-/** One section of the site on the home page: its name, a link to all of it, and the latest few things in it. */
-function OverviewCard({ title, href, children }: { title: string; href: string; children: ReactNode }) {
-  return (
-    <section className="home-card">
-      <div className="home-card-head">
-        <h2>{title}</h2>
-        <a className="view-all" href={href} onClick={onLinkClick}>
-          View all
-        </a>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function OverviewRow({ href, title, meta }: { href: string; title: string; meta: string }) {
-  return (
-    <a className="home-row" href={href} onClick={onLinkClick}>
-      <span className="home-row-title">{title}</span>
-      {meta && <span className="home-row-meta">{meta}</span>}
-    </a>
   );
 }
 
 function Loading() {
   return (
-    <div className="home-loading" aria-busy="true">
-      <span className="skeleton" />
-      <span className="skeleton" />
+    <div className="stops-note">
+      <span className="spinner" />
     </div>
   );
 }
@@ -666,13 +680,104 @@ function noticeWhen(entry: Announcement, now: Date): string {
 
 function rideWhen(iso: string, now: Date): string {
   const when = new Date(iso);
-  return when.toDateString() === now.toDateString() ? `Today ${formatTime(iso)}` : `${dayName(when, now)} ${formatTime(iso)}`;
+  return when.toDateString() === now.toDateString() ? formatTime(iso) : `${dayName(when, now)} ${formatTime(iso)}`;
 }
 
 function dayName(when: Date, now: Date): string {
   if (when.toDateString() === now.toDateString()) return 'Today';
   if (when.toDateString() === new Date(now.getTime() + 86_400_000).toDateString()) return 'Tomorrow';
   return when.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+/** One line's card under Central: its ring, where the line from Central comes in, and the next stops on it. */
+function LineCard({ line, title, ar, href, children }: { line: string; title: string; ar: string; href: string; children: ReactNode }) {
+  return (
+    <section className="line-card" data-line={line}>
+      <a className="line-card-head" href={href} onClick={onLinkClick}>
+        <span className="line-ring" data-ring={line} />
+        <h2>{title}</h2>
+        <span className="ar" lang="ar" dir="rtl">
+          {ar}
+        </span>
+        <IconArrow />
+      </a>
+      <div className="stations in-plate">{children}</div>
+    </section>
+  );
+}
+
+const LINE_ORDER = ['notices', 'market', 'questions', 'guide'];
+
+/**
+ * The four lines leaving Central, drawn as one bundle: out of the right end of the ask box, down the right of the
+ * board, back along its foot, and each one peeling off into its card. The line for the rightmost card rides on the
+ * outside of every bend, so no two lines ever cross. Measured from the page; only drawn while the cards sit in a row.
+ */
+function HomeLines({ root, deps }: { root: React.RefObject<HTMLDivElement | null>; deps: unknown[] }) {
+  const [paths, setPaths] = useState<Array<{ line: string; d: string }>>([]);
+
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    const measure = () => {
+      if (!window.matchMedia('(min-width: 1100px)').matches) return setPaths([]);
+      const box = element.getBoundingClientRect();
+      const rect = (selector: string) => element.querySelector(selector)?.getBoundingClientRect();
+      const board = rect('.central');
+      const composer = rect('.central .composer');
+      if (!board || !composer) return;
+      const gap = 11;
+      const big = 30;
+      const hubY = composer.top + composer.height / 2 - box.top;
+      const hubX = composer.right - box.left;
+      const downX = board.right - box.left - 64;
+      const footY = board.bottom - box.top - 44;
+      const next: Array<{ line: string; d: string }> = [];
+      LINE_ORDER.forEach((line, i) => {
+        const ring = rect(`[data-ring="${line}"]`);
+        if (!ring) return;
+        const offset = (i - 1.5) * gap;
+        const r = big + offset;
+        const y0 = hubY - offset;
+        const x1 = downX + offset;
+        const y2 = footY + offset;
+        const rx = ring.left + ring.width / 2 - box.left;
+        const ry = ring.top + ring.height / 2 - box.top;
+        const turn = 18;
+        const d = [
+          `M ${hubX} ${y0}`,
+          `H ${downX - big}`,
+          `A ${r} ${r} 0 0 1 ${x1} ${hubY + big}`,
+          `V ${footY - big}`,
+          `A ${r} ${r} 0 0 1 ${downX - big} ${y2}`,
+          `H ${rx + turn}`,
+          `A ${turn} ${turn} 0 0 0 ${rx} ${y2 + turn}`,
+          `V ${ry}`,
+        ].join(' ');
+        next.push({ line, d });
+      });
+      setPaths(next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    element.querySelectorAll('.central, .line-card').forEach((node) => observer.observe(node));
+    void document.fonts?.ready.then(measure);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+
+  if (paths.length === 0) return null;
+  return (
+    <svg className="home-lines" aria-hidden="true">
+      {paths.map((path, index) => (
+        <path key={path.line} className="hl draw" data-line={path.line} d={path.d} pathLength={1} style={{ animationDelay: `${0.2 + index * 0.12}s` }} />
+      ))}
+      {paths.map((path, index) => (
+        <path key={`t-${path.line}`} className="hl-train" d={path.d} pathLength={1} style={{ '--dur': `${7 + index * 1.7}s`, '--delay': `${1.4 + index * 1.1}s` } as React.CSSProperties} />
+      ))}
+    </svg>
+  );
 }
 
 function fresh(): Conversation {

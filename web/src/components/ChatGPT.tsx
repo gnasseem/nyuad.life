@@ -20,7 +20,7 @@ export function ChatGPTSignIn({ label = 'Sign in with ChatGPT', className = 'btn
 }
 
 /** Under the ask box: whose plan answers run on, and the way to change it. Nothing when the feature is off here. */
-export function ChatGPTLine() {
+export function ChatGPTLine({ tone = 'dark' }: { tone?: 'dark' | 'light' }) {
   const { chatgpt, refreshChatGPT, toast } = useApp();
   if (!chatgpt?.available) return null;
   if (chatgpt.connected) {
@@ -30,7 +30,7 @@ export function ChatGPTLine() {
       toast('ChatGPT disconnected');
     };
     return (
-      <p className="chatgpt-line">
+      <p className={`chatgpt-line on-${tone}`}>
         <Knot /> Answering on your ChatGPT plan{chatgpt.email ? ` (${chatgpt.email})` : ''}.{' '}
         <button type="button" className="link-btn" onClick={() => void disconnect()}>
           Disconnect
@@ -39,7 +39,7 @@ export function ChatGPTLine() {
     );
   }
   return (
-    <p className="chatgpt-line">
+    <p className={`chatgpt-line on-${tone}`}>
       {chatgpt.required ? 'Answers run on your own ChatGPT plan.' : 'Use your own ChatGPT plan for answers.'} <ChatGPTSignIn className="link-btn" label="Sign in with ChatGPT" />
     </p>
   );
