@@ -347,6 +347,7 @@ export function AskPage({ resumeId }: Props) {
                 {message.error && (
                   <div className="alert error" role="alert">
                     {message.error}
+                    {message.sources?.length ? <div>Sources found for this question are below.</div> : null}
                     {(message.errorCode === 'chatgpt_required' || message.errorCode === 'chatgpt_expired' || message.errorCode === 'chatgpt_plan') && (
                       <div style={{ marginTop: 10 }}>
                         <ChatGPTSignIn className="btn sm primary" />
@@ -406,7 +407,7 @@ export function AskPage({ resumeId }: Props) {
                   </div>
                 )}
                 {message.sources && message.sources.length > 0 && (
-                  <div className={`collapse${expanded.has(message.id) ? ' open' : ''}`} inert={!expanded.has(message.id)}>
+                  <div className={`collapse${expanded.has(message.id) || message.error ? ' open' : ''}`} inert={!expanded.has(message.id) && !message.error}>
                     <div>
                       <div className="sources">
                         {message.sources.map((source) => (

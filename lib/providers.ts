@@ -4,14 +4,14 @@
  * counted per provider, and mostly per model, so every key and every model adds capacity.
  *
  *   GROQ_API_KEY                 console.groq.com: about 1,000 requests a day per model, 8,000 tokens a minute, no card.
- *   MISTRAL_API_KEY              console.mistral.ai, free "Experiment" plan: about a billion tokens a month, phone check.
+ *   MISTRAL_API_KEY              console.mistral.ai, used only when ROR_MODEL_ORDER includes mistral.
  *   CLOUDFLARE_API_TOKEN         Workers AI (with CLOUDFLARE_ACCOUNT_ID): 10,000 free neurons a day, about 30 answers.
  *   OPENROUTER_API_KEY           openrouter.ai, models ending in ":free": 50 requests a day in all (1,000 after $10).
  *   DEEPSEEK_API_KEY             platform.deepseek.com, paid but cheap: about $0.002 an answer. Last, as the safety net.
  *
  * `<PROVIDER>_MODELS` overrides a provider's answer models and `<PROVIDER>_LITE_MODELS` its models for small calls.
- * `ROR_MODEL_ORDER` (default `gemini,groq,openrouter,mistral,cloudflare,deepseek`) sets which goes first; put
- * `deepseek` first to answer everything on the paid model.
+ * `ROR_MODEL_ORDER` (default `gemini,groq,openrouter,cloudflare,deepseek`) sets which goes first; add
+ * `mistral` explicitly when its account has capacity, or put `deepseek` first to use the paid model.
  */
 import { discoverGeminiModels, geminiConfig, generateJson, generateText, type GeminiConfig, type Message } from './gemini.ts';
 
@@ -71,13 +71,14 @@ const PRESETS: Preset[] = [
     maxOutputTokens: 1_600,
     listsModels: false,
   },
-  { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['nvidia/nemotron-3-super-120b-a12b:free', 'google/gemma-4-26b-a4b-it:free', 'openai/gpt-oss-120b:free', 'google/gemma-4-31b-it:free'], liteModels: ['google/gemma-4-26b-a4b-it:free', 'google/gemma-4-31b-it:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: true, fallbackPattern: /:free$/ },
+  { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['nvidia/nemotron-3-super-120b-a12b:free'], liteModels: ['nvidia/nemotron-3-super-120b-a12b:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: true, fallbackPattern: /:free$/ },
   // DeepSeek V4.1 Flash: about $0.15 per million tokens in and $0.60 out off-peak (double at peak), so an answer costs
   // about a fifth of a cent. "deepseek-chat" was retired in July 2026.
   { id: 'deepseek', label: 'DeepSeek', key: 'DEEPSEEK_API_KEY', baseUrl: 'https://api.deepseek.com', models: ['deepseek-flash', 'deepseek-v4-flash'], liteModels: ['deepseek-flash', 'deepseek-v4-flash'], maxPromptChars: 80_000, maxOutputTokens: 2_000, paid: true, listsModels: true, fallbackPattern: /flash|chat/i },
 ];
 
-export const DEFAULT_ORDER = ['gemini', 'groq', 'openrouter', 'mistral', 'cloudflare', 'deepseek'];
+export const DEFAULT_ORDER = ['gemini', 'groq', 'openrouter', 'cloudflare', 'deepseek'];
+const ALL_IDS = ['gemini', ...PRESETS.map((preset) => preset.id)];
 
 function list(value: string | undefined, fallback: string[]): string[] {
   const items = (value ?? '').split(',').map((item) => item.trim()).filter(Boolean);
@@ -153,7 +154,7 @@ export async function warmModels(waitMs = 2_500): Promise<void> {
 export function modelOrder(env: NodeJS.ProcessEnv = process.env): string[] {
   const chosen = list(env.ROR_MODEL_ORDER, DEFAULT_ORDER)
     .map((id) => id.toLowerCase())
-    .filter((id) => DEFAULT_ORDER.includes(id));
+    .filter((id) => ALL_IDS.includes(id));
   return [...new Set([...chosen, ...DEFAULT_ORDER])];
 }
 
@@ -161,6 +162,7 @@ export function modelOrder(env: NodeJS.ProcessEnv = process.env): string[] {
 export function providersFromEnv(env: NodeJS.ProcessEnv = process.env): Provider[] {
   const order = modelOrder(env);
   return PRESETS.map((preset): Provider | null => {
+    if (!order.includes(preset.id)) return null;
     const apiKey = (env[preset.key] ?? '').trim();
     if (!apiKey) return null;
     const upper = preset.id.toUpperCase();

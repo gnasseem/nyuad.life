@@ -21,8 +21,8 @@ export interface GeminiConfig {
 export const DEFAULT_EMBED_MODEL = 'gemini-embedding-001';
 // Prefer the free models that answered the production probe. Larger Flash models exhausted their quota or returned
 // overload errors on that key; trying them first kept working models behind a long chain of failures.
-const DEFAULT_CHAT_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it'];
-const DEFAULT_LITE_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it'];
+const DEFAULT_CHAT_MODELS = ['gemini-3.5-flash-lite', 'gemma-4-26b-a4b-it'];
+const DEFAULT_LITE_MODELS = ['gemini-3.5-flash-lite', 'gemma-4-26b-a4b-it'];
 export const DEFAULT_DIMENSIONS = 768;
 
 function modelList(value: string | undefined): string[] | null {

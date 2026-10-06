@@ -6,11 +6,11 @@ afterEach(() => resetModelState());
 describe('geminiConfig', () => {
   it('starts answers with the free models that work on the production key', () => {
     const cfg = geminiConfig({ GEMINI_API_KEY: 'k' })!;
-    expect([cfg.chatModel, ...cfg.chatFallbacks]).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it']);
-    expect(cfg.liteModels).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it']);
+    expect([cfg.chatModel, ...cfg.chatFallbacks]).toEqual(['gemini-3.5-flash-lite', 'gemma-4-26b-a4b-it']);
+    expect(cfg.liteModels).toEqual(['gemini-3.5-flash-lite', 'gemma-4-26b-a4b-it']);
   });
   it('keeps the default fallbacks behind a pinned model, unless fallbacks are set too', () => {
-    expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_MODEL: 'gemini-3.5-flash' })!.chatFallbacks).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it']);
+    expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_MODEL: 'gemini-3.5-flash' })!.chatFallbacks).toEqual(['gemini-3.5-flash-lite', 'gemma-4-26b-a4b-it']);
     expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_MODEL: 'a', GEMINI_CHAT_FALLBACK_MODELS: 'b, c' })!.chatFallbacks).toEqual(['b', 'c']);
     expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_FALLBACK_MODELS: '' })!.chatFallbacks).toEqual([]);
   });

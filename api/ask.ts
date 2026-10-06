@@ -55,7 +55,9 @@ export default route(['POST'], async (req, res) => {
   const defer = (work: Promise<unknown>) => void deferred.push(work.catch(() => undefined));
 
   if (!request.stream) {
-    sendJson(res, 200, await ask(archive, cfg, request, {}, undefined, { board, official, deadline, chatgpt, backups, defer }));
+    const result = await ask(archive, cfg, request, {}, undefined, { board, official, deadline, chatgpt, backups, defer });
+    console.info(`[ask] model=${result.model} cached=${Boolean(result.cached)} truncated=${Boolean(result.truncated)} sources=${result.sources.length}`);
+    sendJson(res, 200, result);
     await Promise.all(deferred);
     return;
   }
@@ -81,6 +83,7 @@ export default route(['POST'], async (req, res) => {
       controller.signal,
       { board, official, deadline, chatgpt, backups, defer },
     );
+    console.info(`[ask] model=${result.model} cached=${Boolean(result.cached)} truncated=${Boolean(result.truncated)} sources=${result.sources.length}`);
     sse.send('done', { model: result.model, confidence: result.confidence, truncated: result.truncated ?? false, cached: result.cached ?? false, retrieval: result.retrieval });
   } catch (error) {
     if (!(error instanceof ApiError) || error.status >= 500) console.error('[ask]', error);

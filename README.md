@@ -51,7 +51,8 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
    | Variable | Needed for |
    | --- | --- |
    | `GEMINI_API_KEY` | Answers for students not signed in with ChatGPT, question tagging, course summaries. |
-   | `GROQ_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Free backup models for answers when Gemini is overloaded or out of quota (below). Any or all. |
+   | `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Free backup models for answers when Gemini is overloaded or out of quota (below). Any or all. |
+   | `MISTRAL_API_KEY` | Optional backup when its account has capacity; add `mistral` to `ROR_MODEL_ORDER` to use it. |
    | `DEEPSEEK_API_KEY` | Optional paid safety net, about $0.002 an answer: used only when every free model is down (below). |
    | `ROR_ADMIN_CODE` | Admin mode (below): at least 12 characters, ideally 32 random ones (`openssl rand -base64 32`). |
    | `OPENAI_CLIENT_ID`, `SESSION_SECRET`, `ROR_SITE_URL` | Sign in with ChatGPT: answers on each student's own plan (below). |
@@ -73,9 +74,10 @@ search, courses, plan and the board are rate-limited per IP.
 
 Free model tiers can be overloaded (503) or rate-limited (429). Ask moves down a chain before writing any text:
 
-1. Gemini 3.5 and 3.1 Flash-Lite, then Gemma 4 26B.
-2. Groq, OpenRouter, Mistral and Cloudflare Workers AI when their keys are set. Groq's free tier caps tokens per minute,
-   so its prompts are shortened to fit. Provider limits can change independently.
+1. Gemini 3.5 Flash-Lite, then Gemma 4 26B.
+2. Groq, OpenRouter's Nemotron model and Cloudflare Workers AI when their keys are set. Groq's free tier caps tokens per
+   minute, so its prompts are shortened to fit. Provider limits can change independently. Mistral can be opted in with
+   `ROR_MODEL_ORDER` when its account has capacity.
 3. DeepSeek, when `DEEPSEEK_API_KEY` is set: paid, but only reached when every free model has failed.
 
 Model names go stale fast (Google shut 2.5 Flash to new keys, Groq retired its Llama models in August 2026), so each
