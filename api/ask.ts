@@ -2,8 +2,9 @@ import { boardStore } from '../lib/board-store.ts';
 import { addCookies, chatgptConfig, ChatGPTError, freshSession, readSession, sessionCookies } from '../lib/chatgpt.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, rateLimit, readJson, route, sendJson, startSse } from '../lib/http.ts';
+import { requireMember } from '../lib/identity.ts';
 import { loadOfficial } from '../lib/official.ts';
-import { providersFromEnv } from '../lib/providers.ts';
+import { providersFromEnv, warmModels } from '../lib/providers.ts';
 import { ask, validateAsk } from '../lib/rag.ts';
 import { loadArchive } from '../lib/store.ts';
 import type { AskRequest } from '../lib/types.ts';
@@ -18,8 +19,11 @@ export default route(['POST'], async (req, res) => {
   rateLimit(req, 12, 10, 'ask');
   // And a daily ceiling per address, so one client cannot spend the free model quota everyone shares.
   rateLimit(req, 150, 150 / 1440, 'ask-day');
-  const cfg = geminiConfig();
   const request = validateAsk(await readJson<Partial<AskRequest>>(req));
+  // Answers cost model calls: only students who signed up get them. Meanwhile the model lists are checked against
+  // what the keys can use (cached for hours, so this is free after an instance's first question).
+  await Promise.all([requireMember(req), warmModels()]);
+  const cfg = geminiConfig();
 
   // A student who connected ChatGPT is answered on their own plan. Their token is refreshed here, before anything is
   // streamed, because a cookie can only be set while the response headers are still open.

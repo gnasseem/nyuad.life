@@ -140,6 +140,30 @@ create table if not exists public.guide_summaries (
   created_at timestamptz not null default now()
 );
 
+-- Admin mode: NetIDs an admin barred from posting, a record of what admins removed, and wrong-code attempts per
+-- bucket (an address, or "global"), so the attempt limit holds across serverless instances and cold starts.
+create table if not exists public.board_bans (
+  net_id     text primary key,
+  reason     text not null default '',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.admin_audit (
+  id         bigint generated always as identity primary key,
+  action     text not null,
+  target     text not null default '',
+  snapshot   jsonb,
+  ip         text not null default '',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.admin_attempts (
+  bucket       text primary key,
+  failures     int not null default 0,
+  window_start timestamptz not null default now(),
+  locked_until timestamptz
+);
+
 alter table public.board_profiles      enable row level security;
 alter table public.board_questions     enable row level security;
 alter table public.board_answers       enable row level security;
@@ -148,6 +172,9 @@ alter table public.board_announcements enable row level security;
 alter table public.board_offers        enable row level security;
 alter table public.board_listings      enable row level security;
 alter table public.guide_summaries     enable row level security;
+alter table public.board_bans          enable row level security;
+alter table public.admin_audit         enable row level security;
+alter table public.admin_attempts      enable row level security;
 
 -- Counters the API bumps atomically (PostgREST cannot express "views = views + 1" on its own).
 create or replace function public.board_bump(q_id uuid, d_views int default 0, d_skips int default 0, d_answers int default 0)
@@ -189,11 +216,34 @@ as $$
          (select count(distinct helper_net_id) from public.board_answers)
 $$;
 
+-- Counts one wrong admin code against a bucket in one statement, starting a new window when the last one is over, and
+-- locks the bucket for a window once it reaches p_max. Returns until when it is locked, or null.
+create or replace function public.admin_register_failure(p_bucket text, p_max int, p_window_seconds int)
+returns timestamptz
+language sql
+security definer
+set search_path = public
+as $$
+  insert into public.admin_attempts as a (bucket, failures, window_start, locked_until)
+  values (p_bucket, 1, now(), case when p_max <= 1 then now() + make_interval(secs => p_window_seconds) end)
+  on conflict (bucket) do update
+     set failures = case when a.window_start < now() - make_interval(secs => p_window_seconds) then 1 else a.failures + 1 end,
+         window_start = case when a.window_start < now() - make_interval(secs => p_window_seconds) then now() else a.window_start end,
+         locked_until = case
+           when (case when a.window_start < now() - make_interval(secs => p_window_seconds) then 1 else a.failures + 1 end) >= p_max
+             then now() + make_interval(secs => p_window_seconds)
+           else a.locked_until
+         end
+  returning locked_until
+$$;
+
 -- Only the API (the service role) calls these. Postgres lets every role execute a new function, and row level security
 -- does not cover security definer functions, so the public roles are shut out explicitly.
 revoke execute on function public.board_bump(uuid, int, int, int) from public, anon, authenticated;
 revoke execute on function public.board_touch_profile(text, boolean) from public, anon, authenticated;
 revoke execute on function public.board_stats() from public, anon, authenticated;
+revoke execute on function public.admin_register_failure(text, int, int) from public, anon, authenticated;
 grant execute on function public.board_bump(uuid, int, int, int) to service_role;
 grant execute on function public.board_touch_profile(text, boolean) to service_role;
 grant execute on function public.board_stats() to service_role;
+grant execute on function public.admin_register_failure(text, int, int) to service_role;

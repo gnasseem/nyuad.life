@@ -16,12 +16,18 @@ describe('screening posts', () => {
       ['answer', 'I hurt myself at the gym last year and the health center was great.'],
       ['listing', 'Selling wine glasses and a glue gun, 20 AED each'],
       ['listing', 'Beer pong table for sale, pick up from A2'],
-      ['notice', 'Photography club meetup! Sign up at https://forms.gle/abc and see https://nyuadphoto.club. Questions: +971 50 123 4567'],
+      ['notice', 'Photography club meetup! Sign up at https://forms.gle/abc and see https://nyuadphoto.club. Questions: nyuad.photo@nyu.edu'],
       ['notice', 'Tutoring for Calculus, 50 AED an hour, I can explain your problem sets step by step'],
       ['offer', 'Can meet at D2 any evening'],
       ['name', 'Sara Ali'],
     ];
     for (const [kind, text] of fine) expect(screenPost(kind, text), `${kind}: ${text}`).toBeNull();
+  });
+
+  it('keeps phone numbers off public notices and hides no links behind shorteners', () => {
+    expect(screenPost('notice', 'Bake sale at the Marketplace, call +971 50 123 4567')?.reason).toBe('contact');
+    expect(screenPost('notice', 'Register here: https://bit.ly/3xYzAbc')?.reason).toBe('shortlink');
+    expect(screenPost('answer', 'See tinyurl.com/abcd for the form')?.reason).toBe('shortlink');
   });
 
   it('stops slurs and threats, even disguised', () => {
@@ -133,9 +139,23 @@ describe("the small model's review", () => {
     expect(calls[0]!.body.systemInstruction.parts[0]!.text).toContain('notice on the campus board');
   });
 
-  it('lets the post through when no model answers, and asks nothing without one', async () => {
+  it('holds a post back when no model answers, unless told to let it through, and asks nothing without one', async () => {
     vi.stubGlobal('fetch', async () => new Response('{"error":{"message":"overloaded"}}', { status: 503 }));
-    expect(await reviewPost({ gemini, backups: [] }, 'question', 'Where is the gym?')).toBeNull();
+    expect((await reviewPost({ gemini, backups: [] }, 'question', 'Where is the gym?'))?.reason).toBe('unreviewed');
+    process.env.ROR_REVIEW_FAIL_OPEN = '1';
+    try {
+      expect(await reviewPost({ gemini, backups: [] }, 'question', 'Where is the gym?')).toBeNull();
+    } finally {
+      delete process.env.ROR_REVIEW_FAIL_OPEN;
+    }
     expect(await reviewPost({ gemini: null, backups: [] }, 'question', 'Where is the gym?')).toBeNull();
+  });
+
+  it('refuses made-up notices and posts pretending to be an office, and a verdict it does not know', async () => {
+    const verdicts: string[] = ['fake', 'impersonation', 'maybe'];
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ verdict: verdicts.shift() }) }] }, finishReason: 'STOP' }] }), { status: 200 }));
+    expect((await reviewPost({ gemini, backups: [] }, 'notice', 'Title: Free iPhones at the Moon', 'Where: Moon Base 7'))?.reason).toBe('fake');
+    expect((await reviewPost({ gemini, backups: [] }, 'notice', 'Title: Housing office: re-apply by Friday'))?.reason).toBe('impersonation');
+    expect((await reviewPost({ gemini, backups: [] }, 'notice', 'Title: Chess club night'))?.reason).toBe('unreviewed');
   });
 });

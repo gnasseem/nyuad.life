@@ -1,10 +1,12 @@
 import { ApiError, queryString, rateLimit, route, sendJson } from '../lib/http.ts';
+import { requireMember } from '../lib/identity.ts';
 import { loadArchive, postById, summarizePost } from '../lib/store.ts';
 import { dotRows } from '../lib/vectors.ts';
 
 export default route(['GET'], async (req, res) => {
   // Related posts cost a scan of every vector, so this is limited like search.
   rateLimit(req, 60, 40, 'post');
+  await requireMember(req);
   const id = queryString(req, 'id').trim();
   if (!id) throw new ApiError(400, 'Missing id.', 'missing_id');
   const archive = await loadArchive();

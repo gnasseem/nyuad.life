@@ -167,6 +167,9 @@ beforeAll(async () => {
   api = createApiServer({ root: process.cwd(), distDir: path.join(dataRoot, 'no-dist') });
   await new Promise<void>((resolve) => api.listen(0, '127.0.0.1', resolve));
   apiUrl = `http://127.0.0.1:${(api.address() as { port: number }).port}`;
+  // Answers, plan reading and contacts are for students who signed up: the tests ask as one.
+  const signup = await fetch(`${apiUrl}/api/board`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'profile', netId: MEMBER.netId, key: MEMBER.key, name: 'Test Member', major: 'Mathematics', classOf: 2027 }) });
+  expect(signup.status).toBe(200);
 });
 
 afterAll(async () => {
@@ -175,7 +178,8 @@ afterAll(async () => {
   rmSync(dataRoot, { recursive: true, force: true });
 });
 
-const headers = { 'content-type': 'application/json' };
+const MEMBER = { netId: 'tst1234', key: 'test-member-key-1' };
+const headers = { 'content-type': 'application/json', 'x-ror-netid': MEMBER.netId, 'x-ror-key': MEMBER.key };
 
 describe('api', () => {
   // Each test asks afresh; the cache has its own test.
@@ -193,10 +197,10 @@ describe('api', () => {
     expect(health).not.toHaveProperty('accessCode');
   });
 
-  it('serves every route without any credentials', async () => {
+  it('serves the archive to students who signed up, and to nobody else', async () => {
     for (const path of ['/api/search?q=calculus', '/api/post?id=p1']) {
-      const response = await fetch(`${apiUrl}${path}`);
-      expect(response.status, path).toBe(200);
+      expect((await fetch(`${apiUrl}${path}`, { headers })).status, path).toBe(200);
+      expect((await fetch(`${apiUrl}${path}`)).status, path).toBe(401);
     }
     const ask = await fetch(`${apiUrl}/api/ask`, { method: 'POST', headers, body: JSON.stringify({ question: 'calculus professor', stream: false }) });
     expect(ask.status).toBe(200);
@@ -320,10 +324,12 @@ describe('api', () => {
     const offers = await getJson(`${apiUrl}/api/board?op=offers`);
     expect(JSON.stringify([listings, offers])).not.toContain('@sara');
     expect(offers.markets.campus).toMatchObject({ open: 1, bestAsk: 0.5 });
-    expect(await getJson(`${apiUrl}/api/board?op=contact&type=listing&id=${listing.id}`)).toEqual({ contactKind: 'instagram', contact: '@sara' });
-    expect(await getJson(`${apiUrl}/api/board?op=contact&type=offer&id=${offer.id}`)).toEqual({ contactKind: 'instagram', contact: '@sara' });
-    expect((await fetch(`${apiUrl}/api/board?op=contact&type=offer&id=nope`)).status).toBe(404);
-    expect((await fetch(`${apiUrl}/api/board?op=contact&type=user&id=${offer.id}`)).status).toBe(400);
+    expect(await getJson(`${apiUrl}/api/board?op=contact&type=listing&id=${listing.id}`, { headers })).toEqual({ contactKind: 'instagram', contact: '@sara' });
+    expect(await getJson(`${apiUrl}/api/board?op=contact&type=offer&id=${offer.id}`, { headers })).toEqual({ contactKind: 'instagram', contact: '@sara' });
+    expect((await fetch(`${apiUrl}/api/board?op=contact&type=offer&id=nope`, { headers })).status).toBe(404);
+    expect((await fetch(`${apiUrl}/api/board?op=contact&type=user&id=${offer.id}`, { headers })).status).toBe(400);
+    // Someone who has not signed up gets no contacts at all.
+    expect((await fetch(`${apiUrl}/api/board?op=contact&type=listing&id=${listing.id}`)).status).toBe(401);
   });
 
   it('lets only the browser that set a NetID up act as it', async () => {
@@ -336,6 +342,32 @@ describe('api', () => {
     expect((await post({ op: 'announce', netId: 'vic1234', key: 'mallory-key', title: 'Free food at D2', body: 'Come by', kind: 'event' })).status).toBe(403);
     // The owner still can.
     expect((await post({ op: 'profile', netId: 'vic1234', key: 'victim-key-1', name: 'Vic Tim', major: 'Economics', classOf: 2028 })).status).toBe(200);
+  });
+
+  it('answers only students who signed up, and only as the browser that did', async () => {
+    const question = JSON.stringify({ question: 'calculus professor', stream: false });
+    const anonymous = await fetch(`${apiUrl}/api/ask`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: question });
+    expect(anonymous.status).toBe(401);
+    expect(((await anonymous.json()) as { error: string }).error).toBe('signup_required');
+    const impostor = await fetch(`${apiUrl}/api/ask`, { method: 'POST', headers: { ...headers, 'x-ror-key': 'someone-elses-key' }, body: question });
+    expect(impostor.status).toBe(403);
+    expect((await fetch(`${apiUrl}/api/ask`, { method: 'POST', headers, body: question })).status).toBe(200);
+  });
+
+  it('refuses posts from another site, and from the asker to their own question', async () => {
+    const crossSite = await fetch(`${apiUrl}/api/board`, { method: 'POST', headers: { ...headers, origin: 'https://evil.example' }, body: JSON.stringify({ op: 'ask', key: MEMBER.key, text: 'Which dining hall is open late on Fridays?' }) });
+    expect(crossSite.status).toBe(403);
+    const post = (body: Record<string, unknown>) => getJson(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
+    const { question } = await post({ op: 'ask', key: MEMBER.key, text: 'Which dining hall is open late on Fridays?' });
+    const own = await post({ op: 'answer', netId: MEMBER.netId, key: MEMBER.key, questionId: question.id, text: 'D2, I think' });
+    expect(own.error).toBe('own_question');
+    await post({ op: 'profile', netId: 'hlp1234', key: 'helper-key-1', name: 'Helen Helper', major: 'Physics', classOf: 2027 });
+    expect((await post({ op: 'answer', netId: 'hlp1234', key: 'helper-key-1', questionId: question.id, text: 'D2 until midnight' })).answer).toBeTruthy();
+    expect((await post({ op: 'answer', netId: 'hlp1234', key: 'helper-key-1', questionId: question.id, text: 'Also the Marketplace' })).error).toBe('already_answered');
+    const feed = await getJson(`${apiUrl}/api/board?op=feed`, { headers });
+    const entry = feed.questions.find((item: { id: string }) => item.id === question.id);
+    expect(entry).toMatchObject({ mine: true, answers: [expect.objectContaining({ text: 'D2 until midnight' })] });
+    expect(JSON.stringify(feed)).not.toContain('askerKey');
   });
 
   it('screens what students post', async () => {

@@ -38,6 +38,8 @@ let lastNonce = '';
 let lastChallenge = '';
 
 beforeAll(async () => {
+  // Signing up is tested in api.test.ts; these tests are about the ChatGPT plan.
+  process.env.ROR_REQUIRE_SIGNUP = '0';
   openai = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://fake');
     if (url.pathname === '/oauth/token') {

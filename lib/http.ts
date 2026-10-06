@@ -19,11 +19,52 @@ export class ApiError extends Error {
   }
 }
 
-function cors(res: ApiResponse): void {
-  res.setHeader('access-control-allow-origin', '*');
+/**
+ * The site and its API share an origin, so browsers need no CORS at all; only local development, where the web app
+ * may run on another port, gets it. Before this the API answered every origin, so any page on the web could have
+ * its visitors' browsers spend the site's model quota.
+ */
+function cors(req: IncomingMessage, res: ApiResponse): void {
+  const origin = header(req, 'origin');
+  if (!origin || !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) || process.env.VERCEL === '1') return;
+  res.setHeader('access-control-allow-origin', origin);
+  res.setHeader('vary', 'origin');
   res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
-  res.setHeader('access-control-allow-headers', 'content-type');
+  res.setHeader('access-control-allow-headers', 'content-type, x-ror-netid, x-ror-key');
+  res.setHeader('access-control-allow-credentials', 'true');
   res.setHeader('access-control-max-age', '86400');
+}
+
+function header(req: IncomingMessage, name: string): string {
+  const value = req.headers[name];
+  return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
+}
+
+/**
+ * Whether a request that changes something comes from another site's page: its Origin names another host, or the
+ * browser says it is cross-site. Requests with neither (curl, the dev server's tests) are judged by the rest.
+ */
+export function crossSite(req: IncomingMessage): boolean {
+  if (header(req, 'sec-fetch-site') === 'cross-site') return true;
+  const origin = header(req, 'origin');
+  if (!origin || origin === 'null') return origin === 'null';
+  let host: string;
+  try {
+    host = new URL(origin).host;
+  } catch {
+    return true;
+  }
+  const own = [header(req, 'x-forwarded-host'), header(req, 'host')].filter(Boolean);
+  const site = (process.env.ROR_SITE_URL ?? '').trim();
+  if (site) {
+    try {
+      own.push(new URL(site).host);
+    } catch {
+      // not a URL; ignore it
+    }
+  }
+  if (own.includes(host)) return false;
+  return !(process.env.VERCEL !== '1' && /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host));
 }
 
 export function sendJson(res: ApiResponse, status: number, body: unknown, cacheSeconds = 0): void {
@@ -65,10 +106,11 @@ async function readText(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function clientIp(req: IncomingMessage): string {
+/** The client's address: Vercel's x-real-ip, else the first x-forwarded-for entry (Vercel overwrites both). */
+export function clientIp(req: IncomingMessage): string {
   const forwarded = req.headers['x-forwarded-for'];
   const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  return (first ?? '').split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+  return header(req, 'x-real-ip') || (first ?? '').split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
 }
 
 /**
@@ -108,10 +150,14 @@ export function clientKey(ip: string): string {
   return `${groups.slice(0, 4).map((group) => group.replace(/^0+(?=.)/, '')).join(':')}::/64`;
 }
 
-/** Wraps a handler with CORS, OPTIONS, method checks and uniform error JSON. */
+/** Failures of the board's database (lib/board-store.ts storageError), whose messages are for the owner. */
+const STORAGE_CODES = new Set(['board_schema_missing', 'board_schema_outdated', 'board_key_rejected', 'board_url_wrong', 'board_unreachable', 'board_storage']);
+
+/** Wraps a handler with CORS, OPTIONS, method and origin checks, and uniform error JSON. */
 export function route(methods: Array<'GET' | 'POST'>, handler: Handler): Handler {
   return async (req, res) => {
-    cors(res);
+    cors(req, res);
+    res.setHeader('x-content-type-options', 'nosniff');
     if (req.method === 'OPTIONS') {
       res.statusCode = 204;
       res.end();
@@ -119,6 +165,11 @@ export function route(methods: Array<'GET' | 'POST'>, handler: Handler): Handler
     }
     if (!methods.includes((req.method ?? 'GET') as 'GET' | 'POST')) {
       sendJson(res, 405, { error: 'method_not_allowed', message: `Use ${methods.join(' or ')}.` });
+      return;
+    }
+    // Another site's page cannot make its visitors post, answer, spend model calls or sign out here.
+    if (req.method === 'POST' && crossSite(req)) {
+      sendJson(res, 403, { error: 'cross_site', message: 'Requests from other sites are not accepted.' });
       return;
     }
     try {
@@ -130,8 +181,11 @@ export function route(methods: Array<'GET' | 'POST'>, handler: Handler): Handler
       }
       const status = error instanceof ApiError ? error.status : (error as { status?: number }).status ?? 500;
       const code = error instanceof ApiError ? error.code : 'error';
-      // Our own errors are written for people; anything else may carry internals, so it stays in the log.
-      const message = error instanceof ApiError ? error.message : status >= 500 ? 'Something went wrong on our side. Try again in a moment.' : error instanceof Error ? error.message : String(error);
+      // Our own errors are written for people; anything else may carry internals, so it stays in the log. So do the
+      // database's own words (its host, Postgres messages): the owner reads them in /api/health and the logs.
+      const storage = error instanceof ApiError && status >= 500 && STORAGE_CODES.has(code);
+      const message = error instanceof ApiError && !storage ? error.message : status >= 500 ? 'Something went wrong on our side. Try again in a moment.' : error instanceof Error ? error.message : String(error);
+      if (storage) console.error(`[api] ${req.method} ${req.url}: ${(error as Error).message}`);
       if (status >= 500) console.error(`[api] ${req.method} ${req.url}:`, error);
       sendJson(res, status >= 400 && status < 600 ? status : 500, { error: code, message });
     }
