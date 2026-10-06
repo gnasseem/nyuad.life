@@ -327,6 +327,15 @@ export interface CourseRating {
   confidence: 'high' | 'medium' | 'low';
 }
 
+/** How students in the group rate being taught by a professor. */
+export interface ProfRating {
+  score: number;
+  verdict: string;
+  /** How many students' first-hand accounts it rests on. */
+  basis: number;
+  confidence: 'high' | 'medium' | 'low';
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -398,6 +407,25 @@ function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
   return hit;
 }
 
+/** Professors' ratings this session already has; null is a professor students have not written enough about. */
+const profMemo = new Map<string, ProfRating | null>();
+
+/**
+ * Ratings for these professors: the ones this session has, plus up to 24 more from the server, which writes a couple
+ * of new ones each time and returns the rest as `pending` to ask for again.
+ */
+async function profRatings(names: string[]): Promise<{ ratings: Map<string, ProfRating | null>; pending: string[] }> {
+  const ask = names.filter((name) => !profMemo.has(name)).slice(0, 24);
+  let pending: string[] = [];
+  if (ask.length) {
+    const result = await request<{ ratings: Record<string, ProfRating | null>; pending: string[] }>(`/api/courses?profs=${encodeURIComponent(ask.join('|'))}`);
+    pending = result.pending;
+    // A name the server does not know comes back with nothing: it has no rating to wait for.
+    for (const name of ask) if (!pending.includes(name)) profMemo.set(name, result.ratings[name] ?? null);
+  }
+  return { ratings: new Map(names.filter((name) => profMemo.has(name)).map((name) => [name, profMemo.get(name)!])), pending };
+}
+
 function post<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 }
@@ -459,6 +487,7 @@ export const api = {
     all: () => cached('courses:all', () => request<{ courses: CourseEntry[] }>('/api/courses?all=1')),
     detail: (code: string) => request<CourseDetail>(`/api/courses?code=${encodeURIComponent(code)}`),
     rating: (code: string) => cached(`rating:${code}`, () => request<{ rating: CourseRating | null }>(`/api/courses?code=${encodeURIComponent(code)}&rating=1`)),
+    profs: profRatings,
   },
 };
 

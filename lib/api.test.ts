@@ -120,7 +120,7 @@ beforeAll(async () => {
       } else if (schema?.properties?.basis) {
         text = JSON.stringify({ score: 4.26, difficulty: 3, workload: null, verdict: 'Hard but fair [1].', pros: ['Dania explains clearly [1][4]', ''], cons: [], tips: [], basis: 3, confidence: 'high' });
       } else if (schema?.properties?.daysOff) {
-        text = JSON.stringify({ wants: [{ label: 'Calculus', codes: ['MATH-UH 1012Q'] }, { label: 'an Arts Core', codes: ['CADT-UH 9999'] }], missing: [], earliest: '9:00', latest: null, daysOff: ['Fri', 'Sat'], lunch: true, shape: 'compact', waitlisted: false, prefer: ['Prof. Dania'], avoid: ['Nobody Here'] });
+        text = JSON.stringify({ wants: [{ label: 'Calculus', codes: ['MATH-UH 1012Q'] }, { label: 'an Arts Core', codes: ['CADT-UH 9999'] }], missing: [], earliest: '9:00', latest: null, daysOff: ['Fri', 'Sat'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Prof. Dania'], avoid: ['Nobody Here'] });
       } else if (schema?.properties?.verdict) {
         text = JSON.stringify({ verdict: 'ok' });
       } else if (schema?.properties?.majors) {
@@ -393,7 +393,9 @@ describe('api', () => {
     const calls = geminiCalls.length;
     for (const suffix of ['', '&rating=1']) expect((await fetch(`${apiUrl}/api/courses?code=ZZ-UH%209999${suffix}`)).status).toBe(404);
     expect(geminiCalls.length).toBe(calls);
-    const { rating } = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012&rating=1`);
+    // Writing a rating spends model calls, so only students who signed up can have one written.
+    expect((await fetch(`${apiUrl}/api/courses?code=MATH-UH%201012&rating=1`)).status).toBe(401);
+    const { rating } = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012&rating=1`, { headers });
     expect(rating).toMatchObject({ score: 4.3, difficulty: 3, workload: null, basis: 3, confidence: 'high' });
     // Citations the model wrote anyway are taken out.
     expect(rating.pros).toEqual(['Dania explains clearly']);
@@ -404,13 +406,13 @@ describe('api', () => {
 
   it('reads a plan request into codes the term has and rules the planner can use', async () => {
     const post = (body: Record<string, unknown>) => fetch(`${apiUrl}/api/plan`, { method: 'POST', headers, body: JSON.stringify(body) });
-    const response = await post({ term: 'Fall 2026', text: 'calc with Dania, an arts core, nothing before 9, fridays off, lunch', current: { wants: [{ label: 'Calculus', codes: ['MATH-UH 1012'] }] } });
+    const response = await post({ term: 'Fall 2026', text: 'calc with Dania, an arts core, nothing before 9, fridays off, 3 classes a day at most, no back to back', current: { wants: [{ label: 'Calculus', codes: ['MATH-UH 1012'] }] } });
     expect(response.status).toBe(200);
     const plan = (await response.json()) as { wants: unknown; missing: unknown; rules: unknown };
     // The Q-suffixed code finds this term's course; a code the term does not have is dropped and said to be missing.
     expect(plan.wants).toEqual([{ label: '', codes: ['MATH-UH 1012'] }]);
     expect(plan.missing).toEqual(['an Arts Core', 'Nobody Here is not teaching this term']);
-    expect(plan.rules).toEqual({ earliest: '09:00', latest: '', daysOff: ['Fri'], lunch: true, shape: 'compact', waitlisted: false, prefer: ['Rana Dania'], avoid: [] });
+    expect(plan.rules).toEqual({ earliest: '09:00', latest: '', daysOff: ['Fri'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Rana Dania'], avoid: [] });
     const call = geminiCalls.at(-1)!;
     expect(call.prompt).toContain('MATH-UH 1012 · Calculus');
     expect(call.prompt).toContain('Current plan:\n- Calculus: MATH-UH 1012');

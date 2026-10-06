@@ -3,7 +3,7 @@
  * contact last used. The conversation open on Ask is per tab, in sessionStorage.
  */
 import type { Rules, Want } from '../../lib/schedule.ts';
-import { DEFAULT_RULES } from '../../lib/schedule.ts';
+import { normalizeRules } from '../../lib/schedule.ts';
 import type { ChatTurn, Confidence, ContactKind, Profile, Redirect, SourceCard } from './api';
 
 export interface Message {
@@ -256,10 +256,11 @@ export interface SavedPlan {
   rules: Rules;
 }
 
+/** The saved plan, from any version of the page: rules it no longer has (the old lunch break) are dropped. */
 export function loadPlan(): SavedPlan {
   const saved = read<Partial<SavedPlan>>(PLAN_KEY, {});
   const wants = Array.isArray(saved.wants) ? saved.wants.filter((want) => want && typeof want.id === 'string' && Array.isArray(want.codes)) : [];
-  return { term: typeof saved.term === 'string' ? saved.term : '', wants: wants.map((want) => ({ id: want.id, label: String(want.label ?? ''), codes: want.codes.map(String) })), rules: { ...DEFAULT_RULES, ...(saved.rules ?? {}) } };
+  return { term: typeof saved.term === 'string' ? saved.term : '', wants: wants.map((want) => ({ id: want.id, label: String(want.label ?? ''), codes: want.codes.map(String) })), rules: normalizeRules(saved.rules) };
 }
 
 export function savePlan(plan: SavedPlan): void {

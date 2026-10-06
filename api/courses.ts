@@ -1,17 +1,20 @@
 /**
- * Courses from Albert's schedule, and for one course an AI rating written from what students said about it in the
- * group, cached per course.
+ * Courses from Albert's schedule, and AI ratings written from what students said in the group: for one course, and
+ * for the professors a plan could have. Both are cached for a month.
  *
  *   GET /api/courses                               the terms, and which one is current
  *   GET /api/courses?term=Fall%202026               every course offered that term, with sections (the planner)
  *   GET /api/courses?all=1                          every course once, for the course list
  *   GET /api/courses?code=CS-UH%201001              one course: title, credits, description
  *   GET /api/courses?code=CS-UH%201001&rating=1     the rating, written once and cached (slow the first time)
+ *   GET /api/courses?profs=Thomas%20P%C3%B6tsch|... ratings of up to 24 professors: the cached ones, plus a couple
+ *                                                  newly written; the rest come back in `pending` to ask again
  */
 import { boardStore } from '../lib/board-store.ts';
-import { allCourses, courseHistory, courseRows, loadCatalog, type Catalog } from '../lib/courses.ts';
+import { allCourses, courseHistory, courseRows, displayName, loadCatalog, termOrder, type Catalog } from '../lib/courses.ts';
 import { geminiConfig } from '../lib/gemini.ts';
-import { ApiError, queryString, rateLimit, route, sendJson } from '../lib/http.ts';
+import { ApiError, queryString, rateLimit, route, sendJson, type ApiRequest } from '../lib/http.ts';
+import { requireMember } from '../lib/identity.ts';
 import { normalizeCode } from '../lib/html.ts';
 import { loadOfficial, type OfficialCorpus, type OfficialDoc } from '../lib/official.ts';
 import { providersFromEnv, siteJson } from '../lib/providers.ts';
@@ -19,7 +22,7 @@ import { retrieve, sourcesBlock, toSourceCards } from '../lib/rag.ts';
 import { rerankerFromEnv } from '../lib/rerank.ts';
 import type { Hit } from '../lib/search.ts';
 import { loadArchive, type Archive } from '../lib/store.ts';
-import { collapseWhitespace, formatDate, truncate } from '../lib/text.ts';
+import { bestWindow, collapseWhitespace, formatDate, truncate } from '../lib/text.ts';
 
 export const config = { maxDuration: 60 };
 
@@ -28,7 +31,12 @@ export default route(['GET'], async (req, res) => {
   const catalog = loadCatalog();
   const code = queryString(req, 'code').trim();
   const term = queryString(req, 'term').trim();
+  const profs = queryString(req, 'profs');
 
+  if (profs) {
+    sendJson(res, 200, await profRatings(req, catalog, profs));
+    return;
+  }
   if (code) {
     const normalized = normalizeCode(code);
     const official = await loadOfficial().catch(() => null);
@@ -38,7 +46,11 @@ export default route(['GET'], async (req, res) => {
       const known = await savedRating(normalized);
       // Writing a rating costs a search and a model call: a few a minute per person, so walking every code cannot spend
       // the day's model quota. Reading one already written is free.
-      if (known === undefined) rateLimit(req, 8, 3, 'course-rating');
+      if (known === undefined) {
+        rateLimit(req, 8, 3, 'course-rating');
+        // Writing one costs model calls, so it is for students who signed up; reading a written one is for anyone.
+        await requireMember(req);
+      }
       sendJson(res, 200, { rating: known === undefined ? await courseRating(await loadArchive(), official, catalog, normalized) : known });
       return;
     }
@@ -261,4 +273,264 @@ function cleanRating(raw: Partial<CourseRating>, model: string): CourseRating | 
     model,
     createdAt: new Date().toISOString(),
   };
+}
+
+/* ---------- Professors ---------- */
+
+/** How students rate being taught by someone, from what they wrote about it in the group. */
+interface ProfRating {
+  /** 1.0 to 5.0. */
+  score: number;
+  /** How many students' first-hand accounts it rests on. */
+  basis: number;
+  verdict: string;
+  confidence: 'high' | 'medium' | 'low';
+  model: string;
+  createdAt: string;
+}
+
+/** What is kept for a professor: a rating, or that students have not written enough to give one. */
+type SavedProf = ProfRating | { none: true; createdAt: string };
+
+const MAX_PROFS = 24;
+/** New ratings written per request: each is a search and a model call, and the client asks again for the rest. */
+const NEW_PER_REQUEST = 2;
+const PROF_TTL_MS = 30 * 86_400_000;
+/** Someone students have not written about is looked at again sooner: new threads come in every day. */
+const PROF_NONE_TTL_MS = 7 * 86_400_000;
+const profHot = new Map<string, SavedProf>();
+
+interface Teacher {
+  name: string;
+  /** As Albert gives it before the comma: "Pötsch, Thomas" -> "Pötsch". */
+  surname: string;
+  first: string;
+  /** What they teach, newest first: "CS-UH 1001 Introduction to Computer Science". */
+  courses: string[];
+}
+
+const teacherIndexes = new WeakMap<Catalog, Map<string, Teacher>>();
+
+function foldName(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/** Everyone who teaches or taught in the schedule, by folded display name. Only they can be rated. */
+function teachers(catalog: Catalog): Map<string, Teacher> {
+  const known = teacherIndexes.get(catalog);
+  if (known) return known;
+  const index = new Map<string, Teacher & { recent: Map<string, number> }>();
+  for (const [code, offerings] of catalog.byCode) {
+    for (const offering of offerings) {
+      for (const section of offering.sections) {
+        for (const raw of section.instructors) {
+          const name = displayName(raw);
+          const key = foldName(name);
+          if (!key) continue;
+          let teacher = index.get(key);
+          if (!teacher) {
+            const [last = '', first = ''] = raw.split(',').map((part) => part.trim());
+            teacher = { name, surname: first ? last : (name.split(' ').at(-1) ?? name), first, courses: [], recent: new Map() };
+            index.set(key, teacher);
+          }
+          const course = `${code} ${offering.title}`;
+          teacher.recent.set(course, Math.max(teacher.recent.get(course) ?? 0, termOrder(offering.term)));
+        }
+      }
+    }
+  }
+  for (const teacher of index.values()) teacher.courses = [...teacher.recent.entries()].sort((a, b) => b[1] - a[1]).map(([course]) => course).slice(0, 5);
+  teacherIndexes.set(catalog, index);
+  return index;
+}
+
+function profKey(name: string): string {
+  return `prof-rating:v1:${foldName(name)}`;
+}
+
+function fresh(entry: SavedProf | null | undefined): entry is SavedProf {
+  if (!entry || typeof entry !== 'object' || typeof entry.createdAt !== 'string') return false;
+  if (!('none' in entry) && typeof entry.score !== 'number') return false;
+  return Date.now() - Date.parse(entry.createdAt) < ('none' in entry ? PROF_NONE_TTL_MS : PROF_TTL_MS);
+}
+
+/** A fresh rating already written, or undefined when one has to be written. */
+async function savedProf(name: string): Promise<SavedProf | undefined> {
+  const key = profKey(name);
+  const remembered = profHot.get(key);
+  if (fresh(remembered)) return remembered;
+  const saved = (await boardStore()?.getSummary(key).catch(() => null))?.payload as SavedProf | undefined;
+  if (!fresh(saved)) return undefined;
+  profHot.set(key, saved);
+  return saved;
+}
+
+function publicProf(entry: SavedProf | null): { score: number; basis: number; verdict: string; confidence: ProfRating['confidence'] } | null {
+  return !entry || 'none' in entry ? null : { score: entry.score, basis: entry.basis, verdict: entry.verdict, confidence: entry.confidence };
+}
+
+/**
+ * Ratings for the professors the planner may put in a plan. Only names in the schedule count, so arbitrary strings
+ * cannot spend model calls. Cached ratings are free; a couple of new ones are written per request, within a per-person
+ * budget, and the rest come back in `pending` for the client to ask again.
+ */
+async function profRatings(req: ApiRequest, catalog: Catalog, param: string) {
+  const index = teachers(catalog);
+  const names = [...new Set(param.split('|').map((name) => collapseWhitespace(name)).filter(Boolean))].slice(0, MAX_PROFS);
+  const real = names.filter((name) => index.has(foldName(name)));
+  const ratings: Record<string, ReturnType<typeof publicProf>> = {};
+  const unwritten: string[] = [];
+  const saved = await Promise.all(real.map(savedProf));
+  real.forEach((name, i) => {
+    const entry = saved[i];
+    if (entry) ratings[name] = publicProf(entry);
+    else unwritten.push(name);
+  });
+  const gemini = geminiConfig();
+  const backups = providersFromEnv();
+  if (!gemini && backups.length === 0) {
+    for (const name of unwritten) ratings[name] = null;
+    return { ratings, pending: [] };
+  }
+  const writing: string[] = [];
+  const pending: string[] = [];
+  // New ratings cost model calls, so only students who signed up get them written; anyone gets the written ones.
+  const member = unwritten.length > 0 && (await requireMember(req).then(() => true, () => false));
+  for (const name of unwritten) {
+    if (member && writing.length < NEW_PER_REQUEST && spend(req)) writing.push(name);
+    else pending.push(name);
+  }
+  if (writing.length) {
+    const archive = await loadArchive();
+    const written = await Promise.all(
+      writing.map((name) =>
+        profRating(archive, index.get(foldName(name))!).catch((error: Error) => {
+          console.warn('[courses] professor rating failed:', error.message);
+          return undefined;
+        }),
+      ),
+    );
+    writing.forEach((name, i) => {
+      const entry = written[i];
+      if (entry === undefined) pending.push(name);
+      else ratings[name] = publicProf(entry);
+    });
+  }
+  return { ratings, pending };
+}
+
+/** Whether this person may have one more rating written now: a few a minute, like course ratings. */
+function spend(req: ApiRequest): boolean {
+  try {
+    rateLimit(req, 12, 4, 'prof-rating');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const TEACHING = /\b(?:prof|profs|professor|professors|dr|teach\w*|taught|class|classes|course|courses|lectures?|exams?|midterms?|finals?|grad(?:e|es|ed|ing)|syllabus|section|office hours)\b/;
+const MAX_PROF_THREADS = 8;
+
+/**
+ * What students wrote about a professor: threads found by surname, with what they teach as context, kept only when
+ * they name the surname and talk about teaching (or name the first name or one of their courses), cut down to the
+ * post and the comments that mention them, with the reply after each.
+ */
+async function profThreads(archive: Archive, teacher: Teacher): Promise<string[]> {
+  const surname = foldName(teacher.surname);
+  if (surname.length < 3) return [];
+  const named = new RegExp(`\\b${surname.replace(/ /g, '\\s+')}\\b`);
+  const first = foldName(teacher.first).split(' ')[0] ?? '';
+  const numbers = teacher.courses.map((course) => /\d{4}/.exec(course)?.[0]).filter((value): value is string => !!value);
+  const title = teacher.courses[0]?.replace(/^\S+ \S+ /, '') ?? '';
+  const [byName, byCourse] = await Promise.all([retrieve(archive, `professor ${teacher.surname} ${teacher.first}`, { k: 40, useDense: false }), retrieve(archive, `${teacher.surname} ${title}`, { k: 20, useDense: false })]);
+  const seen = new Set<number>();
+  const out: string[] = [];
+  for (const hit of [...byName.hits, ...byCourse.hits]) {
+    if (out.length >= MAX_PROF_THREADS) break;
+    if (seen.has(hit.post)) continue;
+    seen.add(hit.post);
+    const post = archive.posts[hit.post]!;
+    const folded = [post.text, ...post.comments.map((comment) => comment.text)].map(foldName);
+    const all = folded.join(' ');
+    if (!named.test(all)) continue;
+    // A surname alone could be a student's: the thread has to be about teaching.
+    if (!TEACHING.test(all) && !(first.length > 2 && all.includes(first)) && !numbers.some((value) => all.includes(value))) continue;
+    const terms = [teacher.surname.toLowerCase(), surname];
+    const lines = [`Post by ${post.author || 'a student'} on ${formatDate(post.date)}: ${named.test(folded[0]!) ? bestWindow(post.text, terms, 900) : truncate(collapseWhitespace(post.text), 400)}`];
+    const shown = new Set<number>();
+    post.comments.forEach((_, i) => {
+      if (!named.test(folded[i + 1]!)) return;
+      shown.add(i);
+      if (i + 1 < post.comments.length) shown.add(i + 1);
+    });
+    for (const i of [...shown].sort((a, b) => a - b).slice(0, 8)) {
+      const comment = post.comments[i]!;
+      lines.push(`- ${comment.author || 'Someone'}${comment.date ? ` (${formatDate(comment.date)})` : ''}: ${bestWindow(comment.text, terms, 500)}`);
+    }
+    out.push(lines.join('\n'));
+  }
+  return out;
+}
+
+const PROF_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    score: { type: 'NUMBER' },
+    verdict: { type: 'STRING' },
+    basis: { type: 'INTEGER' },
+    confidence: { type: 'STRING', enum: ['high', 'medium', 'low'] },
+  },
+  required: ['score', 'verdict', 'basis', 'confidence'],
+};
+
+const PROF_SYSTEM = [
+  "You rate one NYU Abu Dhabi professor for students choosing classes, from what students wrote in the Room of Requirement Facebook group (the excerpts below). The excerpts were found by the professor's surname: some may be about someone else with that name, or about other professors in the same thread. Use only what is clearly about this professor's teaching.",
+  'Return:',
+  'score: how students rate being taught by them, 1.0 to 5.0 with one decimal: clear teaching, fair grading, a well-run class, help when students need it. Use the whole range: 4.5 and up when students praise them, 2 and below when they warn others off, 3.0 only when they are truly split.',
+  'verdict: one plain sentence under 20 words on what their classes are like, as students describe them ("Clear lectures and fair exams, but the weekly problem sets take many hours.").',
+  'basis: how many different students gave a first-hand account of being taught by them (count people, not threads). Questions with no answer, hearsay and their name alone count for nothing.',
+  'confidence: high when several recent first-hand accounts agree, medium when there are few or older ones, low when they are thin, very old or split.',
+  'Only teaching, grading and how they run the class, as students reported it. Nothing personal: nothing about their looks, private life or character outside class, and no rumours. No citations or thread references.',
+  'Never invent anything. When the excerpts say nothing first-hand about their teaching, return basis 0.',
+].join('\n');
+
+/** A new rating, or null when students have not written enough first-hand; both are kept. Throws when the model fails. */
+async function profRating(archive: Archive, teacher: Teacher): Promise<SavedProf> {
+  const threads = await profThreads(archive, teacher);
+  let rating: ProfRating | null = null;
+  if (threads.length) {
+    const gemini = geminiConfig();
+    const backups = providersFromEnv();
+    const result = await siteJson<Partial<ProfRating>>(gemini, backups, {
+      system: PROF_SYSTEM,
+      prompt: `Professor: ${teacher.name} (Albert lists "${teacher.surname}${teacher.first ? `, ${teacher.first}` : ''}"), who teaches ${teacher.courses.join('; ') || 'at NYU Abu Dhabi'}.\n\nWhat students wrote that mentions ${teacher.surname}:\n\n${threads.join('\n\n')}`,
+      schema: PROF_SCHEMA,
+      tier: 'main',
+      temperature: 0.2,
+      maxOutputTokens: 512,
+      timeoutMs: 25_000,
+    });
+    rating = cleanProf(result, gemini?.chatModel ?? backups[0]?.models[0] ?? '');
+  }
+  const entry: SavedProf = rating ?? { none: true, createdAt: new Date().toISOString() };
+  const key = profKey(teacher.name);
+  profHot.set(key, entry);
+  await boardStore()?.putSummary(key, entry).catch((error) => console.warn('[courses] could not cache the professor rating:', (error as Error).message));
+  return entry;
+}
+
+function cleanProf(raw: Partial<ProfRating>, model: string): ProfRating | null {
+  const basis = Math.max(0, Math.round(Number(raw.basis) || 0));
+  const score = Math.round(Math.min(5, Math.max(1, Number(raw.score) || 0)) * 10) / 10;
+  const verdict = collapseWhitespace(String(raw.verdict ?? '').replace(/\s*\[\d+\](?:\[\d+\])*/g, '')).slice(0, 220);
+  if (basis === 0 || !Number.isFinite(score) || !verdict) return null;
+  const level = String(raw.confidence ?? '').toLowerCase();
+  return { score, basis, verdict, confidence: level === 'high' || level === 'low' ? level : 'medium', model, createdAt: new Date().toISOString() };
 }

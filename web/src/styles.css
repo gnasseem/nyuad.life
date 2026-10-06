@@ -1037,6 +1037,10 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 /* What you want on the left, the week it makes on the right: a timetable in the colours of your courses, and under
    it the sections with their class numbers for Albert. */
 .plan { display: grid; grid-template-columns: minmax(0, 390px) minmax(0, 1fr); gap: 30px; align-items: start; }
+/* Just above the one-column layout the week needs the room more than the rules do. */
+@media (min-width: 1081px) and (max-width: 1240px) {
+  .plan { grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 22px; }
+}
 .plan-side { display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr); }
 .plan-ask { display: grid; gap: 8px; padding: 10px 10px 10px 14px; border: 1px solid var(--rule); border-radius: 16px; background: var(--plate); box-shadow: var(--shadow-1); transition: border-color 0.2s, box-shadow 0.2s; }
 .plan-ask:focus-within { border-color: var(--line); box-shadow: 0 0 0 3px var(--line-soft), var(--shadow-1); }
@@ -1055,48 +1059,110 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .want-body b { font-weight: 630; font-size: 14.5px; line-height: 1.3; }
 .want-any { max-width: 100%; color: var(--ink-3); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .want-problem { color: var(--scarlet-ink); font-size: 12.5px; line-height: 1.35; }
+.plan-load { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 0 2px; color: var(--ink-3); font-size: 13px; line-height: 1.4; }
+.plan-load b { color: var(--ink-2); font: 700 13px/1.4 var(--sign); font-variant-numeric: tabular-nums; }
+.plan-load.off b, .plan-load.off span { color: var(--amber-ink); }
 .picker { position: relative; }
 .picker .input { height: 42px; }
-.picker-list { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; right: 0; display: grid; padding: 4px; border: 1px solid var(--rule); border-radius: 12px; background: var(--plate); box-shadow: var(--shadow-2); animation: pop-in 0.18s var(--ease); }
+.picker-list { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; right: 0; display: grid; margin: 0; padding: 4px; list-style: none; border: 1px solid var(--rule); border-radius: 12px; background: var(--plate); box-shadow: var(--shadow-2); animation: pop-in 0.18s var(--ease); }
 .picker-list button { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 10px; border: 0; border-radius: 8px; background: none; font-size: 14px; text-align: left; }
 .picker-list button.on { background: var(--plate-3); }
 .picker-list button span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prof-list li { display: flex; align-items: center; gap: 6px; min-height: 46px; padding: 4px 4px 4px 10px; border-radius: 8px; }
+.prof-list li.on { background: var(--plate-3); }
+/* .picker-list button strips buttons down to rows; these two stay buttons. */
+.prof-list .btn { flex: none; height: 32px; padding: 0 11px; border: 1px solid var(--rule-2); background: var(--plate); }
+.prof-list .btn:hover { border-color: var(--ink-3); }
+.prof-name { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.prof-name b { font-weight: 620; font-size: 14px; line-height: 1.25; }
+.prof-name small { overflow: hidden; color: var(--ink-3); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .rules { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
-.rule { display: grid; gap: 6px; color: var(--ink-3); font-size: 12.5px; font-weight: 640; }
+.rule { display: grid; gap: 6px; align-content: start; color: var(--ink-3); font-size: 12.5px; font-weight: 640; }
 .rule.wide { grid-column: 1 / -1; }
-.rule.chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .rule .input { height: 38px; }
 .rule .segmented { justify-self: start; }
+.rule .chips .chip { white-space: normal; text-align: left; }
+.rule-help { color: var(--ink-3); font-size: 12.5px; font-weight: 500; line-height: 1.4; }
+.switches { gap: 6px; }
+.switch { display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--plate); color: var(--ink); text-align: left; transition: border-color 0.15s, background 0.15s; }
+.switch:hover { border-color: var(--rule-2); }
+.switch-track { position: relative; width: 34px; height: 20px; flex: none; margin-top: 1px; border-radius: 10px; background: var(--plate-3); box-shadow: inset 0 0 0 1px var(--rule-2); transition: background 0.2s, box-shadow 0.2s; }
+.switch-track::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--plate); box-shadow: 0 1px 2px rgba(11, 18, 48, 0.3); transition: transform 0.25s var(--ease); }
+.switch.on .switch-track { background: var(--line-fill); box-shadow: none; }
+.switch.on .switch-track::after { background: #ffffff; transform: translateX(14px); }
+.switch-text { display: grid; gap: 2px; min-width: 0; }
+.switch-text b { font: 630 14px/1.3 var(--text); }
+.switch-text small { color: var(--ink-3); font-size: 12.5px; font-weight: 500; line-height: 1.4; }
 .day-toggles { display: flex; gap: 4px; }
 .day-toggle { flex: 1; height: 38px; min-width: 0; border: 1px solid var(--rule); border-radius: 8px; background: var(--plate); color: var(--ink-2); font: 750 13px/1 var(--sign); transition: background 0.18s, color 0.18s, border-color 0.18s, transform 0.12s var(--ease); }
 .day-toggle:active { transform: scale(0.95); }
 .day-toggle.on { border-color: transparent; background: var(--line-fill); color: var(--line-on); text-decoration: line-through; text-decoration-thickness: 2px; }
 .chip svg { width: 13px; height: 13px; }
 .chip.on.avoid { background: var(--scarlet-fill); color: #ffffff; }
-.sign-select { width: auto; height: 38px; padding-right: 30px; border-color: color-mix(in srgb, var(--line-on) 45%, transparent); background-color: color-mix(in srgb, var(--line-on) 12%, transparent); color: var(--line-on); font-weight: 650; }
+/* On the sign: `select.input` sets a white plate and a grey chevron, so this has to be at least as specific. */
+select.input.sign-select { width: auto; height: 38px; padding-right: 32px; border-color: color-mix(in srgb, var(--line-on) 45%, transparent); background-color: color-mix(in srgb, var(--line-on) 12%, transparent); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2.6'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); color: var(--line-on); font-weight: 650; }
+select.input.sign-select:hover:not(:focus) { border-color: var(--line-on); }
+select.input.sign-select:focus { border-color: var(--line-on); box-shadow: 0 0 0 3px color-mix(in srgb, var(--line-on) 28%, transparent); }
 .sign-select option { background: var(--plate); color: var(--ink); }
 
 .plan-main { display: grid; gap: 14px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
-.plan-empty .week-grid { opacity: 0.7; }
+.plan-problems { display: grid; gap: 14px; }
+.plan-problem { display: grid; gap: 8px; }
+.plan-fixes { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.plan-fixes li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 13px; line-height: 1.4; }
+.plan-fixes .btn { border-color: color-mix(in srgb, var(--amber-ink) 35%, transparent); background: var(--plate); color: var(--ink); }
 .option-bar { display: flex; align-items: center; gap: 8px; padding: 5px; border: 1px solid var(--rule); border-radius: 14px; background: var(--plate); }
-.option-name { flex: 1; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 2px 10px; text-align: center; }
-.option-name b { font: 800 21px/1 var(--sign); font-stretch: 78%; letter-spacing: 0.03em; text-transform: uppercase; }
-.option-name span { color: var(--ink-3); font-size: 13.5px; }
+.option-name { flex: 1; min-width: 0; display: grid; gap: 5px; justify-items: center; padding: 4px 0; text-align: center; }
+.option-title { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 2px 10px; }
+.option-title b { font: 800 21px/1 var(--sign); font-stretch: 78%; letter-spacing: 0.03em; text-transform: uppercase; }
+.option-title span { color: var(--ink-3); font-size: 13.5px; }
+.option-why { color: var(--ink-2); font-size: 13px; line-height: 1.35; text-wrap: balance; animation: fade-in 0.3s ease-out; }
 
-.week-grid { border: 1px solid var(--rule); border-radius: 16px; background: var(--plate); overflow: hidden; box-shadow: var(--shadow-1); }
-.wg-head, .wg-body { display: grid; grid-template-columns: 46px repeat(var(--days), minmax(0, 1fr)); }
+/* Hour bands of --hour; a block's top and height are its times as a share of the day shown, so it sits on the lines. */
+.week-grid { --times: 46px; --hour: 46px; position: relative; border: 1px solid var(--rule); border-radius: 16px; background: var(--plate); overflow: hidden; box-shadow: var(--shadow-1); }
+.wg-head, .wg-body { display: grid; grid-template-columns: var(--times) repeat(var(--days), minmax(0, 1fr)); }
 .wg-head { border-bottom: 1px solid var(--rule); background: var(--plate-2); }
 .wg-head span { padding: 10px 0 9px; color: var(--ink-3); font: 720 12px/1 var(--sign); font-stretch: 90%; letter-spacing: 0.1em; text-align: center; text-transform: uppercase; }
-.wg-body { position: relative; height: calc(var(--hours) * 46px); background-image: repeating-linear-gradient(to bottom, transparent 0 45px, color-mix(in srgb, var(--rule) 70%, transparent) 45px 46px); }
-.wg-times { display: grid; grid-template-rows: repeat(var(--hours), minmax(0, 1fr)); }
-.wg-times span { padding: 4px 7px 0 0; color: var(--ink-3); font: 650 11px/1 var(--sign); text-align: right; }
-.wg-day { position: relative; border-left: 1px solid var(--rule); }
-.wg-block { position: absolute; padding: 1px 2px; }
-.wg-card { display: flex; flex-direction: column; gap: 2px; height: 100%; overflow: hidden; padding: 4px 6px; border-left: 3px solid var(--c); border-radius: 6px; background: color-mix(in srgb, var(--c) 17%, var(--plate)); animation: block-in 0.45s var(--ease) backwards; }
-@keyframes block-in { from { opacity: 0; transform: scaleY(0.6); transform-origin: top; } }
-.wg-card b { font: 760 12px/1.15 var(--sign); font-stretch: 88%; letter-spacing: 0.01em; }
-.wg-card span { color: var(--ink-2); font-size: 11px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wg-note { padding: 10px 14px; border-top: 1px solid var(--rule); color: var(--ink-3); font-size: 13px; }
+.wg-head span.off { text-decoration: line-through; text-decoration-thickness: 1.5px; opacity: 0.6; }
+.wg-body { position: relative; height: calc(var(--hours) * var(--hour)); background-image: repeating-linear-gradient(to bottom, transparent 0 calc(var(--hour) - 1px), color-mix(in srgb, var(--rule) 70%, transparent) calc(var(--hour) - 1px) var(--hour)); }
+.wg-times { display: grid; grid-template-rows: repeat(var(--hours), var(--hour)); }
+.wg-times span { padding: 4px 7px 0 0; color: var(--ink-3); font: 650 11px/1 var(--sign); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.wg-day { position: relative; min-width: 0; border-left: 1px solid var(--rule); }
+.wg-day.off { background: repeating-linear-gradient(135deg, transparent 0 7px, color-mix(in srgb, var(--rule) 55%, transparent) 7px 8px); }
+.wg-block { position: absolute; padding: 1px 2px; container-type: size; }
+.wg-card { display: flex; flex-direction: column; gap: 1px; height: 100%; overflow: hidden; padding: 4px 6px; border-left: 3px solid var(--c); border-radius: 6px; background: color-mix(in srgb, var(--c) 17%, var(--plate)); transform-origin: top; animation: block-in 0.45s var(--ease) backwards; }
+@keyframes block-in { from { opacity: 0; transform: scaleY(0.6); } }
+.wg-card b { flex: none; font: 760 12px/1.15 var(--sign); font-stretch: 88%; letter-spacing: 0.01em; }
+.wg-card b span { white-space: nowrap; }
+.wg-card > span { flex: none; overflow: hidden; color: var(--ink-2); font-size: 11px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.wg-card .wg-half { color: var(--ink); font-weight: 650; }
+.wg-half .short { display: none; }
+.wg-card .wg-time { order: 1; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.wg-card .wg-part { order: 2; }
+/* Short blocks keep the code and what matters most; narrow ones (a phone, or two halves side by side) say less. */
+@container (max-height: 58px) { .wg-card .wg-part { display: none; } }
+@container (max-height: 44px) { .wg-card .wg-time { display: none; } }
+@container (max-width: 76px) {
+  .wg-card { padding: 3px 3px 3px 4px; border-left-width: 2px; border-radius: 4px; }
+  .wg-card b { font-size: 10px; }
+  .wg-card > span { font-size: 9.5px; }
+  .wg-card .wg-time { display: none; }
+}
+@container (max-width: 56px) {
+  .wg-card .wg-part { display: none; }
+  .wg-half .long { display: none; }
+  .wg-half .short { display: inline; }
+}
+/* Two halves side by side on a small phone: the course number, set on its side to fit. */
+@container (max-width: 34px) {
+  .wg-card { align-items: center; padding: 4px 1px 3px 1px; }
+  .wg-card b span:first-child { display: none; }
+  .wg-card b, .wg-card .wg-half { writing-mode: vertical-rl; }
+}
+.wg-empty { position: absolute; inset: 0 0 0 var(--times); display: grid; place-items: center; padding: 20px; pointer-events: none; }
+.wg-empty span { max-width: 300px; padding: 10px 16px; border: 1px solid var(--rule); border-radius: 12px; background: var(--plate); box-shadow: var(--shadow-1); color: var(--ink-2); font-size: 14px; line-height: 1.45; text-align: center; }
+.week-grid.blank .wg-head span, .week-grid.blank .wg-times { opacity: 0.6; }
+.wg-note { padding: 10px 14px; border-top: 1px solid var(--rule); color: var(--ink-3); font-size: 13px; line-height: 1.45; }
 
 .plan-list { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); }
 .plan-list > .btn { justify-self: start; }
@@ -1113,6 +1179,11 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .choice-when { color: var(--ink-2); }
 .choice-who { color: var(--ink-3); }
 .choice-sec .class-no { grid-column: 2; grid-row: 1 / span 3; align-self: center; }
+.prof { white-space: nowrap; }
+.prof-score { display: inline-grid; place-items: center; min-width: 30px; height: 19px; margin-left: 5px; padding: 0 6px; border: 0; border-radius: 10px; background: var(--plate-3); color: var(--ink); font: 760 11.5px/1 var(--sign); font-variant-numeric: tabular-nums; vertical-align: 1px; transition: background 0.15s, color 0.15s; animation: stop-pop 0.4s var(--ease); }
+button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--ground); }
+.prof-verdict { grid-column: 1 / -1; margin-top: 4px; padding: 8px 10px; border-radius: 8px; background: var(--plate-2); color: var(--ink-2); font-size: 13px; line-height: 1.45; animation: fade-in 0.2s ease-out; }
+.prof-verdict span { color: var(--ink-3); }
 
 /* ---------- Narrower screens ---------- */
 @media (min-width: 1240px) {
@@ -1284,15 +1355,11 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
   .rating-score { padding: 12px 14px 10px; }
   .rating-score b { font-size: 40px; }
   .rating-verdict { font-size: 15px; }
-  .wg-head, .wg-body { grid-template-columns: 30px repeat(var(--days), minmax(0, 1fr)); }
-  .wg-body { height: calc(var(--hours) * 40px); background-image: repeating-linear-gradient(to bottom, transparent 0 39px, color-mix(in srgb, var(--rule) 70%, transparent) 39px 40px); }
-  .wg-times span { padding-right: 4px; font-size: 9.5px; }
+  .week-grid { --times: 30px; --hour: 40px; }
+  .wg-times span { padding-right: 4px; font-size: 9.5px; letter-spacing: -0.02em; }
   .wg-head span { font-size: 11px; letter-spacing: 0.04em; }
   .wg-block { padding: 1px; }
-  .wg-card { padding: 3px 3px 3px 4px; border-left-width: 2px; border-radius: 4px; }
-  .wg-card b { font-size: 10px; overflow-wrap: anywhere; }
-  .wg-card span { display: none; }
-  .option-name b { font-size: 18px; }
+  .option-title b { font-size: 18px; }
   .choice { padding: 12px 14px; }
 }
 

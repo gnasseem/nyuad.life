@@ -33,9 +33,12 @@ archive browsing, plan reading and contacts to anyone who has not.
   intro to CS, any Arts Core, nothing before 10, Fridays off") and a model reads it into courses from the term's real list
   and rules; or add courses one by one. The browser then finds every combination where no two classes meet at once
   (`lib/schedule.ts`): one section of every component, lectures paired with their own recitation or lab, seven-week
-  halves sharing a slot, closed and waitlisted sections only when allowed. Plans are ranked by days on campus, gaps,
-  lunch, preferred professors and seats, drawn as a week, and listed with class numbers to copy into Albert. When nothing
-  fits it says which course or pair of courses is in the way.
+  halves sharing a slot, closed and waitlisted sections only when allowed. Hard rules (hours, days off, classes a day,
+  no back-to-back, professors to avoid) always hold; within them plans are ranked by how students rate the professors
+  (written from the group's threads, like course ratings, and cached for a month) and, for "any of" slots, the courses,
+  then by days on campus, gaps, early starts, preferred professors and seats. Each plan is drawn as a week, summed up in
+  a line ("Top-rated professors · 3 days on campus · Fridays free") and listed with class numbers to copy into Albert.
+  When nothing fits it says which rule or which courses are in the way and offers the change that would make it fit.
 
 Everything is TypeScript in one repository: `api/` and `lib/` are Vercel serverless functions, `web/` is a Vite and
 React app, `scripts/` holds the scraper, the crawler and the indexer, and `supabase/schema.sql` is the board schema.
@@ -61,8 +64,8 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
    `board.problem` says what is wrong when it is false.
 
 Routes: `GET /api/health`, `/api/search` (`q=`, `topic=`, `sort=`, `page=`), `/api/post?id=`, `/api/courses` (`term=`,
-`all=1`, `code=`, `code=&rating=1`); `POST /api/ask` (server-sent events), `POST /api/plan`;
-`GET|POST /api/board` (`op=stats|question|recent|mine|announcements|offers|listings|contact|leaderboard` on GET,
+`all=1`, `code=`, `code=&rating=1`, `profs=A|B`); `POST /api/ask` (server-sent events), `POST /api/plan`;
+`GET|POST /api/board` (`op=stats|question|recent|feed|mine|announcements|offers|listings|contact|leaderboard` on GET,
 `profile|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer|listing|listing_done|unlisting` on POST). Ask,
 search, courses, plan and the board are rate-limited per IP.
 
