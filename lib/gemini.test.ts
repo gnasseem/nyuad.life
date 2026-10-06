@@ -1,22 +1,40 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { GeminiError, geminiConfig, markUnavailable, resetModelState, thinkingFor, usableModels } from './gemini.ts';
+import { GeminiError, geminiConfig, markUnavailable, resetModelState, thinkingFor, usableModels, withDiscovered } from './gemini.ts';
 
 afterEach(() => resetModelState());
 
 describe('geminiConfig', () => {
   it('defaults to the newest models with older ones behind them', () => {
     const cfg = geminiConfig({ GEMINI_API_KEY: 'k' })!;
-    expect([cfg.chatModel, ...cfg.chatFallbacks]).toEqual(['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemma-4-31b-it']);
-    expect(cfg.liteModels).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-2.5-flash-lite']);
+    expect([cfg.chatModel, ...cfg.chatFallbacks]).toEqual(['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it']);
+    expect(cfg.liteModels).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it']);
   });
   it('keeps the default fallbacks behind a pinned model, unless fallbacks are set too', () => {
-    expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_MODEL: 'gemini-2.5-flash' })!.chatFallbacks).toEqual(['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemma-4-31b-it']);
+    expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_MODEL: 'gemini-3.5-flash' })!.chatFallbacks).toEqual(['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3-flash-preview', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it']);
     expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_MODEL: 'a', GEMINI_CHAT_FALLBACK_MODELS: 'b, c' })!.chatFallbacks).toEqual(['b', 'c']);
     expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_FALLBACK_MODELS: '' })!.chatFallbacks).toEqual([]);
   });
 });
 
+describe('withDiscovered', () => {
+  it('drops models the key cannot use and puts newer Flash models in front', () => {
+    const listed = new Set(['gemini-3.9-flash', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemma-4-31b-it', 'gemini-3.9-flash-lite', 'gemini-3.5-flash-lite', 'gemini-embedding-001']);
+    expect(withDiscovered(['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemma-4-31b-it'], listed, 'flash')).toEqual(['gemini-3.9-flash', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemma-4-31b-it']);
+    expect(withDiscovered(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'], listed, 'lite')).toEqual(['gemini-3.9-flash-lite', 'gemini-3.5-flash-lite']);
+    // A listing that has none of them is more likely wrong than the list.
+    expect(withDiscovered(['gemini-3.8-flash'], new Set(['text-bison']), 'flash')).toEqual(['gemini-3.8-flash']);
+  });
+});
+
 describe('model availability', () => {
+  it('reads a spent day, and a model with no free tier, from the error details', () => {
+    const now = 1_000_000;
+    markUnavailable('none', new GeminiError('Gemini 429: Quota exceeded for metric: free_tier_requests, limit: 0, model: x', 429, 20_000), now);
+    markUnavailable('day', new GeminiError('Gemini 429: You exceeded your current quota [GenerateRequestsPerDayPerProjectPerModel-FreeTier]', 429, 20_000), now);
+    expect(usableModels(['none', 'day', 'ok'], now + 3_000_000)).toEqual(['ok']);
+    expect(usableModels(['none', 'day', 'ok'], now + 3_700_000)).toEqual(['day', 'ok']);
+  });
+
   it('skips a removed model for hours and a model out of daily quota for an hour', () => {
     const now = 1_000_000;
     markUnavailable('gone', new GeminiError('Gemini 404: not found', 404), now);

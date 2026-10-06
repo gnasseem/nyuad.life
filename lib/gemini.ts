@@ -19,12 +19,14 @@ export interface GeminiConfig {
 }
 
 export const DEFAULT_EMBED_MODEL = 'gemini-embedding-001';
-// Newest first. The free tier is granted per model, so every model here adds its own daily free requests; each call
-// walks down its list and skips, for a while, any model that answered 404 or ran out of quota. Google retires models on
-// short notice (2.5 is closed to new projects and shutting down). Gemma 4 is free as well and goes after the Flash
-// models. Pinned names rather than "-latest" aliases, which can move to a model without a free tier.
-const DEFAULT_CHAT_MODELS = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemma-4-31b-it'];
-const DEFAULT_LITE_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-2.5-flash-lite'];
+// Newest first. The free tier is granted per model and is small (about 20 requests a day for each Flash model, a few
+// hundred for Flash-Lite and Gemma), so every model here adds its own share; each call walks down its list and skips,
+// for a while, any model that answered 404 or ran out of quota. The 2.5 family answers 404 to newer keys and shuts
+// down on 2026-10-16, so it is gone from the lists. Gemma 4 is free with a much larger daily allowance and goes after
+// the Flash models. Pinned names rather than "-latest" aliases, which can move to a model without a free tier; newer
+// Flash models the key can use are added at runtime (discoverGeminiModels).
+const DEFAULT_CHAT_MODELS = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it'];
+const DEFAULT_LITE_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it'];
 export const DEFAULT_DIMENSIONS = 768;
 
 function modelList(value: string | undefined): string[] | null {
@@ -43,11 +45,15 @@ function chain(primary: string | undefined, fallbacks: string[] | null, defaults
 export function geminiConfig(env: NodeJS.ProcessEnv = process.env): GeminiConfig | null {
   const apiKey = (env.GEMINI_API_KEY ?? env.GOOGLE_API_KEY ?? '').trim();
   if (!apiKey) return null;
-  const chat = chain(env.GEMINI_CHAT_MODEL, modelList(env.GEMINI_CHAT_FALLBACK_MODELS), DEFAULT_CHAT_MODELS);
-  const lite = chain(env.GEMINI_LITE_MODEL, modelList(env.GEMINI_LITE_FALLBACK_MODELS), DEFAULT_LITE_MODELS);
+  const baseUrl = (env.GEMINI_BASE_URL ?? 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '');
+  // Lists from the environment are taken as written; the defaults are brought up to date with what the key can use.
+  const known = env.GEMINI_CHAT_MODEL || env.GEMINI_CHAT_FALLBACK_MODELS !== undefined ? null : discovered(baseUrl);
+  const knownLite = env.GEMINI_LITE_MODEL || env.GEMINI_LITE_FALLBACK_MODELS !== undefined ? null : discovered(baseUrl);
+  const chat = chain(env.GEMINI_CHAT_MODEL, modelList(env.GEMINI_CHAT_FALLBACK_MODELS), known ? withDiscovered(DEFAULT_CHAT_MODELS, known, 'flash') : DEFAULT_CHAT_MODELS);
+  const lite = chain(env.GEMINI_LITE_MODEL, modelList(env.GEMINI_LITE_FALLBACK_MODELS), knownLite ? withDiscovered(DEFAULT_LITE_MODELS, knownLite, 'lite') : DEFAULT_LITE_MODELS);
   return {
     apiKey,
-    baseUrl: (env.GEMINI_BASE_URL ?? 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, ''),
+    baseUrl,
     embedModel: env.GEMINI_EMBED_MODEL?.trim() || DEFAULT_EMBED_MODEL,
     chatModel: chat[0]!,
     chatFallbacks: chat.slice(1),
@@ -55,6 +61,87 @@ export function geminiConfig(env: NodeJS.ProcessEnv = process.env): GeminiConfig
     liteModels: lite,
     dimensions: Number(env.GEMINI_EMBED_DIMENSIONS) || DEFAULT_DIMENSIONS,
   };
+}
+
+/* ---------- What the key can use ---------- */
+
+/** Base URL -> the models the key can call generateContent on (null when the last attempt to ask failed). */
+const discovery = new Map<string, { at: number; models: Set<string> | null; problem?: string; pending?: Promise<void> }>();
+const DISCOVERY_TTL_MS = 6 * 3_600_000;
+const DISCOVERY_RETRY_MS = 10 * 60_000;
+
+function discovered(baseUrl: string): Set<string> | null {
+  return discovery.get(baseUrl)?.models ?? null;
+}
+
+/** Why Gemini refused to list models (a wrong or revoked key, usually), or null. For the health page and admins. */
+export function geminiKeyProblem(cfg: GeminiConfig | null): string | null {
+  return cfg ? (discovery.get(cfg.baseUrl)?.problem ?? null) : null;
+}
+
+/** The version in a Flash or Flash-Lite name, to order them newest first: "gemini-3.8-flash" is 3.8. */
+function flashVersion(model: string, kind: 'flash' | 'lite'): number | null {
+  const match = (kind === 'flash' ? /^gemini-(\d+(?:\.\d+)?)-flash$/ : /^gemini-(\d+(?:\.\d+)?)-flash-lite$/).exec(model);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * A default list with the models this key cannot use taken out, and up to three Flash (or Flash-Lite) models newer
+ * than any on it put in front, so a model Google releases joins the chain without a deploy. When nothing on the list
+ * is usable the list stands as it is: a listing that left everything out is more likely wrong than the list.
+ */
+export function withDiscovered(defaults: string[], models: Set<string>, kind: 'flash' | 'lite'): string[] {
+  const kept = defaults.filter((model) => models.has(model));
+  const newest = Math.max(0, ...kept.map((model) => flashVersion(model, kind) ?? 0));
+  const newer = [...models]
+    .filter((model) => (flashVersion(model, kind) ?? 0) > newest)
+    .sort((a, b) => flashVersion(b, kind)! - flashVersion(a, kind)!)
+    .slice(0, 3);
+  const list = [...newer, ...kept];
+  return list.length ? list : defaults;
+}
+
+/**
+ * Asks Gemini which models this key may call (ListModels), at most every few hours per instance, and waits up to
+ * `waitMs` for the answer; geminiConfig() uses it from then on. Until it answers, or when it fails, the built-in lists
+ * stand. A refused key is logged loudly, since then every Gemini call fails the same way.
+ */
+export async function discoverGeminiModels(cfg: GeminiConfig | null, waitMs = 2_500): Promise<void> {
+  if (!cfg || process.env.VITEST || process.env.ROR_MODEL_DISCOVERY === '0') return;
+  const entry = discovery.get(cfg.baseUrl);
+  const fresh = entry && Date.now() - entry.at < (entry.models ? DISCOVERY_TTL_MS : DISCOVERY_RETRY_MS);
+  if (fresh && !entry.pending) return;
+  const pending =
+    entry?.pending ??
+    listGeminiModels(cfg)
+      .then((models) => void discovery.set(cfg.baseUrl, { at: Date.now(), models }))
+      .catch((error: unknown) => {
+        const problem = error instanceof GeminiError && (error.status === 400 || error.status === 401 || error.status === 403) ? `The Gemini key was refused: ${error.message}` : undefined;
+        if (problem) console.error(`[gemini] ${problem}. Check GEMINI_API_KEY.`);
+        else console.warn('[gemini] could not list models:', (error as Error).message);
+        discovery.set(cfg.baseUrl, { at: Date.now(), models: entry?.models ?? null, problem });
+      });
+  discovery.set(cfg.baseUrl, { at: entry?.at ?? 0, models: entry?.models ?? null, problem: entry?.problem, pending });
+  await Promise.race([pending, new Promise((resolve) => setTimeout(resolve, waitMs).unref?.())]);
+}
+
+async function listGeminiModels(cfg: GeminiConfig): Promise<Set<string>> {
+  const models = new Set<string>();
+  let token = '';
+  for (let page = 0; page < 5; page++) {
+    const response = await fetch(`${cfg.baseUrl}/models?pageSize=1000${token ? `&pageToken=${encodeURIComponent(token)}` : ''}`, { headers: { 'x-goog-api-key': cfg.apiKey }, signal: AbortSignal.timeout(6_000) });
+    if (!response.ok) throw await toError(response);
+    const json = (await response.json()) as { models?: Array<{ name?: string; supportedGenerationMethods?: string[] }>; nextPageToken?: string };
+    for (const model of json.models ?? []) if (model.name && model.supportedGenerationMethods?.includes('generateContent')) models.add(model.name.replace(/^models\//, ''));
+    if (!json.nextPageToken) break;
+    token = json.nextPageToken;
+  }
+  return models;
+}
+
+/** Test hook. */
+export function resetDiscovery(): void {
+  discovery.clear();
 }
 
 /* ---------- Which models are worth trying ---------- */
@@ -98,7 +185,9 @@ export function isDailyQuota(error: GeminiError): boolean {
  * is overloaded (that usually passes quickly), else its retry delay.
  */
 export function markUnavailable(model: string, error: GeminiError, now = Date.now()): void {
-  const ms = error.status === 404 ? 6 * 3_600_000 : isDailyQuota(error) ? 3_600_000 : isOverloaded(error) ? 60_000 : Math.max(10_000, error.retryAfterMs ?? 30_000);
+  // "limit: 0" is a model with no free tier for this key at all: as good as gone.
+  const none = error.status === 429 && /\blimit: ?0\b/.test(error.message);
+  const ms = error.status === 404 || none ? 6 * 3_600_000 : isDailyQuota(error) ? 3_600_000 : isOverloaded(error) ? 60_000 : Math.max(10_000, error.retryAfterMs ?? 30_000);
   unavailable.set(model, now + ms);
 }
 
@@ -418,10 +507,14 @@ async function toError(response: Response): Promise<GeminiError> {
   let message = text.slice(0, 400);
   let retryAfterMs: number | undefined;
   try {
-    const json = JSON.parse(text) as { error?: { message?: string; details?: Array<{ '@type'?: string; retryDelay?: string }> } };
+    const json = JSON.parse(text) as { error?: { message?: string; details?: Array<{ '@type'?: string; retryDelay?: string; violations?: Array<{ quotaId?: string }> }> } };
     message = json.error?.message ?? message;
     const delay = json.error?.details?.find((detail) => detail.retryDelay)?.retryDelay;
     if (delay) retryAfterMs = Math.min(60_000, Math.ceil(parseFloat(delay) * 1000));
+    // Which quota ran out is only in the details ("GenerateRequestsPerDayPerProjectPerModel-FreeTier"); without it a
+    // spent day looks like a per-minute limit, and the model would be tried again on every question.
+    const quotas = (json.error?.details ?? []).flatMap((detail) => detail.violations ?? []).map((violation) => violation.quotaId).filter(Boolean);
+    if (quotas.length) message = `${message} [${[...new Set(quotas)].join(', ')}]`;
   } catch {
     // Not JSON; keep the raw snippet.
   }
