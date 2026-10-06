@@ -1,15 +1,14 @@
-import { useEffect, useState } from 'react';
-import { api } from '../api';
+import { useEffect, useState, type FormEvent } from 'react';
+import { api, ApiError, type ModelCheck } from '../api';
 import { GROUP_URL } from '../brand';
 import { ChatGPTSignIn } from '../components/ChatGPT';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
 import { plural, standingLabel } from '../format';
-import { IconExternal } from '../icons';
+import { IconExternal, IconShield } from '../icons';
 import { clearConversations, forgetDevice, loadConversations, onConversationsChange, type Theme } from '../store';
 
 const THEMES: Array<{ id: Theme; label: string }> = [
-  { id: 'system', label: 'Auto' },
   { id: 'light', label: 'Light' },
   { id: 'dark', label: 'Dark' },
 ];
@@ -36,7 +35,6 @@ function ThemeArt({ theme }: { theme: Theme }) {
         </clipPath>
       </defs>
       {art(theme === 'dark' ? night : day)}
-      {theme === 'system' && art(night, 'url(#half)')}
     </svg>
   );
 }
@@ -128,11 +126,11 @@ export function SettingsPage() {
                   type="button"
                   className="btn sm ghost"
                   onClick={() => {
+                    if (!window.confirm('Sign out on this browser? You will need to add your details again to use the site.')) return;
                     setProfile(null);
-                    toast('Details removed');
                   }}
                 >
-                  Remove
+                  Sign out
                 </button>
               </div>
             </div>
@@ -140,7 +138,7 @@ export function SettingsPage() {
             <div className="settings-row">
               <div className="text">
                 <b>No details saved</b>
-                <span>Name, NetID, major and year. Asked once, the first time you answer questions or post something</span>
+                <span>Name, NetID, major and year. Everyone adds them once to use the site</span>
               </div>
               <button type="button" className="btn sm primary" onClick={() => void requestProfile()}>
                 Add details
@@ -176,6 +174,8 @@ export function SettingsPage() {
         </div>
       </section>
 
+      <AdminSection />
+
       <section className="settings-section">
         <h2>About</h2>
         <div className="list">
@@ -198,5 +198,160 @@ export function SettingsPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+/**
+ * Admin mode: the code from ROR_ADMIN_CODE turns it on for this browser (the server keeps it in an HttpOnly cookie for
+ * an hour). Then every post gets a remove button, and this section checks the models and lists barred NetIDs.
+ */
+function AdminSection() {
+  const { admin, refreshAdmin, toast } = useApp();
+  const [available, setAvailable] = useState<boolean | null>(null);
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [checks, setChecks] = useState<{ geminiKeyProblem: string | null; results: ModelCheck[] } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [bans, setBans] = useState<Array<{ netId: string; reason: string; createdAt: string }> | null>(null);
+
+  useEffect(() => {
+    api.admin
+      .me()
+      .then((result) => setAvailable(result.available))
+      .catch(() => setAvailable(false));
+  }, [admin]);
+
+  useEffect(() => {
+    if (!admin) return setBans(null);
+    api.admin
+      .bans()
+      .then((result) => setBans(result.bans))
+      .catch(() => setBans([]));
+  }, [admin]);
+
+  useEffect(() => {
+    if (window.location.hash === '#admin') document.getElementById('admin')?.scrollIntoView({ block: 'start' });
+  }, []);
+
+  const signIn = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!code.trim() || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api.admin.login(code.trim());
+      setCode('');
+      refreshAdmin();
+      toast('Admin mode on');
+    } catch (err) {
+      setError(err instanceof ApiError || err instanceof Error ? err.message : 'Could not turn admin mode on.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const signOut = async () => {
+    await api.admin.logout().catch(() => undefined);
+    refreshAdmin();
+    setChecks(null);
+    toast('Admin mode off');
+  };
+
+  const check = async () => {
+    setChecking(true);
+    try {
+      setChecks(await api.admin.models());
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not check the models.');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const unban = async (netId: string) => {
+    await api.admin.unban(netId).catch(() => undefined);
+    setBans((current) => current?.filter((ban) => ban.netId !== netId) ?? null);
+    toast(`${netId} can post again`);
+  };
+
+  if (available === false && !admin) return null;
+  const working = checks?.results.filter((result) => result.ok).length ?? 0;
+  return (
+    <section className="settings-section" id="admin">
+      <h2>Admin</h2>
+      <div className="list">
+        {admin ? (
+          <>
+            <div className="settings-row">
+              <div className="text">
+                <b className="admin-on">
+                  <IconShield /> Admin mode is on
+                </b>
+                <span>Every post shows a remove button. It turns off by itself after an hour.</span>
+              </div>
+              <button type="button" className="btn sm" onClick={() => void signOut()}>
+                Turn off
+              </button>
+            </div>
+            <div className="settings-row">
+              <div className="text">
+                <b>Answer models</b>
+                <span>{checks ? `${working} of ${checks.results.length} answering right now` : 'Sends one tiny request to every model the site can use and shows what each said.'}</span>
+              </div>
+              <button type="button" className="btn sm" onClick={() => void check()} disabled={checking}>
+                {checking ? <span className="spinner" /> : null} {checking ? 'Checking' : 'Check models'}
+              </button>
+            </div>
+            {checks && (
+              <div className="model-checks">
+                {checks.geminiKeyProblem && <div className="alert error">{checks.geminiKeyProblem}</div>}
+                {checks.results.length === 0 && <p className="muted small">No model keys are set on the server.</p>}
+                {checks.results.map((result) => (
+                  <div key={result.name} className={`model-check${result.ok ? ' ok' : ''}`}>
+                    <span className="dot" />
+                    <b>{result.name}</b>
+                    {result.paid && <span className="tag">paid</span>}
+                    <span className="ms">{(result.ms / 1000).toFixed(1)}s</span>
+                    {result.error && <span className="why">{result.error}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="settings-row">
+              <div className="text">
+                <b>Barred from posting</b>
+                <span>{bans === null ? 'Loading' : bans.length ? `${bans.length} NetID${bans.length === 1 ? '' : 's'}` : 'Nobody. "Remove and bar" on a post adds its writer here.'}</span>
+              </div>
+            </div>
+            {bans?.map((ban) => (
+              <div key={ban.netId} className="settings-row">
+                <div className="text">
+                  <b>{ban.netId}</b>
+                  <span>{ban.reason || 'No reason given'}</span>
+                </div>
+                <button type="button" className="btn sm ghost" onClick={() => void unban(ban.netId)}>
+                  Let post again
+                </button>
+              </div>
+            ))}
+          </>
+        ) : (
+          <form className="settings-row admin-login" onSubmit={(event) => void signIn(event)}>
+            <div className="text">
+              <b>Admin code</b>
+              <span>For the people who run the site. Wrong codes lock this browser out for a while.</span>
+              {error && <span className="admin-error">{error}</span>}
+            </div>
+            <div className="actions">
+              <input className="input" type="password" value={code} onChange={(event) => setCode(event.target.value)} placeholder="Code" autoComplete="off" aria-label="Admin code" maxLength={256} />
+              <button type="submit" className="btn sm primary" disabled={!code.trim() || busy}>
+                {busy ? 'Checking' : 'Unlock'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </section>
   );
 }

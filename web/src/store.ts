@@ -3,7 +3,7 @@
  * contact last used. The conversation open on Ask is per tab, in sessionStorage.
  */
 import type { Rules, Want } from '../../lib/schedule.ts';
-import { DEFAULT_RULES } from '../../lib/schedule.ts';
+import { normalizeRules } from '../../lib/schedule.ts';
 import type { ChatTurn, Confidence, ContactKind, Profile, Redirect, SourceCard } from './api';
 
 export interface Message {
@@ -39,6 +39,8 @@ const CONTACT_KEY = 'room.contact';
 /** In sessionStorage: one per tab, gone when the tab closes. */
 const ACTIVE_KEY = 'room.active';
 const PLAN_KEY = 'room.plan';
+const ONBOARDED_KEY = 'room.onboarded';
+const SIDEBAR_KEY = 'room.sidebar';
 const MAX_CONVERSATIONS = 60;
 
 function read<T>(key: string, fallback: T): T {
@@ -188,7 +190,7 @@ export function saveContact(value: { contactKind: ContactKind; contact: string }
 
 /** Removes everything this site keeps in the browser: profile, conversations, the anonymous key, the contact and the theme. */
 export function forgetDevice(): void {
-  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, KEY_KEY, ANNOUNCED_KEY, CONTACT_KEY, PLAN_KEY]) {
+  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, KEY_KEY, ANNOUNCED_KEY, CONTACT_KEY, PLAN_KEY, ONBOARDED_KEY, SIDEBAR_KEY]) {
     try {
       localStorage.removeItem(key);
     } catch {
@@ -201,26 +203,50 @@ export function forgetDevice(): void {
 
 /* ---------- Theme ---------- */
 
-export type Theme = 'light' | 'dark' | 'system';
+/** Light or dark. The device's setting picks the first one; after that it is whatever the student chose. */
+export type Theme = 'light' | 'dark';
 
 export function loadTheme(): Theme {
   try {
     const saved = localStorage.getItem(THEME_KEY);
-    return saved === 'light' || saved === 'dark' ? saved : 'system';
+    if (saved === 'light' || saved === 'dark') return saved;
   } catch {
-    return 'system';
+    // storage unavailable: fall back to the device
   }
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-export function applyTheme(theme: Theme): void {
-  try {
-    if (theme === 'system') localStorage.removeItem(THEME_KEY);
-    else localStorage.setItem(THEME_KEY, theme);
-  } catch {
-    // ignore
+/** Shows a theme; `remember` keeps it for next time (a choice, not the device's default). */
+export function applyTheme(theme: Theme, remember = false): void {
+  if (remember) {
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // ignore
+    }
   }
-  if (theme === 'system') delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = theme;
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="theme-color"]:not([media])')?.setAttribute('content', theme === 'dark' ? '#0a1130' : '#eef1f6');
+}
+
+/* ---------- First visit and layout ---------- */
+
+/** Whether this browser has seen the welcome tour. */
+export function loadOnboarded(): boolean {
+  return read<boolean>(ONBOARDED_KEY, false) === true;
+}
+
+export function saveOnboarded(): void {
+  write(ONBOARDED_KEY, true);
+}
+
+/** Whether the conversation list beside Ask is folded away on a wide screen. */
+export function loadSidebarClosed(): boolean {
+  return read<boolean>(SIDEBAR_KEY, false) === true;
+}
+
+export function saveSidebarClosed(closed: boolean): void {
+  write(SIDEBAR_KEY, closed);
 }
 
 /** The schedule being built on Plan: its term, the courses wanted and the rules. */
@@ -230,10 +256,11 @@ export interface SavedPlan {
   rules: Rules;
 }
 
+/** The saved plan, from any version of the page: rules it no longer has (the old lunch break) are dropped. */
 export function loadPlan(): SavedPlan {
   const saved = read<Partial<SavedPlan>>(PLAN_KEY, {});
   const wants = Array.isArray(saved.wants) ? saved.wants.filter((want) => want && typeof want.id === 'string' && Array.isArray(want.codes)) : [];
-  return { term: typeof saved.term === 'string' ? saved.term : '', wants: wants.map((want) => ({ id: want.id, label: String(want.label ?? ''), codes: want.codes.map(String) })), rules: { ...DEFAULT_RULES, ...(saved.rules ?? {}) } };
+  return { term: typeof saved.term === 'string' ? saved.term : '', wants: wants.map((want) => ({ id: want.id, label: String(want.label ?? ''), codes: want.codes.map(String) })), rules: normalizeRules(saved.rules) };
 }
 
 export function savePlan(plan: SavedPlan): void {

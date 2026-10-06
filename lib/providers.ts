@@ -1,16 +1,19 @@
 /**
- * Backup models with free tiers, over the OpenAI-compatible chat completions API. Each provider whose key is set joins
- * the chain after Gemini, so an overloaded or spent Gemini moves the answer to the next model instead of failing. Free
- * tiers are counted per provider, and mostly per model, so every key and every model adds capacity.
+ * Backup models over the OpenAI-compatible chat completions API. Each provider whose key is set joins the chain after
+ * Gemini, so an overloaded or spent Gemini moves the answer to the next model instead of failing. Free tiers are
+ * counted per provider, and mostly per model, so every key and every model adds capacity.
  *
- *   GROQ_API_KEY         console.groq.com: about 1,000 requests a day per model, no card.
- *   MISTRAL_API_KEY      console.mistral.ai, free "Experiment" plan: generous monthly tokens, phone check.
- *   OPENROUTER_API_KEY   openrouter.ai, models ending in ":free": 50 requests a day without paying anything.
+ *   GROQ_API_KEY                 console.groq.com: about 1,000 requests a day per model, 8,000 tokens a minute, no card.
+ *   MISTRAL_API_KEY              console.mistral.ai, free "Experiment" plan: about a billion tokens a month, phone check.
+ *   CLOUDFLARE_API_TOKEN         Workers AI (with CLOUDFLARE_ACCOUNT_ID): 10,000 free neurons a day, about 30 answers.
+ *   OPENROUTER_API_KEY           openrouter.ai, models ending in ":free": 50 requests a day in all (1,000 after $10).
+ *   DEEPSEEK_API_KEY             platform.deepseek.com, paid but cheap: about $0.002 an answer. Last, as the safety net.
  *
  * `<PROVIDER>_MODELS` overrides a provider's answer models and `<PROVIDER>_LITE_MODELS` its models for small calls.
- * `ROR_MODEL_ORDER` (default `gemini,groq,mistral,openrouter`) sets which goes first.
+ * `ROR_MODEL_ORDER` (default `gemini,groq,mistral,cloudflare,openrouter,deepseek`) sets which goes first; put
+ * `deepseek` first to answer everything on the paid model.
  */
-import { generateJson, type GeminiConfig, type Message } from './gemini.ts';
+import { discoverGeminiModels, geminiConfig, generateJson, generateText, type GeminiConfig, type Message } from './gemini.ts';
 
 export interface Provider {
   id: string;
@@ -27,25 +30,51 @@ export interface Provider {
    */
   maxPromptChars: number;
   maxOutputTokens: number;
+  /** Charged per token rather than free, so it is shown as such. */
+  paid?: boolean;
 }
 
 interface Preset {
   id: string;
   label: string;
   key: string;
-  baseUrl: string;
+  /** The API's base URL; a function when it depends on another variable (Cloudflare's account). Null: not usable. */
+  baseUrl: string | ((env: NodeJS.ProcessEnv) => string | null);
   models: string[];
   liteModels: string[];
   maxPromptChars: number;
   maxOutputTokens: number;
+  paid?: boolean;
+  /** Whether GET /models lists what the key can use; when it does, names it does not list are dropped. */
+  listsModels: boolean;
+  /** When the provider lists none of the default models (they were renamed), the listed ones to use instead. */
+  fallbackPattern?: RegExp;
 }
 
-// Newest and strongest first. Providers rename and retire free models often; a model that answers 404 is skipped for
-// hours, so a stale name costs one request, and the lists can be replaced from the environment.
+// Newest and strongest first. Providers rename and retire models often: each one with a /models listing is checked
+// against it at runtime (discoverProviderModels), a model that answers 404 is skipped for hours, and the lists can be
+// replaced from the environment. Groq retired its Llama models for free keys on 2026-08-16.
 const PRESETS: Preset[] = [
-  { id: 'groq', label: 'Groq', key: 'GROQ_API_KEY', baseUrl: 'https://api.groq.com/openai/v1', models: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'openai/gpt-oss-20b'], liteModels: ['openai/gpt-oss-20b', 'llama-3.1-8b-instant'], maxPromptChars: 20_000, maxOutputTokens: 1_600 },
-  { id: 'mistral', label: 'Mistral', key: 'MISTRAL_API_KEY', baseUrl: 'https://api.mistral.ai/v1', models: ['mistral-medium-latest', 'mistral-small-latest'], liteModels: ['mistral-small-latest'], maxPromptChars: 60_000, maxOutputTokens: 2_000 },
-  { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['google/gemma-4-31b-it:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'google/gemma-4-26b-a4b-it:free'], liteModels: ['google/gemma-4-26b-a4b-it:free', 'google/gemma-4-31b-it:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000 },
+  { id: 'groq', label: 'Groq', key: 'GROQ_API_KEY', baseUrl: 'https://api.groq.com/openai/v1', models: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], liteModels: ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'], maxPromptChars: 16_000, maxOutputTokens: 1_400, listsModels: true, fallbackPattern: /gpt-oss|llama-4|qwen|kimi/i },
+  { id: 'mistral', label: 'Mistral', key: 'MISTRAL_API_KEY', baseUrl: 'https://api.mistral.ai/v1', models: ['mistral-medium-latest', 'mistral-small-latest'], liteModels: ['mistral-small-latest'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: true, fallbackPattern: /^mistral-(medium|small)/i },
+  {
+    id: 'cloudflare',
+    label: 'Cloudflare',
+    key: 'CLOUDFLARE_API_TOKEN',
+    baseUrl: (env) => {
+      const account = (env.CLOUDFLARE_ACCOUNT_ID ?? '').trim();
+      return /^[a-f0-9]{32}$/i.test(account) ? `https://api.cloudflare.com/client/v4/accounts/${account}/ai/v1` : null;
+    },
+    models: ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/openai/gpt-oss-120b'],
+    liteModels: ['@cf/meta/llama-3.3-70b-instruct-fp8-fast'],
+    maxPromptChars: 40_000,
+    maxOutputTokens: 1_600,
+    listsModels: false,
+  },
+  { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['google/gemma-4-31b-it:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'openai/gpt-oss-120b:free', 'google/gemma-4-26b-a4b-it:free'], liteModels: ['google/gemma-4-26b-a4b-it:free', 'google/gemma-4-31b-it:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: true, fallbackPattern: /:free$/ },
+  // DeepSeek V4.1 Flash: about $0.15 per million tokens in and $0.60 out off-peak (double at peak), so an answer costs
+  // about a fifth of a cent. "deepseek-chat" was retired in July 2026.
+  { id: 'deepseek', label: 'DeepSeek', key: 'DEEPSEEK_API_KEY', baseUrl: 'https://api.deepseek.com', models: ['deepseek-flash', 'deepseek-v4-flash'], liteModels: ['deepseek-flash', 'deepseek-v4-flash'], maxPromptChars: 80_000, maxOutputTokens: 2_000, paid: true, listsModels: true, fallbackPattern: /flash|chat/i },
 ];
 
 export const DEFAULT_ORDER = ['gemini', ...PRESETS.map((preset) => preset.id)];
@@ -53,6 +82,71 @@ export const DEFAULT_ORDER = ['gemini', ...PRESETS.map((preset) => preset.id)];
 function list(value: string | undefined, fallback: string[]): string[] {
   const items = (value ?? '').split(',').map((item) => item.trim()).filter(Boolean);
   return items.length ? items : fallback;
+}
+
+/* ---------- What each key can use ---------- */
+
+/** Provider id -> the model ids its /models listed, when last asked (null when that failed). */
+const listed = new Map<string, { at: number; models: Set<string> | null; pending?: Promise<void> }>();
+const LISTING_TTL_MS = 6 * 3_600_000;
+const LISTING_RETRY_MS = 10 * 60_000;
+
+/**
+ * A preset's models narrowed to the ones the provider lists. When it lists none of them (renamed again), the listed
+ * models that look like the right family stand in; when the listing is unknown or matches nothing, the list stands.
+ */
+export function refineModels(models: string[], available: Set<string> | null | undefined, pattern?: RegExp): string[] {
+  if (!available || available.size === 0) return models;
+  const kept = models.filter((model) => available.has(model));
+  if (kept.length) return kept;
+  const alike = pattern ? [...available].filter((model) => pattern.test(model)).sort().reverse().slice(0, 3) : [];
+  return alike.length ? alike : models;
+}
+
+/**
+ * Asks each provider that has a model listing which models its key can use, at most every few hours per instance,
+ * waiting up to `waitMs`; providersFromEnv() uses the answers from then on.
+ */
+export async function discoverProviderModels(providers: Provider[] = providersFromEnv(), waitMs = 2_500): Promise<void> {
+  if (process.env.VITEST || process.env.ROR_MODEL_DISCOVERY === '0') return;
+  const waits: Array<Promise<void>> = [];
+  for (const provider of providers) {
+    const preset = PRESETS.find((entry) => entry.id === provider.id);
+    if (!preset?.listsModels) continue;
+    const entry = listed.get(provider.id);
+    if (entry?.pending) {
+      waits.push(entry.pending);
+      continue;
+    }
+    if (entry && Date.now() - entry.at < (entry.models ? LISTING_TTL_MS : LISTING_RETRY_MS)) continue;
+    const pending = fetch(`${provider.baseUrl}/models`, { headers: { authorization: `Bearer ${provider.apiKey}` }, signal: AbortSignal.timeout(6_000) })
+      .then(async (response) => {
+        if (!response.ok) throw await toError(provider, response);
+        const json = (await response.json()) as { data?: Array<{ id?: string }> };
+        listed.set(provider.id, { at: Date.now(), models: new Set((json.data ?? []).map((model) => String(model.id ?? '')).filter(Boolean)) });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ProviderError && (error.status === 401 || error.status === 403)) console.error(`[models] ${provider.label} refused the key (${error.status}); check ${preset.key}.`);
+        else console.warn(`[models] could not list ${provider.label} models:`, (error as Error).message);
+        listed.set(provider.id, { at: Date.now(), models: entry?.models ?? null });
+      });
+    listed.set(provider.id, { at: entry?.at ?? 0, models: entry?.models ?? null, pending });
+    waits.push(pending);
+  }
+  if (waits.length) await Promise.race([Promise.all(waits), new Promise((resolve) => setTimeout(resolve, waitMs).unref?.())]);
+}
+
+/** Test hook. */
+export function resetProviderListings(): void {
+  listed.clear();
+}
+
+/**
+ * Brings every model list up to date with what the keys can use (Gemini's and each provider's listing), waiting up to
+ * `waitMs`. Cheap after the first call on an instance; call it before geminiConfig() and providersFromEnv().
+ */
+export async function warmModels(waitMs = 2_500): Promise<void> {
+  await Promise.all([discoverGeminiModels(geminiConfig(), waitMs), discoverProviderModels(providersFromEnv(), waitMs)]);
 }
 
 /** The order to try writers in: `gemini` and the provider ids, from ROR_MODEL_ORDER, with any left out appended. */
@@ -70,15 +164,20 @@ export function providersFromEnv(env: NodeJS.ProcessEnv = process.env): Provider
     const apiKey = (env[preset.key] ?? '').trim();
     if (!apiKey) return null;
     const upper = preset.id.toUpperCase();
+    const baseUrl = env[`${upper}_BASE_URL`] ?? (typeof preset.baseUrl === 'function' ? preset.baseUrl(env) : preset.baseUrl);
+    if (!baseUrl) return null;
+    // Lists set in the environment are taken as written; the built-in ones are checked against the provider's listing.
+    const available = listed.get(preset.id)?.models;
     return {
       id: preset.id,
       label: preset.label,
-      baseUrl: (env[`${upper}_BASE_URL`] ?? preset.baseUrl).trim().replace(/\/+$/, ''),
+      baseUrl: baseUrl.trim().replace(/\/+$/, ''),
       apiKey,
-      models: list(env[`${upper}_MODELS`], preset.models),
-      liteModels: list(env[`${upper}_LITE_MODELS`], preset.liteModels),
+      models: env[`${upper}_MODELS`] ? list(env[`${upper}_MODELS`], preset.models) : refineModels(preset.models, available, preset.fallbackPattern),
+      liteModels: env[`${upper}_LITE_MODELS`] ? list(env[`${upper}_LITE_MODELS`], preset.liteModels) : refineModels(preset.liteModels, available, preset.fallbackPattern),
       maxPromptChars: preset.maxPromptChars,
       maxOutputTokens: preset.maxOutputTokens,
+      ...(preset.paid ? { paid: true } : {}),
     };
   })
     .filter((provider): provider is Provider => provider !== null)
@@ -359,6 +458,8 @@ export async function siteJson<T>(
 ): Promise<T> {
   const temperature = params.temperature ?? 0;
   const maxOutputTokens = params.maxOutputTokens ?? 1024;
+  // The lists this call got were built before the instance knew what the keys can use; the next calls will.
+  void warmModels(0).catch(() => undefined);
   const viaGemini = async () => {
     const cfg = gemini!;
     const model = params.tier === 'main' ? [cfg.chatModel, ...cfg.chatFallbacks] : cfg.liteModels;
@@ -379,4 +480,45 @@ export async function siteJson<T>(
     }
   }
   throw lastError;
+}
+
+/* ---------- For admins: which models answer right now ---------- */
+
+export interface ModelCheck {
+  name: string;
+  ok: boolean;
+  ms: number;
+  error?: string;
+  paid?: boolean;
+}
+
+/**
+ * Sends one tiny request to every model the site can use and says which answered and what the others said: the
+ * quickest way to tell a wrong key from a spent quota from a retired model. Costs one request per model.
+ */
+export async function checkModels(gemini: GeminiConfig | null, backups: Provider[]): Promise<ModelCheck[]> {
+  const ask: Message[] = [{ role: 'user', text: 'Reply with the word OK.' }];
+  const jobs: Array<{ name: string; paid?: boolean; run(signal: AbortSignal): Promise<unknown> }> = [];
+  if (gemini) {
+    for (const model of new Set([gemini.chatModel, ...gemini.chatFallbacks, ...gemini.liteModels])) {
+      jobs.push({ name: `gemini:${model}`, run: (signal) => generateText(gemini, { model, messages: ask, maxOutputTokens: 64 }, { retries: 0, signal, timeoutMs: 15_000, waitOutQuota: false }) });
+    }
+  }
+  for (const provider of backups) {
+    for (const model of new Set([...provider.models, ...provider.liteModels])) {
+      jobs.push({ name: `${provider.id}:${model}`, paid: provider.paid, run: (signal) => post(provider, model, { system: 'Be brief.', messages: ask, maxOutputTokens: 64, signal }, false).then((response) => response.json()) });
+    }
+  }
+  return Promise.all(
+    jobs.map(async (job): Promise<ModelCheck> => {
+      const started = Date.now();
+      const paid = job.paid ? { paid: true } : {};
+      try {
+        await job.run(AbortSignal.timeout(15_000));
+        return { name: job.name, ok: true, ms: Date.now() - started, ...paid };
+      } catch (error) {
+        return { name: job.name, ok: false, ms: Date.now() - started, error: String((error as Error).message ?? error).slice(0, 240), ...paid };
+      }
+    }),
+  );
 }

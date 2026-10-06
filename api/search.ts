@@ -1,5 +1,6 @@
 import { detectRedirect } from '../lib/domains.ts';
 import { ApiError, queryInt, queryString, rateLimit, route, sendJson } from '../lib/http.ts';
+import { requireMember } from '../lib/identity.ts';
 import { retrieve } from '../lib/rag.ts';
 import { loadArchive, summarizePost } from '../lib/store.ts';
 import { bestWindow, dayNumber, tokenize } from '../lib/text.ts';
@@ -10,11 +11,12 @@ type Sort = 'relevance' | 'newest' | 'oldest' | 'discussed';
 export default route(['GET'], async (req, res) => {
   // Each query can cost an embedding call, which shares its quota with Ask; thread search runs as people type.
   rateLimit(req, 60, 30, 'search');
+  // The archive holds students' names and words: it is for students who signed up, not for scraping.
+  await requireMember(req);
   const archive = await loadArchive();
   const q = queryString(req, 'q').trim().slice(0, 300);
   const topic = queryString(req, 'topic').trim();
   const course = queryString(req, 'course').trim().toUpperCase();
-  const author = queryString(req, 'author').trim().toLowerCase();
   const from = queryString(req, 'from').trim();
   const to = queryString(req, 'to').trim();
   const page = queryInt(req, 'page', 1, 1, 200);
@@ -28,7 +30,6 @@ export default route(['GET'], async (req, res) => {
   const filter = (post: IndexedPost): boolean => {
     if (topic && !post.topics.includes(topic)) return false;
     if (course && !post.courses.includes(course)) return false;
-    if (author && !post.author.toLowerCase().includes(author)) return false;
     if (!Number.isNaN(fromDay) || !Number.isNaN(toDay)) {
       const day = dayNumber(post.date);
       if (Number.isNaN(day)) return false;

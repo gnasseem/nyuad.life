@@ -12,7 +12,8 @@ const MAJORS = [
   'Political Science', 'Psychology', 'Social Research and Public Policy', 'Theater', 'Undecided', 'Other',
 ];
 
-function ProfileForm({ onDone }: { onDone(profile: Profile): void }) {
+/** Name, NetID, major and year. Used as the sign-up step every new visitor goes through, and to edit them later. */
+export function ProfileForm({ onDone, submitLabel = 'Save' }: { onDone(profile: Profile): void; submitLabel?: string }) {
   const { profile, setProfile } = useApp();
   const years = classYears();
   const [name, setName] = useState(profile?.name ?? '');
@@ -48,7 +49,7 @@ function ProfileForm({ onDone }: { onDone(profile: Profile): void }) {
       <div className="form-grid">
         <div className="field">
           <label htmlFor="pf-name">Name</label>
-          <input id="pf-name" className="input" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" maxLength={60} required />
+          <input id="pf-name" className="input" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" maxLength={60} required data-autofocus />
         </div>
         <div className="field">
           <label htmlFor="pf-netid">NetID</label>
@@ -81,7 +82,7 @@ function ProfileForm({ onDone }: { onDone(profile: Profile): void }) {
       {error && <div className="alert error">{error}</div>}
       <div className="modal-actions" style={{ marginTop: 4 }}>
         <button type="submit" className="btn primary" disabled={saving}>
-          {saving ? 'Saving' : 'Save'}
+          {saving ? 'Saving' : submitLabel}
         </button>
       </div>
     </form>

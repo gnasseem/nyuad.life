@@ -30,7 +30,12 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Crawl
-        run: npm run scrape:official -- --max ${{ github.event.inputs.max || '4000' }}
+        # Through the environment and checked as a number: an input pasted straight into the script could run commands.
+        env:
+          MAX_PAGES: ${{ github.event.inputs.max || '4000' }}
+        run: |
+          case "$MAX_PAGES" in ''|*[!0-9]*) echo "max must be a number" >&2; exit 1 ;; esac
+          npm run scrape:official -- --max "$MAX_PAGES"
       - name: Embed
         env:
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}

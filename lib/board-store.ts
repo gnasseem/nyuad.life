@@ -71,6 +71,31 @@ export interface BoardStore {
   putSummary(key: string, payload: unknown): Promise<void>;
   /** Drops cached entries whose key starts with `prefix` and that were written before `before` (an ISO time). */
   deleteSummaries(prefix: string, before: string): Promise<void>;
+
+  /** Questions that are not closed, newest first, older than `before` (an ISO time) when given: the Questions feed. */
+  listFeed(limit: number, before?: string): Promise<Question[]>;
+  /** The profile a browser set up, by the hash of its key (Profile.ownerKey). */
+  findProfileByOwner(ownerKey: string): Promise<Profile | null>;
+  /** Whether an admin barred this NetID from posting. */
+  isBanned(netId: string): Promise<boolean>;
+  setBan(netId: string, banned: boolean, reason?: string): Promise<void>;
+  listBans(): Promise<Ban[]>;
+  /** Removes one post of any kind, whoever wrote it; returns what was removed, or null when there was nothing. */
+  adminDelete(type: AdminTarget, id: string): Promise<Record<string, unknown> | null>;
+  /** Keeps a record of what an admin did. Best effort: a missing table is not an error. */
+  recordAudit(entry: { action: string; target: string; snapshot?: unknown; ip: string }): Promise<void>;
+  /** Until when admin sign-in is locked for this bucket (an IP or "global"), or null when it is not. */
+  adminLockedUntil(bucket: string): Promise<number | null>;
+  /** Counts a wrong admin code against a bucket; returns until when it is now locked, or null. */
+  adminFailure(bucket: string, max: number, windowMs: number): Promise<number | null>;
+}
+
+export type AdminTarget = 'question' | 'answer' | 'notice' | 'listing' | 'offer';
+
+export interface Ban {
+  netId: string;
+  reason: string;
+  createdAt: string;
 }
 
 /* ---------- In memory ---------- */
@@ -230,6 +255,65 @@ export class MemoryBoardStore implements BoardStore {
   }
   async deleteSummaries(prefix: string, before: string): Promise<void> {
     for (const [key, entry] of this.summaries) if (key.startsWith(prefix) && entry.createdAt < before) this.summaries.delete(key);
+  }
+  private bans = new Map<string, Ban>();
+  private attempts = new Map<string, { failures: number; windowStart: number; lockedUntil: number | null }>();
+  readonly audit: Array<{ action: string; target: string; snapshot?: unknown; ip: string; createdAt: string }> = [];
+  async listFeed(limit: number, before?: string): Promise<Question[]> {
+    return this.sorted()
+      .filter((question) => question.status !== 'closed' && (!before || question.createdAt < before))
+      .slice(0, limit);
+  }
+  async findProfileByOwner(ownerKey: string): Promise<Profile | null> {
+    return [...this.profiles.values()].find((profile) => profile.ownerKey === ownerKey) ?? null;
+  }
+  async isBanned(netId: string): Promise<boolean> {
+    return this.bans.has(netId);
+  }
+  async setBan(netId: string, banned: boolean, reason = ''): Promise<void> {
+    if (banned) this.bans.set(netId, { netId, reason, createdAt: new Date().toISOString() });
+    else this.bans.delete(netId);
+  }
+  async listBans(): Promise<Ban[]> {
+    return [...this.bans.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  async adminDelete(type: AdminTarget, id: string): Promise<Record<string, unknown> | null> {
+    if (type === 'question') {
+      const question = this.questions.get(id);
+      if (!question) return null;
+      this.questions.delete(id);
+      this.answers = this.answers.filter((answer) => answer.questionId !== id);
+      this.events = this.events.filter((event) => event.questionId !== id);
+      return { ...question };
+    }
+    if (type === 'answer') {
+      const answer = this.answers.find((entry) => entry.id === id);
+      if (!answer) return null;
+      this.answers = this.answers.filter((entry) => entry.id !== id);
+      await this.bump(answer.questionId, { answers: -1 });
+      return { ...answer };
+    }
+    const table = type === 'notice' ? this.announcements : type === 'listing' ? this.listings : this.offers;
+    const found = table.get(id);
+    if (!found) return null;
+    table.delete(id);
+    return { ...found };
+  }
+  async recordAudit(entry: { action: string; target: string; snapshot?: unknown; ip: string }): Promise<void> {
+    this.audit.push({ ...entry, createdAt: new Date().toISOString() });
+  }
+  async adminLockedUntil(bucket: string): Promise<number | null> {
+    const until = this.attempts.get(bucket)?.lockedUntil ?? null;
+    return until && until > Date.now() ? until : null;
+  }
+  async adminFailure(bucket: string, max: number, windowMs: number): Promise<number | null> {
+    const now = Date.now();
+    const current = this.attempts.get(bucket);
+    const fresh = !current || current.windowStart < now - windowMs;
+    const next = { failures: fresh ? 1 : current.failures + 1, windowStart: fresh ? now : current.windowStart, lockedUntil: current?.lockedUntil ?? null };
+    if (next.failures >= max) next.lockedUntil = now + windowMs;
+    this.attempts.set(bucket, next);
+    return next.lockedUntil && next.lockedUntil > now ? next.lockedUntil : null;
   }
   private sorted(): Question[] {
     return [...this.questions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -562,6 +646,63 @@ export class SupabaseBoardStore implements BoardStore {
   }
   async deleteSummaries(prefix: string, before: string): Promise<void> {
     await this.call(`guide_summaries?key=like.${enc(`${prefix}*`)}&created_at=lt.${enc(before)}`, { method: 'DELETE', headers: this.headers('return=minimal') });
+  }
+
+  async listFeed(limit: number, before?: string): Promise<Question[]> {
+    const older = before && !Number.isNaN(Date.parse(before)) ? `&created_at=lt.${enc(new Date(before).toISOString())}` : '';
+    return (await this.select('board_questions', `status=neq.closed${older}&order=created_at.desc&limit=${limit}`)).map(questionFrom);
+  }
+
+  /** Bans, read whole and kept for a minute: every post checks them, and there are few. */
+  private banCache: { at: number; bans: Ban[] } | null = null;
+  async listBans(): Promise<Ban[]> {
+    if (this.banCache && Date.now() - this.banCache.at < 60_000) return this.banCache.bans;
+    try {
+      const rows = await this.select('board_bans', 'order=created_at.desc&limit=1000');
+      this.banCache = { at: Date.now(), bans: rows.map((row) => ({ netId: String(row.net_id), reason: String(row.reason ?? ''), createdAt: String(row.created_at) })) };
+    } catch (error) {
+      // A project that has not run the new schema yet has no bans table: nobody is banned, and that is looked at again later.
+      if (!(error instanceof ApiError) || error.code !== 'board_schema_missing') throw error;
+      this.banCache = { at: Date.now() + 9 * 60_000, bans: [] };
+    }
+    return this.banCache.bans;
+  }
+  async findProfileByOwner(ownerKey: string): Promise<Profile | null> {
+    if (this.ownerColumn === false || !/^[a-f0-9]{40}$/.test(ownerKey)) return null;
+    const rows = await this.select('board_profiles', `owner_key=eq.${enc(ownerKey)}&limit=1`);
+    return rows[0] ? profileFrom(rows[0]) : null;
+  }
+  async isBanned(netId: string): Promise<boolean> {
+    return (await this.listBans()).some((ban) => ban.netId === netId);
+  }
+  async setBan(netId: string, banned: boolean, reason = ''): Promise<void> {
+    if (banned) await this.write('POST', 'board_bans?on_conflict=net_id', { net_id: netId, reason }, 'resolution=merge-duplicates,return=minimal');
+    else await this.call(`board_bans?net_id=eq.${enc(netId)}`, { method: 'DELETE', headers: this.headers('return=minimal') });
+    this.banCache = null;
+  }
+  async adminDelete(type: AdminTarget, id: string): Promise<Record<string, unknown> | null> {
+    if (!UUID.test(id)) return null;
+    const table = { question: 'board_questions', answer: 'board_answers', notice: 'board_announcements', listing: 'board_listings', offer: 'board_offers' }[type];
+    // Answers and events go with their question (on delete cascade).
+    const rows = (await this.call(`${table}?id=eq.${enc(id)}`, { method: 'DELETE', headers: this.headers('return=representation') })) as Row[] | null;
+    const removed = Array.isArray(rows) ? rows[0] : undefined;
+    if (!removed) return null;
+    if (type === 'answer') await this.bump(String(removed.question_id), { answers: -1 }).catch(() => undefined);
+    const { embedding: _embedding, ...snapshot } = removed;
+    return snapshot;
+  }
+  async recordAudit(entry: { action: string; target: string; snapshot?: unknown; ip: string }): Promise<void> {
+    await this.write('POST', 'admin_audit', { action: entry.action, target: entry.target, snapshot: entry.snapshot ?? null, ip: entry.ip }, 'return=minimal').catch((error) => console.warn('[admin] could not write the audit log (run supabase/schema.sql again?):', (error as Error).message));
+  }
+  async adminLockedUntil(bucket: string): Promise<number | null> {
+    const rows = await this.select('admin_attempts', `bucket=eq.${enc(bucket)}&select=locked_until&limit=1`);
+    const until = rows[0]?.locked_until ? Date.parse(String(rows[0].locked_until)) : NaN;
+    return until > Date.now() ? until : null;
+  }
+  async adminFailure(bucket: string, max: number, windowMs: number): Promise<number | null> {
+    const result = (await this.rpc('admin_register_failure', { p_bucket: bucket, p_max: max, p_window_seconds: Math.round(windowMs / 1000) })) as string | null;
+    const until = result ? Date.parse(String(result)) : NaN;
+    return until > Date.now() ? until : null;
   }
 
   private headers(prefer?: string): Record<string, string> {

@@ -1,6 +1,7 @@
 /**
  * The student board, the announcements feed and the market, on one route so the function count stays small:
- *   GET  /api/board?op=stats | question&id= | recent | mine&key= | announcements | offers[&key=] | listings[&key=] | contact&type=offer|listing&id= | leaderboard[&netId=]
+ *   GET  /api/board?op=stats | question&id= | recent | feed[&before=] | mine | announcements | offers | listings | contact&type=offer|listing&id= | leaderboard
+ *   (the browser key and NetID travel in the x-ror-key and x-ror-netid headers; older clients put the key in &key=)
  *   (offers covers both currencies, Falcons and Campus Dirhams; each offer says which)
  *   POST /api/board { op: profile | ask | next | answer | skip | announce | unannounce | offer | offer_done | unoffer
  *                       | listing | listing_done | unlisting, ... }
@@ -29,14 +30,14 @@ import {
   type Profile,
   type Question,
 } from '../lib/board.ts';
-import { createHash } from 'node:crypto';
 import { boardStore, type BoardStore } from '../lib/board-store.ts';
 import { detectRedirect } from '../lib/domains.ts';
 import { embedderForIndex } from '../lib/embeddings.ts';
 import { geminiConfig } from '../lib/gemini.ts';
-import { ApiError, queryString, rateLimit, readJson, route, sendJson } from '../lib/http.ts';
+import { ApiError, queryString, rateLimit, readJson, route, sendJson, type ApiRequest } from '../lib/http.ts';
+import { claimedIdentity, NETID_TAKEN, ownerOf, requireMember, requireProfile } from '../lib/identity.ts';
 import { reviewPost, screenPost, type PostKind, type ReviewedKind } from '../lib/moderation.ts';
-import { providersFromEnv } from '../lib/providers.ts';
+import { providersFromEnv, warmModels } from '../lib/providers.ts';
 import { retrieve } from '../lib/rag.ts';
 import { loadArchive, summarizePost } from '../lib/store.ts';
 import { collapseWhitespace } from '../lib/text.ts';
@@ -48,6 +49,8 @@ export default route(['GET', 'POST'], async (req, res) => {
   if (!store) throw new ApiError(503, 'The board is not set up on this server.', 'board_unavailable');
   const body: Body = req.method === 'POST' ? await readJson<Body>(req) : {};
   const op = String(req.method === 'POST' ? body.op ?? '' : queryString(req, 'op')).trim();
+  // The browser key: from the header, or from the query string as older clients sent it (which leaves it in logs).
+  const headerKey = claimedIdentity(req).key || queryString(req, 'key').trim();
 
   switch (op) {
     case 'stats':
@@ -60,7 +63,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       return;
     case 'offers': {
       rateLimit(req, 60, 60, 'board-read');
-      const key = queryString(req, 'key').trim();
+      const key = headerKey;
       const open = await store.listOffers(new Date());
       const mine = key && /^[a-z0-9-]{8,64}$/i.test(key) ? await store.listOffersByPoster(key) : [];
       // `market` is the Falcon book, which clients from before Campus Dirhams read; `markets` has both.
@@ -69,7 +72,7 @@ export default route(['GET', 'POST'], async (req, res) => {
     }
     case 'listings': {
       rateLimit(req, 60, 60, 'board-read');
-      const key = queryString(req, 'key').trim();
+      const key = headerKey;
       const open = await store.listListings(new Date());
       const mine = key && /^[a-z0-9-]{8,64}$/i.test(key) ? await store.listListingsByPoster(key) : [];
       sendJson(res, 200, { listings: open.map(publicListing), mine: mine.map(publicListing) });
@@ -84,9 +87,22 @@ export default route(['GET', 'POST'], async (req, res) => {
       });
       return;
     }
+    case 'feed': {
+      rateLimit(req, 60, 60, 'board-read');
+      const before = queryString(req, 'before').trim();
+      const questions = await store.listFeed(FEED_PAGE, before || undefined);
+      const answers = await store.listAnswers(questions.map((question) => question.id));
+      const key = /^[a-z0-9-]{8,64}$/i.test(headerKey) ? headerKey : '';
+      sendJson(res, 200, {
+        questions: questions.map((question) => ({ ...publicQuestion(question), mine: Boolean(key) && question.askerKey === key, answers: answers.filter((answer) => answer.questionId === question.id).map(publicAnswer) })),
+        more: questions.length === FEED_PAGE,
+      });
+      return;
+    }
     case 'contact': {
-      // A handful a minute is plenty for a person and slow for a scraper.
+      // A handful a minute is plenty for a person and slow for a scraper; and only members see contacts at all.
       rateLimit(req, 12, 4, 'board-contact');
+      await requireMember(req, store);
       const id = queryString(req, 'id').trim();
       const type = queryString(req, 'type').trim();
       if (type !== 'offer' && type !== 'listing') throw new ApiError(400, 'type must be offer or listing.', 'bad_type');
@@ -97,7 +113,10 @@ export default route(['GET', 'POST'], async (req, res) => {
     }
     case 'leaderboard': {
       rateLimit(req, 60, 60, 'board-read');
-      sendJson(res, 200, { helpers: leaderboard(await store.listRecentAnswers(3000), new Date(), 10, queryString(req, 'netId').trim().toLowerCase()) });
+      // "You" is only marked for the NetID this browser owns: marking any NetID asked about would let anyone find which
+      // NetID belongs to which name on the board.
+      const me = await ownNetId(store, req);
+      sendJson(res, 200, { helpers: leaderboard(await store.listRecentAnswers(3000), new Date(), 10, me) });
       return;
     }
     case 'question': {
@@ -109,7 +128,7 @@ export default route(['GET', 'POST'], async (req, res) => {
     }
     case 'mine': {
       rateLimit(req, 60, 60, 'board-read');
-      const key = validateKey(queryString(req, 'key'));
+      const key = validateKey(headerKey);
       const questions = await store.listByAsker(key);
       const answers = await store.listAnswers(questions.map((question) => question.id));
       sendJson(res, 200, {
@@ -157,7 +176,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       if (open.length >= 8) throw new ApiError(400, 'You already have eight open posts. Mark one done first.', 'too_many_listings');
       const draft = validateListing(body);
       allow('listing', draft.title, draft.body, draft.place, draft.destination);
-      await review('listing', draft.title, draft.body, draft.place, draft.destination);
+      await review('listing', `Kind: ${draft.kind}`, `Title: ${draft.title}`, draft.price !== null ? `Price: ${draft.price} AED` : '', draft.place ? `${draft.kind === 'ride' ? 'From' : 'Place'}: ${draft.place}` : '', draft.destination ? `To: ${draft.destination}` : '', draft.happensAt ? `When: ${localTime(draft.happensAt)}` : '', draft.body ? `Details: ${draft.body}` : '');
       const listing = await store.createListing({ ...draft, posterKey, posterNetId: profile.netId, posterName: profile.name, status: 'open' });
       sendJson(res, 200, { listing: publicListing(listing) });
       return;
@@ -172,6 +191,7 @@ export default route(['GET', 'POST'], async (req, res) => {
     }
     case 'ask':
       rateLimit(req, 5, 3, 'board-ask');
+      await requireMember(req, store);
       sendJson(res, 200, await askQuestion(store, body));
       return;
     case 'next': {
@@ -192,6 +212,9 @@ export default route(['GET', 'POST'], async (req, res) => {
       const profile = await requireProfile(store, body.netId, body.key);
       const question = await store.getQuestion(String(body.questionId ?? ''));
       if (!question || question.status === 'closed') throw new ApiError(404, 'That question is no longer open.', 'not_found');
+      if (question.askerKey === body.key) throw new ApiError(400, "You can't answer your own question. Others will see it in the feed.", 'own_question');
+      const events = await store.listEventsByHelper(profile.netId);
+      if (events.some((event) => event.questionId === question.id && event.kind === 'answer')) throw new ApiError(400, 'You already answered this one.', 'already_answered');
       const text = validateAnswerText(body.text);
       allow('answer', text);
       await review('answer', `Question: ${question.text}`, `Answer: ${text}`);
@@ -204,7 +227,9 @@ export default route(['GET', 'POST'], async (req, res) => {
       rateLimit(req, 60, 60, 'board-help');
       const profile = await requireProfile(store, body.netId, body.key);
       const question = await store.getQuestion(String(body.questionId ?? ''));
-      if (question) await Promise.all([store.recordEvent({ questionId: question.id, netId: profile.netId, kind: 'skip' }), store.bump(question.id, { skips: 1 })]);
+      // One skip per person and question counts, so nobody can bury a question by skipping it over and over.
+      const skipped = question ? (await store.listEventsByHelper(profile.netId)).some((event) => event.questionId === question.id && event.kind === 'skip') : true;
+      if (question && !skipped) await Promise.all([store.recordEvent({ questionId: question.id, netId: profile.netId, kind: 'skip' }), store.bump(question.id, { skips: 1 })]);
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -214,7 +239,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       const posterKey = validateKey(body.key);
       const draft = validateAnnouncement(body);
       allow('notice', draft.title, draft.body, draft.location, draft.link);
-      await review('notice', draft.title, draft.body, draft.location, draft.link);
+      await review('notice', `Kind: ${draft.kind}`, `Title: ${draft.title}`, draft.startsAt ? `When: ${localTime(draft.startsAt)}` : '', draft.location ? `Where: ${draft.location}` : '', draft.link ? `Link: ${draft.link}` : '', draft.body ? `Details: ${draft.body}` : '');
       const announcement = await store.createAnnouncement({ ...draft, posterKey, posterNetId: profile.netId, posterName: profile.name });
       sendJson(res, 200, { announcement: publicAnnouncement(announcement) });
       return;
@@ -240,31 +265,29 @@ function allow(kind: PostKind, ...parts: Array<string | null | undefined>): void
   if (screened) throw new ApiError(422, screened.message, `blocked_${screened.reason}`);
 }
 
-/** The small model's read of a post the rules let through (lib/moderation.ts); refuses it the same way. */
+/** The model's read of a post the rules let through (lib/moderation.ts); refuses it the same way. */
 async function review(kind: ReviewedKind, ...parts: Array<string | null | undefined>): Promise<void> {
+  await warmModels(1_500);
   const screened = await reviewPost({ gemini: geminiConfig(), backups: providersFromEnv() }, kind, ...parts);
-  if (screened) throw new ApiError(422, screened.message, `blocked_${screened.reason}`);
+  if (screened) throw new ApiError(screened.reason === 'unreviewed' ? 503 : 422, screened.message, `blocked_${screened.reason}`);
 }
 
-const NETID_TAKEN = 'This NetID is already set up in another browser. Use the browser you first signed up in.';
+const FEED_PAGE = 30;
 
-/**
- * A NetID is bound to the browser that set it up: its key, hashed (the key itself also removes that browser's posts,
- * so it is never stored). Without this, anyone could answer, post or trade under any student's NetID.
- */
-function ownerOf(key: unknown): string {
-  return createHash('sha256').update(`ror-owner:${validateKey(key)}`).digest('hex').slice(0, 40);
+/** A time as students on campus read it, for the reviewer to judge whether it makes sense. */
+function localTime(iso: string): string {
+  return new Date(iso).toLocaleString('en-GB', { timeZone: 'Asia/Dubai', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-/** The profile behind a NetID, if this browser may act as it; a profile no browser has claimed yet becomes this one's. */
-async function requireProfile(store: BoardStore, netId: unknown, key: unknown): Promise<Profile> {
-  const profile = await store.getProfile(validateNetId(netId));
-  if (!profile) throw new ApiError(404, 'Add your details first.', 'no_profile');
-  const owner = ownerOf(key);
-  // Undefined: the database predates the owner column (see upsertProfile), so there is nothing to check against.
-  if (profile.ownerKey === null) await store.claimProfile(profile.netId, owner);
-  else if (profile.ownerKey !== undefined && profile.ownerKey !== owner) throw new ApiError(403, NETID_TAKEN, 'netid_taken');
-  return profile;
+/** The NetID this browser has set up, judged by its headers; empty when it has none or the headers do not hold up. */
+async function ownNetId(store: BoardStore, req: ApiRequest): Promise<string> {
+  const { netId, key } = claimedIdentity(req);
+  if (!netId || !key) return '';
+  try {
+    return (await requireProfile(store, netId, key)).netId;
+  } catch {
+    return '';
+  }
 }
 
 /** Posts a question; also returns what the archive and the board already know, so nobody waits for an answer they had. */

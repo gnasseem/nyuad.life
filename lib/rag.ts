@@ -687,12 +687,15 @@ export function validateAsk(body: Partial<AskRequest>): AskRequest {
   const question = collapseWhitespace(String(body.question ?? ''));
   if (!question) throw new ApiError(400, 'The question is empty.', 'empty_question');
   if (question.length > MAX_QUESTION_CHARS) throw new ApiError(400, `Keep questions under ${MAX_QUESTION_CHARS} characters.`, 'question_too_long');
-  const history = Array.isArray(body.history)
+  let history = Array.isArray(body.history)
     ? body.history
         .filter((turn): turn is ChatTurn => !!turn && (turn.role === 'user' || turn.role === 'model') && typeof turn.content === 'string')
-        .slice(-8)
-        .map((turn) => ({ role: turn.role, content: turn.content.slice(0, 4000) }))
+        .slice(-6)
+        .map((turn) => ({ role: turn.role, content: turn.content.slice(0, 3000) }))
     : [];
+  // The history comes from the browser, so it is screened like the question: a conversation carrying text that would
+  // be refused as a question is dropped rather than handed to the model.
+  if (history.some((turn) => screenAsk(turn.content)?.reason === 'manipulation' || (turn.role === 'user' && screenAsk(turn.content)))) history = [];
   return { question, history, stream: body.stream !== false };
 }
 

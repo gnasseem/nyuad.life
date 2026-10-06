@@ -3,6 +3,7 @@ import { api, type ContactKind, type MarketSummary, type Offer, type OfferCurren
 import { ContactFields, ContactReveal } from '../components/Contact';
 import { Flap } from '../components/Flap';
 import { EmptyState } from '../components/EmptyState';
+import { AdminRemove } from '../components/AdminRemove';
 import { useApp } from '../context';
 import { IconCoins } from '../icons';
 import { askerKey, loadContact, saveContact } from '../store';
@@ -125,6 +126,7 @@ function OfferRow({ currency, offer, depth, mine, onClose }: { currency: OfferCu
         ) : (
           <ContactReveal type="offer" id={offer.id} kind={offer.contactKind} about={`${offer.amount} ${info.name} at ${offer.rate.toFixed(2)}`} />
         )}
+        <AdminRemove type="offer" id={offer.id} label={`${offer.amount} ${info.name} at ${offer.rate.toFixed(2)}`} compact />
       </div>
     </div>
   );
