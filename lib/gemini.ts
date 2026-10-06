@@ -19,13 +19,9 @@ export interface GeminiConfig {
 }
 
 export const DEFAULT_EMBED_MODEL = 'gemini-embedding-001';
-// Newest first. The free tier is granted per model and is small (about 20 requests a day for each Flash model, a few
-// hundred for Flash-Lite and Gemma), so every model here adds its own share; each call walks down its list and skips,
-// for a while, any model that answered 404 or ran out of quota. The 2.5 family answers 404 to newer keys and shuts
-// down on 2026-10-16, so it is gone from the lists. Gemma 4 is free with a much larger daily allowance and goes after
-// the Flash models. Pinned names rather than "-latest" aliases, which can move to a model without a free tier; newer
-// Flash models the key can use are added at runtime (discoverGeminiModels).
-const DEFAULT_CHAT_MODELS = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it'];
+// Prefer the free models that answered the production probe. Larger Flash models exhausted their quota or returned
+// overload errors on that key; trying them first kept working models behind a long chain of failures.
+const DEFAULT_CHAT_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it'];
 const DEFAULT_LITE_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it'];
 export const DEFAULT_DIMENSIONS = 768;
 
@@ -86,15 +82,15 @@ function flashVersion(model: string, kind: 'flash' | 'lite'): number | null {
 }
 
 /**
- * A default list with the models this key cannot use taken out, and up to three Flash (or Flash-Lite) models newer
- * than any on it put in front, so a model Google releases joins the chain without a deploy. When nothing on the list
- * is usable the list stands as it is: a listing that left everything out is more likely wrong than the list.
+ * A default list with the models this key cannot use taken out, and up to three newer models of the same family put
+ * in front. A list without that family, such as the free answer defaults, stays on its known models. When none on the
+ * list is usable it stands as written: a listing that left everything out is more likely wrong than the list.
  */
 export function withDiscovered(defaults: string[], models: Set<string>, kind: 'flash' | 'lite'): string[] {
   const kept = defaults.filter((model) => models.has(model));
   const newest = Math.max(0, ...kept.map((model) => flashVersion(model, kind) ?? 0));
   const newer = [...models]
-    .filter((model) => (flashVersion(model, kind) ?? 0) > newest)
+    .filter((model) => newest > 0 && (flashVersion(model, kind) ?? 0) > newest)
     .sort((a, b) => flashVersion(b, kind)! - flashVersion(a, kind)!)
     .slice(0, 3);
   const list = [...newer, ...kept];

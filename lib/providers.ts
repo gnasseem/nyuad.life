@@ -10,7 +10,7 @@
  *   DEEPSEEK_API_KEY             platform.deepseek.com, paid but cheap: about $0.002 an answer. Last, as the safety net.
  *
  * `<PROVIDER>_MODELS` overrides a provider's answer models and `<PROVIDER>_LITE_MODELS` its models for small calls.
- * `ROR_MODEL_ORDER` (default `gemini,groq,mistral,cloudflare,openrouter,deepseek`) sets which goes first; put
+ * `ROR_MODEL_ORDER` (default `gemini,groq,openrouter,mistral,cloudflare,deepseek`) sets which goes first; put
  * `deepseek` first to answer everything on the paid model.
  */
 import { discoverGeminiModels, geminiConfig, generateJson, generateText, type GeminiConfig, type Message } from './gemini.ts';
@@ -71,13 +71,13 @@ const PRESETS: Preset[] = [
     maxOutputTokens: 1_600,
     listsModels: false,
   },
-  { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['google/gemma-4-31b-it:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'openai/gpt-oss-120b:free', 'google/gemma-4-26b-a4b-it:free'], liteModels: ['google/gemma-4-26b-a4b-it:free', 'google/gemma-4-31b-it:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: true, fallbackPattern: /:free$/ },
+  { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['nvidia/nemotron-3-super-120b-a12b:free', 'google/gemma-4-26b-a4b-it:free', 'openai/gpt-oss-120b:free', 'google/gemma-4-31b-it:free'], liteModels: ['google/gemma-4-26b-a4b-it:free', 'google/gemma-4-31b-it:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: true, fallbackPattern: /:free$/ },
   // DeepSeek V4.1 Flash: about $0.15 per million tokens in and $0.60 out off-peak (double at peak), so an answer costs
   // about a fifth of a cent. "deepseek-chat" was retired in July 2026.
   { id: 'deepseek', label: 'DeepSeek', key: 'DEEPSEEK_API_KEY', baseUrl: 'https://api.deepseek.com', models: ['deepseek-flash', 'deepseek-v4-flash'], liteModels: ['deepseek-flash', 'deepseek-v4-flash'], maxPromptChars: 80_000, maxOutputTokens: 2_000, paid: true, listsModels: true, fallbackPattern: /flash|chat/i },
 ];
 
-export const DEFAULT_ORDER = ['gemini', ...PRESETS.map((preset) => preset.id)];
+export const DEFAULT_ORDER = ['gemini', 'groq', 'openrouter', 'mistral', 'cloudflare', 'deepseek'];
 
 function list(value: string | undefined, fallback: string[]): string[] {
   const items = (value ?? '').split(',').map((item) => item.trim()).filter(Boolean);

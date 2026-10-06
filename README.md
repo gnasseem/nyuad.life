@@ -71,23 +71,16 @@ search, courses, plan and the board are rate-limited per IP.
 
 ## Keeping answers up for free
 
-Free model tiers fail in two ways: a model is overloaded (Gemini's 503 "The model is overloaded") or its daily quota is
-spent (429). They are also small: as of October 2026 a Gemini Flash model allows about 20 requests a day on a free key,
-Flash-Lite and Gemma a few hundred, OpenRouter 50 a day across all its free models, and Groq 8,000 tokens a minute
-(about one answer a minute). With Gemini alone, answers stop after a few dozen questions a day. Ask moves down a chain
-of models before it has written a word:
+Free model tiers can be overloaded (503) or rate-limited (429). Ask moves down a chain before writing any text:
 
-1. Gemini 3.8, 3.7, 3.6 and 3.5 Flash and 3 Flash preview, then Gemma 4 31B and 26B. Each has its own free daily quota.
-2. Every backup provider with a key set, each with several models: Groq, Mistral, Cloudflare Workers AI and
-   OpenRouter, over the OpenAI-compatible API (`lib/providers.ts`). Their free tiers are counted per provider and
-   mostly per model, so each key adds capacity. Groq caps a request at about 8,000 tokens, so the sources are cut down
-   to fit it. Mistral's free plan is the most generous (about a billion tokens a month).
+1. Gemini 3.5 and 3.1 Flash-Lite, then Gemma 4 26B.
+2. Groq, OpenRouter, Mistral and Cloudflare Workers AI when their keys are set. Groq's free tier caps tokens per minute,
+   so its prompts are shortened to fit. Provider limits can change independently.
 3. DeepSeek, when `DEEPSEEK_API_KEY` is set: paid, but only reached when every free model has failed.
-4. Gemini's Flash-Lite models, as the last resort.
 
 Model names go stale fast (Google shut 2.5 Flash to new keys, Groq retired its Llama models in August 2026), so each
 instance asks Gemini and each provider which models its key can actually use (`GET /models`, cached for six hours),
-drops the ones it cannot, and adds newer Gemini Flash models when they appear. A model that answers "no free tier"
+and drops the ones it cannot. A model that answers "no free tier"
 (`limit: 0`) or "out of today's quota" is skipped for hours rather than tried on every question.
 
 ### What a paid model would cost

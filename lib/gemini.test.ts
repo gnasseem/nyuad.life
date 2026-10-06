@@ -4,13 +4,13 @@ import { GeminiError, geminiConfig, markUnavailable, resetModelState, thinkingFo
 afterEach(() => resetModelState());
 
 describe('geminiConfig', () => {
-  it('defaults to the newest models with older ones behind them', () => {
+  it('starts answers with the free models that work on the production key', () => {
     const cfg = geminiConfig({ GEMINI_API_KEY: 'k' })!;
-    expect([cfg.chatModel, ...cfg.chatFallbacks]).toEqual(['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it']);
+    expect([cfg.chatModel, ...cfg.chatFallbacks]).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it']);
     expect(cfg.liteModels).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it']);
   });
   it('keeps the default fallbacks behind a pinned model, unless fallbacks are set too', () => {
-    expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_MODEL: 'gemini-3.5-flash' })!.chatFallbacks).toEqual(['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3-flash-preview', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it']);
+    expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_MODEL: 'gemini-3.5-flash' })!.chatFallbacks).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it']);
     expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_MODEL: 'a', GEMINI_CHAT_FALLBACK_MODELS: 'b, c' })!.chatFallbacks).toEqual(['b', 'c']);
     expect(geminiConfig({ GEMINI_API_KEY: 'k', GEMINI_CHAT_FALLBACK_MODELS: '' })!.chatFallbacks).toEqual([]);
   });
@@ -23,6 +23,7 @@ describe('withDiscovered', () => {
     expect(withDiscovered(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'], listed, 'lite')).toEqual(['gemini-3.9-flash-lite', 'gemini-3.5-flash-lite']);
     // A listing that has none of them is more likely wrong than the list.
     expect(withDiscovered(['gemini-3.8-flash'], new Set(['text-bison']), 'flash')).toEqual(['gemini-3.8-flash']);
+    expect(withDiscovered(['gemini-3.5-flash-lite', 'gemma-4-26b-a4b-it'], listed, 'flash')).toEqual(['gemini-3.5-flash-lite']);
   });
 });
 
