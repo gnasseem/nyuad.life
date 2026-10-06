@@ -6,6 +6,7 @@ import { Flap } from '../components/Flap';
 import { Modal } from '../components/Modal';
 import { Segmented } from '../components/Segmented';
 import { Sign } from '../components/Sign';
+import { AdminRemove, onAdminRemoved } from '../components/AdminRemove';
 import { useApp } from '../context';
 import { formatTime, groupByDay, plural, shortDate, startsIn } from '../format';
 import { IconArrow, IconBag, IconPin, IconPlus, IconQuestions, IconSearch } from '../icons';
@@ -78,6 +79,14 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
     loadListings();
     loadOffers();
   }, [loadListings, loadOffers]);
+  useEffect(
+    () =>
+      onAdminRemoved(() => {
+        loadListings();
+        loadOffers();
+      }),
+    [loadListings, loadOffers],
+  );
 
   const startPosting = async (next: Composer) => {
     if (!profile && !(await requestProfile())) return;
@@ -356,6 +365,7 @@ function ListingActions({ listing, mine, onClose }: { listing: Listing; mine: bo
       ) : (
         <ContactReveal type="listing" id={listing.id} kind={listing.contactKind} about={listing.title || `the ride to ${listing.destination}`} />
       )}
+      <AdminRemove type="listing" id={listing.id} label={listing.title || `${listing.place} to ${listing.destination}`} compact />
     </div>
   );
 }

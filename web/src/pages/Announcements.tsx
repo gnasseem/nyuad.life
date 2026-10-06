@@ -3,6 +3,7 @@ import { api, type Announcement, type AnnouncementKind } from '../api';
 import { EmptyState } from '../components/EmptyState';
 import { Modal } from '../components/Modal';
 import { Sign } from '../components/Sign';
+import { AdminRemove, onAdminRemoved } from '../components/AdminRemove';
 import { useApp } from '../context';
 import { groupByDay, startsIn } from '../format';
 import { IconCalendar, IconExternal, IconMegaphone, IconPlus } from '../icons';
@@ -84,6 +85,7 @@ export function AnnouncementsPage() {
   }, [boardProblem]);
 
   useEffect(load, [load]);
+  useEffect(() => onAdminRemoved(load), [load]);
 
   const startPosting = async () => {
     if (!profile && !(await requestProfile())) return;
@@ -238,6 +240,15 @@ export function AnnouncementsPage() {
   );
 }
 
+/** Where a link goes, so nobody follows a notice's link blind. */
+function linkHost(link: string): string {
+  try {
+    return new URL(link).hostname.replace(/^www\./, '');
+  } catch {
+    return 'Link';
+  }
+}
+
 function Item({ entry, now, mine, onRemove }: { entry: Announcement; now: Date; mine: boolean; onRemove(): void }) {
   const [open, setOpen] = useState(false);
   const when = entry.startsAt ? new Date(entry.startsAt) : null;
@@ -276,8 +287,8 @@ function Item({ entry, now, mine, onRemove }: { entry: Announcement; now: Date; 
       <div className="foot">
         <span>{entry.posterName}</span>
         {entry.link && (
-          <a href={entry.link} target="_blank" rel="noreferrer">
-            <IconExternal /> Link
+          <a href={entry.link} target="_blank" rel="noreferrer noopener" title={entry.link}>
+            <IconExternal /> {linkHost(entry.link)}
           </a>
         )}
         {when && (
@@ -290,6 +301,7 @@ function Item({ entry, now, mine, onRemove }: { entry: Announcement; now: Date; 
             Remove
           </button>
         )}
+        <AdminRemove type="notice" id={entry.id} label={entry.title} />
       </div>
     </article>
   );

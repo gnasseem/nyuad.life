@@ -212,3 +212,17 @@ export const IconBolt = (p: SVGProps<SVGSVGElement>) => (
     <path d="M13 3 5 13.5h6L10 21l8-10.5h-6z" />
   </svg>
 );
+/** The conversation list beside Ask: a panel with its edge. */
+export const IconSidebar = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+    <path d="M9.5 4.5v15M6 8.5h1.5M6 11.5h1.5" />
+  </svg>
+);
+/** Admin mode. */
+export const IconShield = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M12 3.5 19 6v5.5c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6z" />
+    <path d="m9 12 2.2 2.2L15.5 10" />
+  </svg>
+);

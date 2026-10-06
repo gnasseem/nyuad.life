@@ -253,20 +253,55 @@ html[data-line='ask'] .brand-name i { color: var(--amber); }
 .me-btn { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 6px; border: 0; border-radius: 22px; background: none; transition: background 0.15s; }
 .me-btn:hover { background: var(--plate-3); }
 
-.menu-wrap { position: relative; }
-.popover { position: absolute; top: calc(100% + 8px); right: 0; z-index: 60; width: 340px; max-height: min(480px, 72vh); overflow: auto; padding: 6px; border: 1px solid var(--rule); border-radius: var(--r-lg); background: var(--plate); box-shadow: var(--shadow-2); transform-origin: top right; animation: pop-in 0.22s var(--ease); }
+.bar-start { justify-self: start; display: flex; align-items: center; gap: 2px; min-width: 0; }
+.admin-badge { display: inline-flex; align-items: center; gap: 6px; height: 30px; margin-right: 4px; padding: 0 10px; border-radius: 15px; background: var(--amber-soft); color: var(--amber-ink); font: 760 12px/1 var(--sign); font-stretch: 90%; letter-spacing: 0.06em; text-transform: uppercase; animation: stop-pop 0.4s var(--ease); }
+.admin-badge svg { width: 15px; height: 15px; }
 @keyframes pop-in { from { opacity: 0; transform: translateY(-4px) scale(0.97); } }
-.popover-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 8px; }
-.popover-empty { padding: 6px 10px 12px; color: var(--ink-3); font-size: 13.5px; }
-.hist-item { display: flex; align-items: center; gap: 2px; border-radius: 8px; transition: background 0.15s; }
-.hist-item:hover, .hist-item.active { background: var(--plate-3); }
-.hist-item a { flex: 1; min-width: 0; display: grid; gap: 2px; padding: 8px 10px; }
-.hist-item a b { font-weight: 560; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hist-item a span { font-size: 12px; color: var(--ink-3); }
-.hist-item button { display: grid; place-items: center; width: 32px; height: 32px; margin-right: 4px; border: 0; border-radius: 7px; background: none; color: var(--ink-3); opacity: 0; transition: opacity 0.15s, color 0.15s, background 0.15s; }
+
+/* Ask's conversations, down the left like a chat app: beside the page on a wide screen (folding away to the left),
+   sliding in over it on a phone. */
+.ask-shell { position: relative; display: flex; align-items: flex-start; min-height: calc(100dvh - var(--bar) - env(safe-area-inset-top)); }
+.ask-body { flex: 1; min-width: 0; }
+.history-panel { position: sticky; top: calc(var(--bar) + env(safe-area-inset-top)); z-index: 5; display: flex; flex-direction: column; flex: none; width: 280px; height: calc(100dvh - var(--bar) - env(safe-area-inset-top)); padding: 14px 10px 10px; border-right: 1px solid var(--rule); background: color-mix(in srgb, var(--plate) 62%, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); transition: margin-left 0.42s var(--ease), opacity 0.3s, visibility 0s linear 0s; }
+.app[data-panel='closed'] .history-panel { margin-left: -280px; opacity: 0; visibility: hidden; transition: margin-left 0.42s var(--ease), opacity 0.25s, visibility 0s linear 0.42s; }
+.history-scrim { display: none; }
+.hp-head { display: flex; align-items: center; gap: 6px; padding: 0 2px 10px; }
+.hp-new { flex: 1; display: inline-flex; align-items: center; gap: 9px; height: 40px; padding: 0 14px; border: 1px solid var(--rule-2); border-radius: 11px; background: var(--plate); color: var(--ink); font: 640 14px/1 var(--text); box-shadow: var(--shadow-1); transition: border-color 0.15s, transform 0.12s var(--ease), box-shadow 0.2s; }
+.hp-new:hover { border-color: var(--ink-3); box-shadow: var(--shadow-2); }
+.hp-new:active { transform: scale(0.98); }
+.hp-new svg { width: 17px; height: 17px; }
+.hp-close { display: none; }
+.hp-search { margin: 0 2px 8px; }
+.hp-search .input { height: 36px; border-radius: 9px; font-size: 13.5px; background: var(--plate); }
+.hp-list { flex: 1; min-height: 0; overflow: auto; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
+.hp-group { display: grid; gap: 1px; margin-bottom: 14px; animation: fade-in 0.3s ease-out; }
+.hp-label { padding: 8px 10px 4px; color: var(--ink-3); font: 720 11px/1 var(--sign); font-stretch: 90%; letter-spacing: 0.1em; text-transform: uppercase; }
+.hp-empty { padding: 12px 10px; color: var(--ink-3); font-size: 13.5px; line-height: 1.5; }
+.hp-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 8px 2px; border-top: 1px solid var(--rule); color: var(--ink-3); font-size: 12px; }
+.hp-foot .link-btn { color: var(--ink-2); font-size: 12.5px; white-space: nowrap; }
+/* The list has its own "New question" while it is open beside the conversation. */
+@media (min-width: 1100px) { .app[data-panel='open'] .conv-head { visibility: hidden; } }
+.hist-item { position: relative; display: flex; align-items: center; gap: 2px; border-radius: 9px; transition: background 0.15s; }
+.hist-item:hover { background: var(--plate-3); }
+.hist-item.active { background: var(--plate-3); }
+.hist-item.active::before { content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px; background: var(--amber); }
+.hist-item a { flex: 1; min-width: 0; display: grid; gap: 2px; padding: 9px 10px 9px 12px; }
+.hist-item a b { font-weight: 540; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-item.active a b { font-weight: 640; }
+.hist-item button { display: grid; place-items: center; width: 30px; height: 30px; margin-right: 4px; border: 0; border-radius: 7px; background: none; color: var(--ink-3); opacity: 0; transition: opacity 0.15s, color 0.15s, background 0.15s; }
 .hist-item:hover button, .hist-item button:focus-visible { opacity: 1; }
 .hist-item button:hover { color: var(--scarlet-ink); background: var(--scarlet-soft); }
 .hist-item button svg { width: 15px; height: 15px; }
+@media (max-width: 1099px) {
+  .history-panel { position: fixed; top: calc(var(--bar) + env(safe-area-inset-top)); left: 0; bottom: 0; z-index: 30; width: min(320px, 86vw); height: auto; margin-left: 0; padding-bottom: calc(12px + env(safe-area-inset-bottom)); border-right: 1px solid var(--rule); background: var(--plate); box-shadow: var(--shadow-2); transform: none; transition: transform 0.4s var(--ease), visibility 0s linear 0s; }
+  .app[data-panel='closed'] .history-panel { margin-left: 0; opacity: 1; transform: translateX(-104%); transition: transform 0.3s var(--ease-in), visibility 0s linear 0.3s; }
+  .history-scrim { display: block; position: fixed; inset: 0; z-index: 29; background: var(--scrim); opacity: 1; transition: opacity 0.3s; }
+  .app[data-panel='closed'] .history-scrim { opacity: 0; pointer-events: none; }
+  .hp-close { display: grid; }
+}
+@media (max-width: 900px) {
+  .history-panel { bottom: calc(var(--tab) + env(safe-area-inset-bottom)); }
+}
 
 .main { position: relative; z-index: 1; flex: 1; min-width: 0; }
 .page { width: 100%; max-width: 1240px; margin: 0 auto; padding: 36px 32px 72px; }
@@ -287,6 +322,10 @@ html[data-line='ask'] .brand-name i { color: var(--amber); }
    the line running on to the page's actions. Central's plate is the midnight board in both services. */
 .sign { position: relative; display: flex; align-items: center; gap: 22px; min-height: 128px; margin-bottom: 28px; padding: 28px 34px; border-radius: 24px; background: linear-gradient(100deg, rgba(255, 255, 255, 0.14), transparent 46%), var(--line-fill); color: var(--line-on); box-shadow: inset 0 1px 0 var(--gloss), inset 0 -3px 0 rgba(0, 0, 0, 0.12), 0 18px 40px -26px color-mix(in srgb, var(--line-fill) 90%, transparent); outline: 1.5px solid color-mix(in srgb, var(--line-on) 26%, transparent); outline-offset: -9px; animation: sign-in 0.55s var(--ease) both; }
 html[data-line='ask'] .sign { --line-fill: var(--board); --line-on: #f0f2fa; --line: #f0f2fa; }
+/* A field set into a sign takes the sign's colours: a plain field there was white on white in the light theme. */
+.sign .input, .sign select.input { border-color: color-mix(in srgb, var(--line-on) 45%, transparent); background-color: color-mix(in srgb, var(--line-on) 12%, transparent); color: var(--line-on); }
+.sign .input::placeholder { color: color-mix(in srgb, var(--line-on) 70%, transparent); }
+.sign select.input option { background: var(--plate); color: var(--ink); }
 @keyframes sign-in { from { opacity: 0; transform: translateY(10px) scale(0.99); } }
 .sign-name { display: flex; align-items: baseline; gap: 16px; flex: none; min-width: 0; }
 .sign h1 { font: 800 58px/0.86 var(--sign); font-stretch: 75%; letter-spacing: 0.025em; text-transform: uppercase; }
@@ -655,6 +694,30 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 [data-kind='announcement'] { --k: var(--amber); --k-fill: var(--amber-fill); --k-ink: var(--amber-ink); --k-soft: var(--amber-soft); --k-on: #0b1230; }
 
 /* ---------- Questions ---------- */
+/* The feed: every question as a card with its answers on a line beneath, a box to answer in place, and the + button
+   floating over the page to ask. */
+.feed { display: grid; gap: 14px; align-content: start; }
+.feed-list { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+.qcard { position: relative; display: grid; gap: 10px; padding: 18px 20px 16px; border: 1px solid var(--rule); border-radius: 16px; background: var(--plate); box-shadow: var(--shadow-1); grid-template-columns: minmax(0, 1fr); animation: rise-in 0.42s var(--ease) backwards; }
+.feed-list > .qcard:nth-child(2) { animation-delay: 0.04s; }
+.feed-list > .qcard:nth-child(3) { animation-delay: 0.08s; }
+.feed-list > .qcard:nth-child(n + 4) { animation-delay: 0.12s; }
+.qcard.open::before { content: ''; position: absolute; left: -1px; top: 16px; bottom: 16px; width: 4px; border-radius: 0 3px 3px 0; background: var(--amber); }
+.qcard-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.qcard .q { font: 650 18px/1.38 var(--text); letter-spacing: -0.015em; white-space: pre-wrap; overflow-wrap: anywhere; transition: color 0.15s; }
+.qcard a.q:hover { color: var(--line-ink); }
+.qcard > .link-btn { justify-self: start; }
+.qcard-answer { display: grid; gap: 8px; padding-top: 12px; border-top: 1px dashed var(--rule); grid-template-columns: minmax(0, 1fr); }
+.qcard-answer > .btn { justify-self: start; }
+.qcard-answer textarea.input { min-height: 84px; }
+.list .qcard { border: 0; border-top: 1px solid var(--rule); border-radius: 0; box-shadow: none; animation: none; }
+.list .qcard:first-child { border-top: 0; }
+.check { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 13.5px; cursor: pointer; }
+.check input { width: 16px; height: 16px; accent-color: var(--line-fill); }
+.fab { position: fixed; right: 28px; bottom: 28px; z-index: 45; display: grid; place-items: center; width: 58px; height: 58px; border: 0; border-radius: 18px; background: var(--line-fill); color: var(--line-on); box-shadow: inset 0 1px 0 var(--gloss), inset 0 -2px 0 rgba(0, 0, 0, 0.16), 0 14px 30px -12px color-mix(in srgb, var(--line-fill) 85%, transparent); animation: stop-pop 0.45s var(--ease) 0.3s both; transition: transform 0.2s var(--ease), box-shadow 0.2s; }
+.fab:hover { transform: translateY(-2px) scale(1.04); }
+.fab:active { transform: scale(0.94); }
+.fab svg { width: 26px; height: 26px; stroke-width: 2.4; }
 .ask-card { border: 1.5px solid var(--rule-2); border-radius: 16px; background: var(--plate); box-shadow: var(--shadow-1); transition: border-color 0.2s, box-shadow 0.25s; }
 .ask-card:focus-within { border-color: var(--line-ink); box-shadow: 0 0 0 4px color-mix(in srgb, var(--line) 18%, transparent), var(--shadow-1); }
 .ask-card textarea { display: block; width: 100%; min-height: 110px; padding: 18px 18px 8px; border: 0; background: transparent; outline: none; resize: none; font-size: 16.5px; line-height: 1.5; }
@@ -900,7 +963,7 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .settings-row .text b { display: block; font-weight: 620; }
 .settings-row .text span { display: block; color: var(--ink-3); font-size: 13px; }
 .settings-row .actions { display: flex; flex: none; align-items: center; gap: 6px; }
-.theme-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.theme-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; max-width: 560px; }
 .theme-card { display: grid; gap: 10px; padding: 10px 10px 12px; border: 1.5px solid var(--rule); border-radius: 14px; background: var(--plate); text-align: left; transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s var(--ease); }
 .theme-card:hover { border-color: var(--rule-2); }
 .theme-card:active { transform: scale(0.985); }
@@ -908,6 +971,25 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .theme-card b { display: flex; align-items: center; gap: 8px; font-weight: 640; font-size: 14px; }
 .theme-art { position: relative; height: 78px; overflow: hidden; border-radius: 9px; }
 .theme-art svg { width: 100%; height: 100%; }
+
+/* Admin mode: a dashed scarlet remove button on every post, and the model check in Settings. */
+.admin-remove { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 28px; padding: 0 9px; border: 1px dashed color-mix(in srgb, var(--scarlet) 55%, var(--rule)); border-radius: 7px; background: transparent; color: var(--scarlet-ink); font: 650 12px/1 var(--text); white-space: nowrap; transition: background 0.15s, border-color 0.15s; }
+.admin-remove.compact { width: 28px; padding: 0; }
+.admin-remove:hover { border-style: solid; background: var(--scarlet-soft); }
+.admin-remove svg { width: 14px; height: 14px; }
+.board .admin-remove { border-color: rgba(255, 107, 94, 0.5); color: #ff8075; }
+.btn.danger-fill { border-color: transparent; background: var(--scarlet-fill); color: #ffffff; }
+.admin-on { display: flex !important; align-items: center; gap: 7px; }
+.admin-on svg { width: 16px; height: 16px; color: var(--green-ink); }
+.admin-error { margin-top: 4px; color: var(--scarlet-ink) !important; }
+.admin-login .actions .input { width: 190px; height: 32px; }
+.model-checks { display: grid; padding: 0 16px 10px; }
+.model-check { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 9px 0; border-top: 1px solid var(--rule); font-size: 13px; }
+.model-check .dot { --tone: var(--scarlet); }
+.model-check.ok .dot { --tone: var(--green); }
+.model-check b { font: 650 13px/1.3 var(--sign); font-stretch: 92%; overflow-wrap: anywhere; }
+.model-check .ms { margin-left: auto; color: var(--ink-3); font: 650 12px/1 var(--sign); font-variant-numeric: tabular-nums; }
+.model-check .why { flex-basis: 100%; padding-left: 17px; color: var(--ink-3); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 
 /* Single-column grids must not widen to a child's unbreakable line (a long nowrap title, for one). */
 .line-card, .rail, .rail-block, .lb, .agenda, .agenda-items, .kind-filter, .topic-list, .conv-main, .md > div, .split > div { grid-template-columns: minmax(0, 1fr); }
@@ -1074,6 +1156,9 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
   .conv-main { min-height: calc(100dvh - var(--bar) - var(--tab) - 16px); }
   .composer-wrap { bottom: calc(var(--tab) + env(safe-area-inset-bottom)); }
   .toast { bottom: calc(var(--tab) + 16px + env(safe-area-inset-bottom)); }
+  .fab { right: 16px; bottom: calc(var(--tab) + 16px + env(safe-area-inset-bottom)); width: 54px; height: 54px; }
+  .admin-badge span { display: none; }
+  .admin-badge { padding: 0 8px; }
   .sign { gap: 14px 12px; min-height: 0; margin-bottom: 20px; padding: 20px 20px 18px; border-radius: 20px; flex-wrap: wrap; outline-offset: -7px; }
   .sign h1 { font-size: 40px; }
   .sign-ar { font-size: 18px; }
@@ -1179,7 +1264,9 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
   .composer { padding: 8px 8px 8px 16px; border-radius: 16px; }
   .send { width: 44px; height: 44px; border-radius: 12px; }
   .composer-wrap { padding: 18px 0 12px; }
-  .popover { position: fixed; top: calc(var(--bar) + env(safe-area-inset-top) + 6px); left: 8px; right: 8px; width: auto; max-height: min(70dvh, 520px); }
+  .qcard { padding: 16px 16px 14px; }
+  .qcard .q { font-size: 16.5px; }
+  .admin-login .actions .input { width: 100%; }
   .ticker > div { padding: 14px 16px; }
   .currency-note { margin-top: -4px; }
   .empty, .terminus { padding-left: 16px; padding-right: 16px; }
@@ -1223,6 +1310,8 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
   .btn, .chip, .input, .segmented button, .icon-btn, .send, .row, .me-btn { min-height: 40px; }
   .btn.sm { min-height: 40px; }
   .tabs button { min-height: 42px; padding-top: 10px; }
+  .admin-remove { min-height: 36px; }
+  .admin-remove.compact { width: 36px; }
   .segmented button { height: 36px; }
   .foot-btn, .link-btn, .source-links a, .source-links button, .ann .foot a, .ann .foot button { display: inline-flex; align-items: center; min-height: 40px; }
   .hist-item button { opacity: 1; width: 40px; height: 40px; }

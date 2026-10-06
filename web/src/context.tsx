@@ -31,6 +31,9 @@ export interface AppState {
   /** Sign in with ChatGPT for this browser; null until the server has answered. */
   chatgpt: ChatGPTStatus | null;
   refreshChatGPT(): void;
+  /** Admin mode is on in this browser (an HttpOnly cookie the server checks); shows remove buttons everywhere. */
+  admin: boolean;
+  refreshAdmin(): void;
 }
 
 export const AppContext = createContext<AppState>({
@@ -39,7 +42,7 @@ export const AppContext = createContext<AppState>({
   profile: null,
   setProfile: () => {},
   requestProfile: async () => false,
-  theme: 'system',
+  theme: 'light',
   setTheme: () => {},
   toast: () => {},
   askPrefill: null,
@@ -48,6 +51,8 @@ export const AppContext = createContext<AppState>({
   setBoardPrefill: () => {},
   chatgpt: null,
   refreshChatGPT: () => {},
+  admin: false,
+  refreshAdmin: () => {},
 });
 
 export function useApp(): AppState {

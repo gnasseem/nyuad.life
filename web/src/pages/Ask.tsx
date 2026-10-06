@@ -591,7 +591,7 @@ function Home({ composer, answersOff }: { composer: ReactNode; answersOff: boole
             ) : data.answered.length === 0 ? (
               <p className="stops-note">
                 {data.open ? `${plural(data.open, 'question')} waiting for an answer. ` : 'No answered questions yet. '}
-                <a href={data.open ? '/questions?tab=help' : '/questions'} onClick={onLinkClick}>
+                <a href="/questions" onClick={onLinkClick}>
                   {data.open ? 'Help answer' : 'Ask other students'}
                 </a>
               </p>

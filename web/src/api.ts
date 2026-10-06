@@ -1,6 +1,6 @@
 /** Typed client for the API, including the streaming /api/ask protocol and the student board. */
 import type { Rules } from '../../lib/schedule.ts';
-import { askerKey } from './store';
+import { askerKey, loadProfile } from './store';
 
 export interface PostSummary {
   id: string;
@@ -140,7 +140,21 @@ export interface Answer {
   createdAt: string;
 }
 
-export type QuestionWithAnswers = Question & { answers: Answer[] };
+/** A question with its answers in place of the count of them. */
+export type QuestionWithAnswers = Omit<Question, 'answers'> & { answers: Answer[] };
+/** A question in the feed: `mine` when this browser asked it. */
+export type FeedQuestion = QuestionWithAnswers & { mine?: boolean };
+
+/** What an admin can remove. */
+export type AdminTarget = 'question' | 'answer' | 'notice' | 'listing' | 'offer';
+
+export interface ModelCheck {
+  name: string;
+  ok: boolean;
+  ms: number;
+  error?: string;
+  paid?: boolean;
+}
 
 export type AnnouncementKind = 'event' | 'deadline' | 'opportunity' | 'club' | 'notice';
 
@@ -323,13 +337,30 @@ export class ApiError extends Error {
   }
 }
 
-/** Lets a developer point the web app at another API origin from the browser console (localStorage "room.apiBase"). */
+/**
+ * Lets a developer point the web app at another API origin from the browser console (localStorage "room.apiBase").
+ * Development builds only: in production a pasted "fix" could otherwise send everyone's key elsewhere.
+ */
 function apiBase(): string {
+  if (!import.meta.env.DEV) return '';
   try {
     return localStorage.getItem('room.apiBase') ?? '';
   } catch {
     return '';
   }
+}
+
+/** Who is asking: the NetID signed up in this browser and the browser's key, in headers (never in the address). */
+function identity(): Record<string, string> {
+  const profile = loadProfile();
+  return profile ? { 'x-ror-netid': profile.netId, 'x-ror-key': askerKey() } : { 'x-ror-key': askerKey() };
+}
+
+const signupListeners = new Set<() => void>();
+/** Called whenever the server says the visitor has to sign up first (their details are missing or not theirs). */
+export function onSignupRequired(listener: () => void): () => void {
+  signupListeners.add(listener);
+  return () => signupListeners.delete(listener);
 }
 
 async function failure(response: Response, fallback: string): Promise<ApiError> {
@@ -342,11 +373,12 @@ async function failure(response: Response, fallback: string): Promise<ApiError> 
   } catch {
     // not JSON
   }
+  if (code === 'signup_required') signupListeners.forEach((listener) => listener());
   return new ApiError(response.status, code, message);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${apiBase()}${path}`, init);
+  const response = await fetch(`${apiBase()}${path}`, { ...init, headers: { ...identity(), ...(init.headers as Record<string, string> | undefined) } });
   if (!response.ok) throw await failure(response, `Request failed (${response.status}).`);
   return (await response.json()) as T;
 }
@@ -386,7 +418,8 @@ export const api = {
     stats: () => request<{ open: number; answered: number; answers: number; helpers: number }>('/api/board?op=stats'),
     recent: () => request<{ questions: QuestionWithAnswers[] }>('/api/board?op=recent'),
     question: (id: string) => request<{ question: Question; answers: Answer[] }>(`/api/board?op=question&id=${encodeURIComponent(id)}`),
-    mine: (key: string) => request<{ questions: QuestionWithAnswers[] }>(`/api/board?op=mine&key=${encodeURIComponent(key)}`),
+    mine: (_key?: string) => request<{ questions: QuestionWithAnswers[] }>('/api/board?op=mine'),
+    feed: (before?: string) => request<{ questions: FeedQuestion[]; more: boolean }>(`/api/board?op=feed${before ? `&before=${encodeURIComponent(before)}` : ''}`),
     announcements: () => request<{ announcements: Announcement[] }>('/api/board?op=announcements'),
     // The browser key goes with everything done as a NetID: the server only lets the browser that set a NetID up act as it.
     profile: (body: { netId: string; name: string; major: string; classOf: number }) => post<{ profile: Profile }>('/api/board', { op: 'profile', key: askerKey(), ...body }),
@@ -396,16 +429,25 @@ export const api = {
     skip: (body: { netId: string; questionId: string }) => post<{ ok: true }>('/api/board', { op: 'skip', key: askerKey(), ...body }),
     announce: (body: { netId: string; key: string; title: string; body: string; kind: AnnouncementKind; startsAt?: string; location?: string; link?: string }) => post<{ announcement: Announcement }>('/api/board', { op: 'announce', ...body }),
     unannounce: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unannounce', ...body }),
-    offers: (key: string) => request<{ offers: Offer[]; mine: Offer[]; market: MarketSummary; markets?: Record<OfferCurrency, MarketSummary> }>(`/api/board?op=offers&key=${encodeURIComponent(key)}`),
+    offers: (_key?: string) => request<{ offers: Offer[]; mine: Offer[]; market: MarketSummary; markets?: Record<OfferCurrency, MarketSummary> }>('/api/board?op=offers'),
     offer: (body: { netId: string; key: string; currency: OfferCurrency; side: OfferSide; amount: number; rate: number; contactKind: ContactKind; contact: string; note?: string }) => post<{ offer: Offer }>('/api/board', { op: 'offer', ...body }),
     offerDone: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'offer_done', ...body }),
     unoffer: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unoffer', ...body }),
-    listings: (key: string) => request<{ listings: Listing[]; mine: Listing[] }>(`/api/board?op=listings&key=${encodeURIComponent(key)}`),
+    listings: (_key?: string) => request<{ listings: Listing[]; mine: Listing[] }>('/api/board?op=listings'),
     listing: (body: ListingDraft & { netId: string; key: string }) => post<{ listing: Listing }>('/api/board', { op: 'listing', ...body }),
     listingDone: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'listing_done', ...body }),
     unlisting: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unlisting', ...body }),
-    leaderboard: (netId?: string) => request<{ helpers: LeaderboardEntry[] }>(`/api/board?op=leaderboard${netId ? `&netId=${encodeURIComponent(netId)}` : ''}`),
+    leaderboard: (_netId?: string) => request<{ helpers: LeaderboardEntry[] }>('/api/board?op=leaderboard'),
     contact: (type: 'offer' | 'listing', id: string) => request<{ contactKind: ContactKind; contact: string }>(`/api/board?op=contact&type=${type}&id=${encodeURIComponent(id)}`),
+  },
+  admin: {
+    me: () => request<{ available: boolean; admin: boolean }>('/api/admin?op=me'),
+    login: (code: string) => post<{ admin: boolean }>('/api/admin', { op: 'login', code }),
+    logout: () => post<{ admin: boolean }>('/api/admin', { op: 'logout' }),
+    remove: (body: { type: AdminTarget; id: string; ban?: boolean; reason?: string }) => post<{ ok: true; banned: string | null }>('/api/admin', { op: 'remove', ...body }),
+    bans: () => request<{ bans: Array<{ netId: string; reason: string; createdAt: string }> }>('/api/admin?op=bans'),
+    unban: (netId: string) => post<{ ok: true }>('/api/admin', { op: 'unban', netId }),
+    models: () => request<{ geminiKeyProblem: string | null; results: ModelCheck[] }>('/api/admin?op=models'),
   },
   plan: {
     read: (body: { term: string; text: string; current: { wants: Array<{ label: string; codes: string[] }>; rules: Rules }; major?: string; year?: string }) =>
@@ -436,7 +478,7 @@ interface AskHandlers {
 export async function askStream(question: string, history: ChatTurn[], handlers: AskHandlers, signal?: AbortSignal): Promise<{ answer: string; complete: boolean }> {
   const response = await fetch(`${apiBase()}/api/ask`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...identity() },
     body: JSON.stringify({ question, history, stream: true }),
     signal,
   });

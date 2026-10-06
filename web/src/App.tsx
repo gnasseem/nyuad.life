@@ -1,11 +1,13 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, boardProblem as describeBoardProblem, type ChatGPTStatus, type Health, type Profile } from './api';
+import { api, boardProblem as describeBoardProblem, onSignupRequired, type ChatGPTStatus, type Health, type Profile } from './api';
 import { APP_NAME } from './brand';
+import { HistoryPanel } from './components/HistoryPanel';
 import { Wordmark } from './components/Logo';
 import { ProfileModal } from './components/ProfileForm';
+import { Welcome } from './components/Welcome';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
-import { initials, relativeDate } from './format';
-import { IconAsk, IconAuto, IconBag, IconBook, IconCalendar, IconClock, IconMegaphone, IconMoon, IconQuestions, IconSun, IconTrash, IconUser } from './icons';
+import { initials } from './format';
+import { IconAsk, IconBag, IconBook, IconCalendar, IconMegaphone, IconMoon, IconQuestions, IconShield, IconSidebar, IconSun, IconUser } from './icons';
 import { AnnouncementsPage } from './pages/Announcements';
 import { AskPage } from './pages/Ask';
 import { CoursesPage } from './pages/Courses';
@@ -15,21 +17,22 @@ import { PostPage } from './pages/Post';
 import { QuestionPage, QuestionsPage } from './pages/Questions';
 import { SettingsPage } from './pages/Settings';
 import { navigate, onLinkClick, routePath, useRoute, type Route } from './router';
-import { applyTheme, clearConversations, deleteConversation, loadActiveConversation, loadConversations, loadProfile, loadTheme, onConversationsChange, saveProfile, type Conversation, type Theme } from './store';
+import { applyTheme, loadActiveConversation, loadConversations, loadOnboarded, loadProfile, loadSidebarClosed, loadTheme, onConversationsChange, saveOnboarded, saveProfile, saveSidebarClosed, type Conversation, type Theme } from './store';
 import { standingFor } from './year';
 
 type Line = 'ask' | 'questions' | 'notices' | 'market' | 'guide' | 'plan';
 
 const NAV: Array<{ route: Route; label: string; line: Line; icon: typeof IconAsk; matches: Route['name'][] }> = [
   { route: { name: 'ask' }, label: 'Ask', line: 'ask', icon: IconAsk, matches: ['ask'] },
+  { route: { name: 'plan' }, label: 'Plan', line: 'plan', icon: IconCalendar, matches: ['plan'] },
   { route: { name: 'questions' }, label: 'Questions', line: 'questions', icon: IconQuestions, matches: ['questions', 'question'] },
   { route: { name: 'announcements' }, label: 'Notices', line: 'notices', icon: IconMegaphone, matches: ['announcements'] },
   { route: { name: 'market', tab: 'items' }, label: 'Market', line: 'market', icon: IconBag, matches: ['market'] },
   { route: { name: 'courses' }, label: 'Courses', line: 'guide', icon: IconBook, matches: ['courses', 'threads', 'post'] },
-  { route: { name: 'plan' }, label: 'Plan', line: 'plan', icon: IconCalendar, matches: ['plan'] },
 ];
 
-const THEME_LABEL: Record<Theme, string> = { system: 'Theme: auto', light: 'Theme: light', dark: 'Theme: dark' };
+/** The button names what it switches to. */
+const THEME_LABEL: Record<Theme, string> = { light: 'Switch to dark mode', dark: 'Switch to light mode' };
 const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Notices', market: 'Market', courses: 'Courses', threads: 'Threads', post: 'Thread', plan: 'Plan', settings: 'Settings' };
 const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: '' };
 
@@ -55,7 +58,13 @@ export function App() {
   const [askPrefill, setAskPrefillState] = useState<(Prefill & { token: number }) | null>(null);
   const [boardPrefill, setBoardPrefill] = useState('');
   const [chatgpt, setChatGPT] = useState<ChatGPTStatus | null>(null);
-  const [history, setHistory] = useState(false);
+  const [admin, setAdmin] = useState(false);
+  // On a wide screen the conversation list stays open unless folded away; on a phone it opens on demand.
+  const wide = () => window.matchMedia('(min-width: 1100px)').matches;
+  const [panelOpen, setPanelOpen] = useState(() => wide() && !loadSidebarClosed());
+  const [onboarded, setOnboarded] = useState(loadOnboarded);
+  /** Set when the server no longer knows this browser's details: the sign-up form comes back, with why. */
+  const [resignup, setResignup] = useState(false);
   const [profileAsk, setProfileAsk] = useState<{ title: string; reason: string } | null>(null);
   const profileRequest = useRef<((saved: boolean) => void) | null>(null);
   const conversations = useConversations();
@@ -89,13 +98,27 @@ export function App() {
   }, []);
   useEffect(refreshChatGPT, [refreshChatGPT]);
 
+  const refreshAdmin = useCallback(() => {
+    api.admin
+      .me()
+      .then((result) => setAdmin(result.admin))
+      .catch(() => setAdmin(false));
+  }, []);
+  useEffect(refreshAdmin, [refreshAdmin]);
+
+  useEffect(() => onSignupRequired(() => setResignup(true)), []);
+
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
 
+  // Crossing from a phone-sized window to a wide one (or back) puts the list where that size expects it.
   useEffect(() => {
-    setHistory(false);
-  }, [route, search]);
+    const query = window.matchMedia('(min-width: 1100px)');
+    const onChange = () => setPanelOpen(query.matches && !loadSidebarClosed());
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
 
   useEffect(() => {
     const title = PAGE_TITLE[route.name];
@@ -125,7 +148,10 @@ export function App() {
     setProfileState(next);
   }, []);
 
-  const setTheme = useCallback((next: Theme) => setThemeState(next), []);
+  const setTheme = useCallback((next: Theme) => {
+    applyTheme(next, true);
+    setThemeState(next);
+  }, []);
 
   const requestProfile = useCallback(
     (request: ProfileRequest = {}) =>
@@ -159,13 +185,24 @@ export function App() {
   }, []);
 
   const context = useMemo(
-    () => ({ health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, setBoardPrefill, chatgpt, refreshChatGPT }),
-    [health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, chatgpt, refreshChatGPT],
+    () => ({ health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, setBoardPrefill, chatgpt, refreshChatGPT, admin, refreshAdmin }),
+    [health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, chatgpt, refreshChatGPT, admin, refreshAdmin],
   );
 
-  const cycleTheme = () => setThemeState(theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system');
-  const ThemeIcon = theme === 'light' ? IconSun : theme === 'dark' ? IconMoon : IconAuto;
+  const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
+  const ThemeIcon = theme === 'dark' ? IconMoon : IconSun;
   const currentConversation = route.name === 'ask' ? search.get('c') : null;
+  const onAsk = route.name === 'ask';
+  const togglePanel = () => {
+    const next = !panelOpen;
+    setPanelOpen(next);
+    if (wide()) saveSidebarClosed(!next);
+  };
+  const closePanel = useCallback(() => {
+    setPanelOpen(false);
+    if (window.matchMedia('(min-width: 1100px)').matches) saveSidebarClosed(true);
+  }, []);
+  const gate = !profile || resignup;
 
   const page = (() => {
     switch (route.name) {
@@ -210,16 +247,27 @@ export function App() {
 
   return (
     <AppContext.Provider value={context}>
-      <div className="app">
+      <div className={`app${onAsk ? ' on-ask' : ''}`} data-panel={onAsk && panelOpen ? 'open' : 'closed'}>
         <div className="ground" aria-hidden="true" />
         <header className="appbar">
-          <a href={askHref} className="brand" onClick={onLinkClick} aria-label={`${APP_NAME}, home`}>
-            <Wordmark />
-          </a>
+          <div className="bar-start">
+            {onAsk && (
+              <button type="button" className="icon-btn panel-toggle" onClick={togglePanel} aria-expanded={panelOpen} aria-label={panelOpen ? 'Hide conversations' : 'Show conversations'} title={panelOpen ? 'Hide conversations' : 'Your conversations'}>
+                <IconSidebar />
+              </button>
+            )}
+            <a href={askHref} className="brand" onClick={onLinkClick} aria-label={`${APP_NAME}, home`}>
+              <Wordmark />
+            </a>
+          </div>
           <LineNav activeIndex={activeIndex} hrefOf={hrefOf} />
           <div className="bar-tools">
-            <HistoryMenu open={history} setOpen={setHistory} conversations={conversations} current={currentConversation} />
-            <button type="button" className="icon-btn" onClick={cycleTheme} title={THEME_LABEL[theme]} aria-label={THEME_LABEL[theme]}>
+            {admin && (
+              <a href="/settings#admin" className="admin-badge" onClick={onLinkClick} title="Admin mode is on">
+                <IconShield /> <span>Admin</span>
+              </a>
+            )}
+            <button type="button" className="icon-btn" onClick={toggleTheme} title={THEME_LABEL[theme]} aria-label={THEME_LABEL[theme]}>
               <ThemeIcon key={theme} className="turn-in" />
             </button>
             <span className={settingsActive ? 'is-settings' : undefined}>{me}</span>
@@ -227,7 +275,16 @@ export function App() {
         </header>
 
         <main className="main" key={pageKey}>
-          <ErrorBoundary>{page}</ErrorBoundary>
+          {onAsk ? (
+            <div className="ask-shell">
+              <HistoryPanel conversations={conversations} current={currentConversation} open={panelOpen} onClose={closePanel} />
+              <div className="ask-body">
+                <ErrorBoundary>{page}</ErrorBoundary>
+              </div>
+            </div>
+          ) : (
+            <ErrorBoundary>{page}</ErrorBoundary>
+          )}
         </main>
 
         <nav className="tabbar" aria-label="Sections">
@@ -244,7 +301,24 @@ export function App() {
           {toastState.message}
         </div>
       )}
-      <ProfileModal open={profileAsk !== null} title={profileAsk?.title ?? ''} reason={profileAsk?.reason ?? ''} onClose={() => finishProfile(false)} onDone={() => finishProfile(true)} />
+      <ProfileModal open={profileAsk !== null && !gate} title={profileAsk?.title ?? ''} reason={profileAsk?.reason ?? ''} onClose={() => finishProfile(false)} onDone={() => finishProfile(true)} />
+      {gate && (
+        <Welcome
+          tour={!onboarded && !resignup}
+          reason={resignup && profile ? 'Your details need saving again on this browser. Check them and press Get started.' : undefined}
+          onToured={() => {
+            saveOnboarded();
+            setOnboarded(true);
+          }}
+          onDone={(saved) => {
+            saveOnboarded();
+            setOnboarded(true);
+            setResignup(false);
+            setProfile(saved);
+            toast(`Welcome aboard, ${saved.name.split(' ')[0]}`);
+          }}
+        />
+      )}
     </AppContext.Provider>
   );
 }
@@ -290,71 +364,6 @@ function LineNav({ activeIndex, hrefOf }: { activeIndex: number; hrefOf(route: R
         </a>
       ))}
     </nav>
-  );
-}
-
-function HistoryMenu({ open, setOpen, conversations, current }: { open: boolean; setOpen(open: boolean): void; conversations: Conversation[]; current: string | null }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: MouseEvent) => {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && setOpen(false);
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open, setOpen]);
-
-  const remove = (id: string) => {
-    deleteConversation(id);
-    if (current === id) navigate({ name: 'ask' });
-  };
-
-  const clearAll = () => {
-    if (!window.confirm('Delete all saved conversations?')) return;
-    clearConversations();
-    setOpen(false);
-    if (current) navigate({ name: 'ask' });
-  };
-
-  return (
-    <div className="menu-wrap" ref={ref}>
-      <button type="button" className="icon-btn" onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="true" title="Your questions" aria-label="Your questions">
-        <IconClock />
-      </button>
-      {open && (
-        <div className="popover" role="dialog" aria-label="Your questions">
-          <div className="popover-head">
-            <span className="label">Your questions</span>
-            {conversations.length > 0 && (
-              <button type="button" className="btn ghost sm" onClick={clearAll}>
-                Clear all
-              </button>
-            )}
-          </div>
-          {conversations.length === 0 ? (
-            <p className="popover-empty">No questions yet.</p>
-          ) : (
-            conversations.slice(0, 40).map((conversation) => (
-              <div key={conversation.id} className={`hist-item${current === conversation.id ? ' active' : ''}`}>
-                <a href={`/?c=${conversation.id}`} onClick={onLinkClick} title={conversation.title}>
-                  <b>{conversation.title}</b>
-                  <span>{relativeDate(conversation.updatedAt)}</span>
-                </a>
-                <button type="button" onClick={() => remove(conversation.id)} aria-label="Delete conversation">
-                  <IconTrash />
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-    </div>
   );
 }
 
