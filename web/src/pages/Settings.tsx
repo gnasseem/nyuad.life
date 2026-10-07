@@ -42,6 +42,8 @@ function ThemeArt({ theme }: { theme: Theme }) {
 export function SettingsPage() {
   const { profile, setProfile, requestProfile, theme, setTheme, toast, boardProblem, chatgpt, refreshChatGPT } = useApp();
   const [count, setCount] = useState(() => loadConversations().length);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   useEffect(() => onConversationsChange(() => setCount(loadConversations().length)), []);
 
@@ -52,10 +54,26 @@ export function SettingsPage() {
   };
 
   const forget = () => {
-    if (!window.confirm('Delete everything this site keeps in this browser?')) return;
+    if (!window.confirm('Clear conversations, your plan, profile details and preferences from this browser? Your sign-in key stays so you can add the same NetID again.')) return;
     forgetDevice();
     setProfile(null);
     window.location.href = '/';
+  };
+
+  const deleteAccount = async () => {
+    if (!profile || deleting || !window.confirm(`Delete your ${profile.netId} account and the posts made from this browser? This cannot be undone.`)) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await api.board.deleteProfile(profile.netId);
+      await api.chatgpt.logout().catch(() => {});
+      forgetDevice(true);
+      setProfile(null);
+      window.location.href = '/';
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Could not delete the account.');
+      setDeleting(false);
+    }
   };
 
   return (
@@ -132,6 +150,9 @@ export function SettingsPage() {
                 >
                   Sign out
                 </button>
+                <button type="button" className="btn sm danger" onClick={() => void deleteAccount()} disabled={deleting}>
+                  {deleting ? 'Deleting…' : 'Delete account'}
+                </button>
               </div>
             </div>
           ) : (
@@ -145,6 +166,7 @@ export function SettingsPage() {
               </button>
             </div>
           )}
+          {deleteError && <div className="alert error">{deleteError}</div>}
         </div>
       </section>
 
@@ -164,11 +186,11 @@ export function SettingsPage() {
           )}
           <div className="settings-row">
             <div className="text">
-              <b>All data on this browser</b>
-              <span>Conversations, your plan, your details and the key that lets you edit or remove what you posted</span>
+              <b>Local data</b>
+              <span>Clear conversations, your plan, details and preferences. Your sign-in key stays so your NetID still works here.</span>
             </div>
             <button type="button" className="btn sm danger" onClick={forget}>
-              Delete all
+              Clear
             </button>
           </div>
         </div>

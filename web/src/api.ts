@@ -451,6 +451,7 @@ export const api = {
     announcements: () => request<{ announcements: Announcement[] }>('/api/board?op=announcements'),
     // The browser key goes with everything done as a NetID: the server only lets the browser that set a NetID up act as it.
     profile: (body: { netId: string; name: string; major: string; classOf: number }) => post<{ profile: Profile }>('/api/board', { op: 'profile', key: askerKey(), ...body }),
+    deleteProfile: (netId: string) => post<{ ok: true }>('/api/board', { op: 'delete_profile', netId, key: askerKey() }),
     ask: (body: { text: string; key: string; name?: string }) => post<{ question?: Question; similar?: QuestionWithAnswers[]; related?: PostSummary[]; redirect?: Redirect }>('/api/board', { op: 'ask', ...body }),
     next: (netId: string, key: string) => post<{ question: Question | null; remaining: number; answered: number }>('/api/board', { op: 'next', netId, key }),
     answer: (body: { netId: string; questionId: string; text: string }) => post<{ answer: Answer; answered: number }>('/api/board', { op: 'answer', key: askerKey(), ...body }),

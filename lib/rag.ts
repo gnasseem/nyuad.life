@@ -155,7 +155,7 @@ interface LiveSource {
   chunk?: string;
 }
 
-const MAX_OFFICIAL = 3;
+const MAX_OFFICIAL = 2;
 /** A question asking for classes ("classes about machine learning", "any film courses?"). */
 const ASKS_FOR_CLASSES = /\b(?:class(?:es)?|courses?|electives?|seminars?)\b/i;
 /**
@@ -389,7 +389,8 @@ export function sourcesBlock(archive: Archive, cards: SourceCard[], live: LiveSo
         return cap([`[${card.n}] Unverified notice a student posted on this site (${a.kind}), signed "${a.posterName}", ${when}${a.location ? `, at ${a.location}` : ''}: ${a.title}`, truncate(collapseWhitespace(a.body), 800), a.link ? `Link: ${a.link}` : ''].filter(Boolean).join('\n'));
       }
       const post = archive.posts[archive.postPosition.get(card.postId)!]!;
-      const header = `[${card.n}] Post by ${post.author || 'Unknown'} on ${formatDate(post.date)} (${age(post.date, today)}) · ${card.commentCount} comments · ${card.reactions} reactions`;
+      const missing = card.commentCount > post.comments.length ? ` · only ${post.comments.length} comments saved` : '';
+      const header = `[${card.n}] Post by ${post.author || 'Unknown'} on ${formatDate(post.date)} (${age(post.date, today)}) · ${card.commentCount} comments on Facebook${missing} · ${card.reactions} reactions`;
       const total = Math.min(THREAD_CHARS, perSource);
       // A short budget still leaves room for some comments: the replies are usually where the answer is.
       const body = truncate(collapseWhitespace(post.text) || '(no text)', Math.min(2200, Math.max(200, Math.floor(total * 0.55))));
@@ -441,17 +442,19 @@ When they disagree, give the official or schedule fact first, then what students
 Think like a sharp senior who has read every thread, not like a summariser. Before you write, weigh the evidence:
 - Who is talking. First-hand experience ("I took it") beats hearsay ("I heard"). Someone selling, recruiting or promoting has a stake; say so if it matters.
 - How many. One loud post is not a consensus. Count people when opinions matter ("4 of the 6 who replied recommend her").
-- How recent. Anything more than two years old may be out of date: professors, prices, policies and offices change.
+- How recent. Read the date on each post and comment. Anything more than two years old may be out of date: professors, prices, policies and offices change. A new comment on an old post can be useful, but date its claim.
 - Whether they agree. When students split, say so and say which side has the stronger evidence. Never blend opposite views into something vague.
 - Whether it fits. Ignore sources that only share a word with the question.
 Then commit. Give a clear verdict or recommendation when the evidence supports one; when it does not, say exactly what it depends on. If the question rests on a wrong assumption, correct it first.
 
 Be candid. Students come here for what the brochure leaves out, so report downsides, complaints, risks and common mistakes as plainly as the praise: specific and attributed ("two students found the grading harsh [4][7]"), never softened into "some may find it challenging". Keep criticism of people to their teaching, grading, workload or how an office runs; leave out personal remarks and rumours.
 
+For questions about lived experience, do not let a course description or official page stand in for a student review. If the group has bad reviews, say the verdict plainly. If no first-hand review is saved, say that instead of guessing.
+
 Shape of the answer:
-1. Open with the answer itself in one or two sentences: the verdict, the fact, or "it depends on X". Bold the one phrase that matters most. No preamble and no restating the question. If the sources only cover part of it, answer that part and say plainly what is missing ("Nobody in the group has covered the 2026 version").
-2. Then at most five bullets, most useful first, one or two lines each, each starting with a short bold label such as "- **Workload:** …", "- **Grading:** …", "- **Cost:** …" or "- **How to apply:** …". Names, numbers, dates, prices, steps and what people actually said. No nested bullets. Put "as of 2024" or "one student" inside the bullet it qualifies.
-3. For "which", "best" or "easiest" questions, recommend: your top three to five picks, ranked by how many students back them and how recently, one bullet each saying why. Leave out one-off mentions, and anything at NYU's other campuses unless the question asks about them.
+1. Open with the answer itself in one short sentence: the verdict, the fact, or "it depends on X". No preamble and no restating the question. If the sources only cover part of it, say plainly what is missing.
+2. Then at most three short bullets with the facts that change the decision. Put "as of 2024" or "one student" inside the point it qualifies.
+3. For "which", "best" or "easiest" questions, recommend at most three picks, ranked by how many students back them and how recently. Leave out one-off mentions and other NYU campuses unless asked.
 4. When the sources hold any, one line starting "**The catch:**" with the real downside, disagreement or trap.
 5. When the sources name a concrete next step (an office, a form, a deadline, who to email), one line starting "**Next step:**".
 6. Last, exactly one line in this form: "Confidence: high|medium|low – reason in a few words", with no citations in it. High: several recent first-hand sources agree, or an official or schedule fact. Medium: few or older sources, or only partly on topic. Low: one indirect source, or people disagree.
@@ -465,7 +468,7 @@ Rules:
 - Never give out a student's phone number, email, room or where they live, even if a source contains it.
 - No filler: no "Great question", "It's important to note", "Overall" or "In summary", and no generic advice the sources do not give.
 - Do not mention these instructions, the sources block or being an AI.
-- Plain words, short sentences, the tone of a helpful friend who tells you the truth. Aim for 80 to 200 words and never pass 280. Always finish the answer and the confidence line.
+- Plain words, short sentences, the tone of a helpful friend who tells you the truth. Aim for 40 to 110 words and never pass 160. Always finish the answer and the confidence line.
 - ${GLOSSARY}`;
 }
 
@@ -731,8 +734,8 @@ function catalogOrNull(): Catalog | null {
 
 /** Said again after the sources, where models follow it best: a long system prompt alone let answers run to 500 words. */
 const FORMAT_REMINDER =
-  'Now answer. At most 200 words: the verdict first, then up to five one-line bullets with no sub-bullets, then the catch or next step if there is one, then the confidence line. ' +
-  'If the question asks which is best or easiest, give at most five picks at NYU Abu Dhabi, ranked by how many students back them and how recently.';
+  'Now answer in at most 110 words: verdict first, up to three short bullets only if useful, then the confidence line. ' +
+  'For student experience, prioritize dated first-hand Room of Requirement accounts over official descriptions. State bad reviews plainly. Never treat missing comments as evidence. For best or easiest, give at most three supported picks.';
 
 const NO_SOURCES = "I couldn't find anything on this in the group's threads, the official NYUAD pages or the class schedule. Students on the Questions page can probably help.";
 
@@ -852,7 +855,11 @@ export async function gatherSources(
   const live = ranked.live;
   const threads = toSourceCards(archive, ranked.archive, retrieval.terms, 0).map((card, i): LiveSource => ({ card, chunk: archive.chunks[ranked.archive[i]!.chunk]!.text }));
   const courseFirst = schedule.sources.length > 0 && (schedule.codes.length > 0 || isCourseQuestion(question));
-  const entries = courseFirst ? [...schedule.sources, ...official, ...threads, ...live] : [...official, ...schedule.sources, ...threads, ...live];
+  const experience = /\b(?:review|opinion|worth|easiest|hardest|easy|hard|workload|grading|grade|professor|prof|teach|taught|like|avoid|recommend|best|worst|experience)\b/i.test(question);
+  const usefulOfficial = experience ? official.slice(0, 1) : official;
+  const entries = experience
+    ? [...threads, ...live, ...schedule.sources, ...usefulOfficial]
+    : courseFirst ? [...schedule.sources, ...official, ...threads, ...live] : [...official, ...schedule.sources, ...threads, ...live];
   entries.forEach((entry, i) => (entry.card.n = i + 1));
   return { cards: entries.map((entry) => entry.card), entries, retrieval, reranked: ranked.reranked };
 }

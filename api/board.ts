@@ -35,7 +35,7 @@ import { detectRedirect } from '../lib/domains.ts';
 import { embedderForIndex } from '../lib/embeddings.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, queryString, rateLimit, readJson, route, sendJson, type ApiRequest } from '../lib/http.ts';
-import { claimedIdentity, NETID_TAKEN, ownerOf, requireMember, requireProfile } from '../lib/identity.ts';
+import { claimedIdentity, forgetMember, NETID_TAKEN, ownerOf, requireMember, requireProfile } from '../lib/identity.ts';
 import { reviewPost, screenPost, type PostKind, type ReviewedKind } from '../lib/moderation.ts';
 import { providersFromEnv, warmModels } from '../lib/providers.ts';
 import { retrieve } from '../lib/rag.ts';
@@ -145,6 +145,15 @@ export default route(['GET', 'POST'], async (req, res) => {
       if (existing?.ownerKey && existing.ownerKey !== owner) throw new ApiError(403, NETID_TAKEN, 'netid_taken');
       const profile = await store.upsertProfile(draft, owner);
       sendJson(res, 200, { profile: publicProfile(profile) });
+      return;
+    }
+    case 'delete_profile': {
+      rateLimit(req, 5, 2, 'board-profile');
+      const profile = await requireProfile(store, body.netId, body.key);
+      const key = validateKey(body.key);
+      if (!await store.deleteProfile(profile.netId, ownerOf(key), key)) throw new ApiError(403, NETID_TAKEN, 'netid_taken');
+      forgetMember(profile.netId, key);
+      sendJson(res, 200, { ok: true });
       return;
     }
     case 'offer': {

@@ -9,6 +9,7 @@ export type Route =
   | { name: 'post'; id: string }
   | { name: 'market'; tab: MarketTab }
   | { name: 'courses'; code?: string }
+  | { name: 'professors'; nameQuery?: string }
   | { name: 'threads' }
   | { name: 'plan' }
   | { name: 'settings' };
@@ -33,6 +34,8 @@ export function parseRoute(pathname: string): Route {
       return { name: 'announcements' };
     case 'courses':
       return { name: 'courses', code: parts[1] };
+    case 'professors':
+      return { name: 'professors', nameQuery: parts[1] };
     case 'threads':
       return { name: 'threads' };
     case 'plan':
@@ -74,6 +77,8 @@ export function routePath(route: Route): string {
       return route.tab === 'items' ? '/market' : `/market/${route.tab}`;
     case 'courses':
       return route.code ? `/courses/${encodeURIComponent(route.code)}` : '/courses';
+    case 'professors':
+      return route.nameQuery ? `/professors/${encodeURIComponent(route.nameQuery)}` : '/professors';
     case 'threads':
       return '/threads';
     case 'plan':

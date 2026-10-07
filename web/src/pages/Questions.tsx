@@ -42,7 +42,7 @@ export function QuestionsPage(_props: { search: URLSearchParams }) {
   const [more, setMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<Filter>('all');
+  const [filter, setFilter] = useState<Filter>('for-you');
   const [asking, setAsking] = useState(false);
   const [prefill, setPrefill] = useState('');
 
@@ -60,6 +60,10 @@ export function QuestionsPage(_props: { search: URLSearchParams }) {
 
   useEffect(load, [load]);
   useEffect(() => onAdminRemoved(load), [load]);
+  useEffect(() => {
+    const timer = window.setInterval(load, 60_000);
+    return () => window.clearInterval(timer);
+  }, [load]);
 
   // A question carried over from Ask ("Ask students") opens the ask sheet with it filled in.
   useEffect(() => {
@@ -126,9 +130,9 @@ export function QuestionsPage(_props: { search: URLSearchParams }) {
               </div>
             )}
             {questions && shown.length === 0 && (
-              <EmptyState icon={<IconChat />} title={filter === 'mine' ? 'You have not asked anything yet' : filter === 'open' ? 'Every question has an answer' : 'No questions here yet'} text="Ask what the archive could not answer: students in the right major and year see it first.">
-                <button type="button" className="btn primary" onClick={() => setAsking(true)}>
-                  <IconPlus /> Ask a question
+              <EmptyState icon={<IconChat />} title={filter === 'mine' ? 'You have not asked anything yet' : filter === 'open' ? 'Every question has an answer' : filter === 'for-you' ? 'Nothing matched you yet' : 'No questions here yet'} text={filter === 'for-you' ? 'Other students may still need an answer.' : 'Ask what the archive could not answer: students in the right major and year see it first.'}>
+                <button type="button" className="btn primary" onClick={() => filter === 'for-you' ? setFilter('open') : setAsking(true)}>
+                  {filter === 'for-you' ? 'See questions needing help' : <><IconPlus /> Ask a question</>}
                 </button>
               </EmptyState>
             )}

@@ -342,6 +342,9 @@ describe('api', () => {
     expect((await post({ op: 'announce', netId: 'vic1234', key: 'mallory-key', title: 'Free food at D2', body: 'Come by', kind: 'event' })).status).toBe(403);
     // The owner still can.
     expect((await post({ op: 'profile', netId: 'vic1234', key: 'victim-key-1', name: 'Vic Tim', major: 'Economics', classOf: 2028 })).status).toBe(200);
+    expect((await post({ op: 'delete_profile', netId: 'vic1234', key: 'mallory-key' })).status).toBe(403);
+    expect((await post({ op: 'delete_profile', netId: 'vic1234', key: 'victim-key-1' })).status).toBe(200);
+    expect((await post({ op: 'profile', netId: 'vic1234', key: 'new-browser-key', name: 'Vic Tim', major: 'Economics', classOf: 2028 })).status).toBe(200);
   });
 
   it('answers only students who signed up, and only as the browser that did', async () => {

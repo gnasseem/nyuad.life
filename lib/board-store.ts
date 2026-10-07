@@ -31,6 +31,8 @@ export interface BoardStore {
   upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>, ownerKey?: string): Promise<Profile>;
   /** Binds a profile that has no owner yet to this browser; leaves one that has an owner alone. */
   claimProfile(netId: string, ownerKey: string): Promise<void>;
+  /** Removes this browser's posts and profile, then frees its NetID. */
+  deleteProfile(netId: string, ownerKey: string, browserKey: string): Promise<boolean>;
   touchProfile(netId: string, answered: boolean): Promise<void>;
   createQuestion(question: Omit<Question, 'id' | 'createdAt' | 'updatedAt'>): Promise<Question>;
   getQuestion(id: string): Promise<Question | null>;
@@ -127,6 +129,17 @@ export class MemoryBoardStore implements BoardStore {
   async claimProfile(netId: string, ownerKey: string): Promise<void> {
     const profile = this.profiles.get(netId);
     if (profile && !profile.ownerKey) profile.ownerKey = ownerKey;
+  }
+  async deleteProfile(netId: string, ownerKey: string, browserKey: string): Promise<boolean> {
+    if (this.profiles.get(netId)?.ownerKey !== ownerKey) return false;
+    for (const [id, question] of this.questions) if (question.askerKey === browserKey) this.questions.delete(id);
+    this.answers = this.answers.filter((answer) => answer.helperNetId !== netId && this.questions.has(answer.questionId));
+    this.events = this.events.filter((event) => event.netId !== netId && this.questions.has(event.questionId));
+    for (const [id, post] of this.announcements) if (post.posterNetId === netId) this.announcements.delete(id);
+    for (const [id, post] of this.offers) if (post.posterNetId === netId) this.offers.delete(id);
+    for (const [id, post] of this.listings) if (post.posterNetId === netId) this.listings.delete(id);
+    this.profiles.delete(netId);
+    return true;
   }
   async touchProfile(netId: string, answered: boolean): Promise<void> {
     const profile = this.profiles.get(netId);
@@ -470,6 +483,21 @@ export class SupabaseBoardStore implements BoardStore {
   async claimProfile(netId: string, ownerKey: string): Promise<void> {
     if (this.ownerColumn === false) return;
     await this.write('PATCH', `board_profiles?net_id=eq.${enc(netId)}&owner_key=is.null`, { owner_key: ownerKey }, 'return=minimal');
+  }
+  async deleteProfile(netId: string, ownerKey: string, browserKey: string): Promise<boolean> {
+    const owned = await this.select('board_profiles', `net_id=eq.${enc(netId)}&owner_key=eq.${enc(ownerKey)}&select=net_id&limit=1`);
+    if (!owned.length) return false;
+    // Delete dependent rows before the profile: Postgres keeps their foreign keys strict.
+    for (const [table, filter] of [
+      ['board_questions', `asker_key=eq.${enc(browserKey)}`],
+      ['board_answers', `helper_net_id=eq.${enc(netId)}`],
+      ['board_events', `net_id=eq.${enc(netId)}`],
+      ['board_announcements', `poster_net_id=eq.${enc(netId)}`],
+      ['board_offers', `poster_net_id=eq.${enc(netId)}`],
+      ['board_listings', `poster_net_id=eq.${enc(netId)}`],
+    ]) await this.call(`${table}?${filter}`, { method: 'DELETE', headers: this.headers('return=minimal') });
+    const removed = (await this.call(`board_profiles?net_id=eq.${enc(netId)}&owner_key=eq.${enc(ownerKey)}`, { method: 'DELETE', headers: this.headers('return=representation') })) as Row[] | null;
+    return Boolean(removed?.length);
   }
   async touchProfile(netId: string, answered: boolean): Promise<void> {
     await this.rpc('board_touch_profile', { p_net_id: netId, p_answered: answered });

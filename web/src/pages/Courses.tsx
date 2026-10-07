@@ -1,32 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { api, type CourseDetail, type CourseEntry, type CourseRating } from '../api';
+import { api, type CourseDetail, type CourseEntry, type CourseRating, type ProfRating } from '../api';
 import { Segmented } from '../components/Segmented';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
 import { IconClose, IconSearch } from '../icons';
 import { useLatest, useMedia, usePresence } from '../motion';
 import { navigate, useRoute } from '../router';
-import { ThreadSearch } from './Threads';
 
-type View = 'courses' | 'threads';
+type View = 'courses' | 'professors';
 
 const WIDE = '(min-width: 1240px)';
 const PAGE_ROWS = 60;
 const VIEWS: Array<{ id: View; label: string }> = [
   { id: 'courses', label: 'Courses' },
-  { id: 'threads', label: 'Group threads' },
+  { id: 'professors', label: 'Professors' },
 ];
 
-/** Every course, and for the one you pick, what students make of it; the group's own threads beside them. */
-export function CoursesPage({ view, code }: { view: View; code?: string }) {
+/** Short student reviews of courses and professors. */
+export function CoursesPage({ view, code, professor }: { view: View; code?: string; professor?: string }) {
   return (
     <div className="page">
-      <Sign title="Courses" ar="المساقات" />
+      <Sign title="Reviews" ar="التقييمات" />
       <div className="tabs-wrap">
-        <Segmented variant="tabs" label="Courses" value={view} onChange={(next) => navigate(next === 'threads' ? { name: 'threads' } : { name: 'courses' }, { replace: true })} options={VIEWS} />
+        <Segmented variant="tabs" label="Reviews" value={view} onChange={(next) => navigate(next === 'professors' ? { name: 'professors' } : { name: 'courses' }, { replace: true })} options={VIEWS} />
       </div>
-      {view === 'threads' ? <ThreadSearch /> : <CourseSearch code={code} />}
+      {view === 'professors' ? <ProfessorSearch name={professor} /> : <CourseSearch code={code} />}
     </div>
   );
 }
@@ -306,29 +305,14 @@ function Detail({ code, onClose }: { code: string; onClose(): void }) {
             </button>
           </div>
         )}
-        {detail?.description && (
-          <>
-            <h3 className="section-title">About</h3>
-            <Folded text={detail.description} />
-          </>
-        )}
       </div>
     </>
   );
 }
 
-const LEVELS: Record<'difficulty' | 'workload', string[]> = {
-  difficulty: ['Easy', 'Fairly easy', 'Moderate', 'Hard', 'Very hard'],
-  workload: ['Light', 'Fairly light', 'Moderate', 'Heavy', 'Very heavy'],
-};
-
-/** The score as one big number with five stops filling to it, the verdict, two meters and what students said. */
+/** A rating and the two points most useful when choosing a course. */
 function Rating({ rating }: { rating: CourseRating }) {
-  const groups: Array<{ label: string; tone: string; items: string[] }> = [
-    { label: 'Students liked', tone: 'ok', items: rating.pros },
-    { label: 'Watch out for', tone: 'alert', items: rating.cons },
-    { label: 'Tips', tone: 'info', items: rating.tips },
-  ];
+  const points = [...rating.cons.slice(0, 1), ...rating.pros.slice(0, 1)];
   return (
     <div className="rating">
       <div className="rating-head">
@@ -342,35 +326,7 @@ function Rating({ rating }: { rating: CourseRating }) {
         </div>
         {rating.verdict && <p className="rating-verdict">{rating.verdict}</p>}
       </div>
-      {(rating.difficulty || rating.workload) && (
-        <div className="rating-meters">
-          {(['difficulty', 'workload'] as const).map((kind) =>
-            rating[kind] ? (
-              <div key={kind} className="meter">
-                <span className="meter-label">{kind === 'difficulty' ? 'Difficulty' : 'Workload'}</span>
-                <span className="meter-bar" aria-hidden="true">
-                  {[1, 2, 3, 4, 5].map((step) => (
-                    <i key={step} className={step <= rating[kind]! ? 'on' : undefined} />
-                  ))}
-                </span>
-                <b>{LEVELS[kind][rating[kind]! - 1]}</b>
-              </div>
-            ) : null,
-          )}
-        </div>
-      )}
-      {groups
-        .filter((group) => group.items.length > 0)
-        .map((group) => (
-          <div key={group.label} className={`rating-points tone-${group.tone}`}>
-            <h4>{group.label}</h4>
-            <ul>
-              {group.items.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </div>
-        ))}
+      {points.length > 0 && <div className="rating-points tone-info"><ul>{points.map((point) => <li key={point}>{point}</li>)}</ul></div>}
       <p className="rating-basis">
         AI rating from {rating.basis === 1 ? 'one student' : `${rating.basis} students`} in the group{rating.confidence === 'low' ? ', so take it lightly' : ''}.
       </p>
@@ -395,19 +351,116 @@ function RatingLoading() {
   );
 }
 
-function Folded({ text, lines = 5 }: { text: string; lines?: number }) {
-  const [open, setOpen] = useState(false);
-  const long = text.length > lines * 90;
+function ProfessorSearch({ name }: { name?: string }) {
+  const wide = useMedia(WIDE);
+  const [query, setQuery] = useState('');
+  const [courses, setCourses] = useState<CourseEntry[] | null>(null);
+  const [error, setError] = useState('');
+  const [limit, setLimit] = useState(PAGE_ROWS);
+  useEffect(() => {
+    api.courses
+      .all()
+      .then((result) => setCourses(result.courses))
+      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load professors.'));
+  }, []);
+  const people = useMemo(() => {
+    const found = new Map<string, string[]>();
+    for (const course of courses ?? []) {
+      for (const person of course.people) found.set(person, [...(found.get(person) ?? []), course.code]);
+    }
+    return [...found].sort(([a], [b]) => a.localeCompare(b));
+  }, [courses]);
+  const words = fold(query).split(/\s+/).filter(Boolean);
+  const shown = people.filter(([person, codes]) => words.every((word) => fold(`${person} ${codes.join(' ')}`).includes(word)));
+  const close = () => navigate({ name: 'professors' }, { replace: true, keepScroll: true });
+  const panel = usePresence(Boolean(name) && !wide, 220);
+  const selected = useLatest(name);
+  const detail = name
+    ? <ProfessorDetail key={name} name={name} courses={people.find(([person]) => person === name)?.[1] ?? []} onClose={close} />
+    : <div className="pane-empty"><h2>Pick a professor to see the student rating.</h2></div>;
   return (
-    <div>
-      <p className={`details${long && !open ? ' clamped' : ''}`} style={{ WebkitLineClamp: lines }}>
-        {text}
-      </p>
-      {long && (
-        <button type="button" className="link-btn small" onClick={() => setOpen(!open)}>
-          {open ? 'Show less' : 'Read more'}
-        </button>
-      )}
+    <div className="md">
+      <div>
+        <div className="course-controls">
+          <div className="search-field big">
+            <IconSearch />
+            <input className="input" type="search" value={query} onChange={(event) => { setQuery(event.target.value); setLimit(PAGE_ROWS); }} placeholder="Professor name or course code" aria-label="Search professors" />
+          </div>
+        </div>
+        {error && <div className="alert error">{error}</div>}
+        {!courses && !error && <div className="skeleton" style={{ height: 180 }} />}
+        {courses && shown.length === 0 && <div className="empty">No professor matches.</div>}
+        {shown.length > 0 && (
+          <div className="list course-list">
+            {shown.slice(0, limit).map(([person, codes]) => (
+              <a key={person} href={`/professors/${encodeURIComponent(person)}`} className={`row course-item${person === name ? ' on' : ''}`} onClick={(event) => {
+                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+                event.preventDefault();
+                navigate({ name: 'professors', nameQuery: person }, { keepScroll: true });
+              }}>
+                <span className="course-title">{person}</span>
+                <span className="muted">{codes.slice(0, 3).join(' · ')}</span>
+              </a>
+            ))}
+          </div>
+        )}
+        {shown.length > limit && (
+          <div className="load-more"><button type="button" className="btn" onClick={() => setLimit((current) => current + PAGE_ROWS)}>Show more</button></div>
+        )}
+      </div>
+      {wide ? <aside className="md-pane">{detail}</aside> : panel.mounted && selected ? (
+        <Sheet label={selected} closing={panel.closing} onClose={close}>
+          <ProfessorDetail key={selected} name={selected} courses={people.find(([person]) => person === selected)?.[1] ?? []} onClose={close} />
+        </Sheet>
+      ) : null}
     </div>
+  );
+}
+
+function ProfessorDetail({ name, courses, onClose }: { name: string; courses: string[]; onClose(): void }) {
+  const [rating, setRating] = useState<ProfRating | null | undefined>();
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let live = true;
+    let timer: number | undefined;
+    const load = async (attempt: number) => {
+      try {
+        const result = await api.courses.profs([name]);
+        if (!live) return;
+        if (result.pending.includes(name) && attempt < 3) timer = window.setTimeout(() => void load(attempt + 1), 2500);
+        else if (result.pending.includes(name)) setError('Rating is taking longer than expected. Reopen this professor to try again.');
+        else setRating(result.ratings.get(name) ?? null);
+      } catch (err) {
+        if (live) setError(err instanceof Error ? err.message : 'Could not load the rating.');
+      }
+    };
+    void load(0);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [name]);
+  return (
+    <>
+      <div className="pane-head">
+        <div className="grow"><h2>{name}</h2></div>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close" data-autofocus><IconClose /></button>
+      </div>
+      <div className="pane-body">
+        {error && <div className="alert error">{error}</div>}
+        {rating === undefined && !error && <RatingLoading />}
+        {rating === null && <p className="rating-none">Not enough first-hand student reviews to rate this professor.</p>}
+        {rating && (
+          <div className="rating">
+            <div className="rating-head">
+              <div className="rating-score" aria-label={`Rated ${rating.score} out of 5`}><b>{rating.score.toFixed(1)}</b><span>out of 5</span></div>
+              <p className="rating-verdict">{rating.verdict}</p>
+            </div>
+            <p className="rating-basis">Based on {rating.basis} {rating.basis === 1 ? 'student' : 'students'}{rating.confidence === 'low' ? ' · limited evidence' : ''}.</p>
+          </div>
+        )}
+        {courses.length > 0 && <p className="muted">Listed in Albert for {courses.slice(0, 4).join(', ')}{courses.length > 4 ? ' and more' : ''}.</p>}
+      </div>
+    </>
   );
 }

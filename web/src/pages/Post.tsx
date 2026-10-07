@@ -75,7 +75,7 @@ export function PostPage({ id }: Props) {
 
             <h2 className="section-title">Comments</h2>
             {post.comments.length === 0 ? (
-              <p className="muted">No comments.</p>
+              <p className="muted">{post.commentCount > 0 ? `${post.commentCount} ${post.commentCount === 1 ? 'comment exists' : 'comments exist'} on Facebook, but none were saved in the archive yet.` : 'No comments saved in the archive.'}</p>
             ) : (
               <div className="comments">
                 <div className="stations">
@@ -91,6 +91,7 @@ export function PostPage({ id }: Props) {
                 </div>
               </div>
             )}
+            {post.commentCount > post.comments.length && post.comments.length > 0 && <p className="muted">Showing {post.comments.length} of {post.commentCount} comments recorded on Facebook.</p>}
           </div>
 
           <aside className="rail">

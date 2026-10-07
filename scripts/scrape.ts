@@ -9,6 +9,7 @@
  *   npm run scrape -- --login           only open the window so you can log in, then exit
  *   npm run scrape -- --max-posts 300   stop after 300 new or updated posts
  *   npm run scrape -- --only-comments   only fetch missing comments for posts already saved
+ *   npm run scrape -- --only-comments --max-comments 100   retry the first 100 missing threads
  *   npm run scrape -- --no-comments     feed only, do not open threads
  *   npm run scrape -- --restart-feed    with --full: ignore the saved position and start again from the newest post
  *   npm run scrape -- --chrome          drive your installed Google Chrome instead of Playwright's Chromium
@@ -112,6 +113,7 @@ const DEBUG = flag('debug');
 const RESTART_FEED = flag('restart-feed');
 const FETCH_COMMENTS = !flag('no-comments');
 const ONLY_COMMENTS = flag('only-comments');
+const MAX_COMMENTS = Number(value('max-comments', '0')) || Infinity;
 const MAX_POSTS = Number(value('max-posts', '0')) || Infinity;
 const STOP_AFTER_KNOWN = Number(value('stop-after-known', '40')) || 40;
 const DELAY = Number(value('delay', process.env.ROR_SCRAPE_DELAY ?? '1')) || 1;
@@ -873,8 +875,8 @@ async function collectComments(walk: WalkContext, archive: SourcePost[], known: 
   const read = (state.commentsRead ??= {});
   const queue = new Set<string>(state.pendingComments);
   for (const post of archive) if (needsComments(post)) queue.add(post.id);
-  const wanted = sortNewestFirst(archive).filter((post) => queue.has(post.id) && !((read[post.id] ?? -1) >= (post.commentCount ?? 0)));
-  const ordered = wanted.filter((post) => ONLY_COMMENTS || (tries[post.id] ?? 0) < 2).map((post) => post.id);
+  const wanted = sortNewestFirst(archive).filter((post) => queue.has(post.id) && (ONLY_COMMENTS || !((read[post.id] ?? -1) >= (post.commentCount ?? 0))));
+  const ordered = wanted.filter((post) => ONLY_COMMENTS || (tries[post.id] ?? 0) < 2).slice(0, MAX_COMMENTS).map((post) => post.id);
   const skipped = wanted.length - ordered.length;
   log(`${ordered.length} threads need comments${skipped ? ` (${skipped} more were already opened twice and still look incomplete; --only-comments retries them)` : ''}.`);
   let failures = 0;

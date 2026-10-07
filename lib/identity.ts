@@ -46,6 +46,10 @@ export function claimedIdentity(req: IncomingMessage): { netId: string; key: str
 const confirmed = new Map<string, number>();
 const CONFIRMED_MS = 10 * 60_000;
 
+export function forgetMember(netId: string, key: string): void {
+  confirmed.delete(`${netId}:${createHash('sha256').update(key).digest('hex').slice(0, 24)}`);
+}
+
 /**
  * Refuses a request that does not come from a signed-up member (ROR_REQUIRE_SIGNUP=0 turns this off). Without a
  * working board nothing can be checked, so the request goes through rather than taking the site down with the

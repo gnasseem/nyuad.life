@@ -369,6 +369,8 @@ html[data-line='ask'] .sign { --line-fill: var(--board); --line-on: #f0f2fa; --l
 .chip.on { border-color: transparent; background: var(--line-fill); color: var(--line-on); box-shadow: inset 0 1px 0 var(--gloss); }
 .chip .n { font: 650 12px/1 var(--sign); font-variant-numeric: tabular-nums; color: var(--ink-3); }
 .chip.on .n { color: inherit; opacity: 0.72; }
+.help-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 999px; background: var(--green); color: #fff; font: 700 10px/1 var(--sign); }
+.tabbar .help-count { position: absolute; top: 2px; right: 18%; }
 .chip.mono { font: 700 12.5px/1 var(--sign); font-stretch: 90%; letter-spacing: 0.02em; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips.scroll-x { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 40px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 40px), transparent); }
@@ -1124,9 +1126,14 @@ select.input.sign-select:focus { border-color: var(--line-on); box-shadow: 0 0 0
 .wg-head { border-bottom: 1px solid var(--rule); background: var(--plate-2); }
 .wg-head span { padding: 10px 0 9px; color: var(--ink-3); font: 720 12px/1 var(--sign); font-stretch: 90%; letter-spacing: 0.1em; text-align: center; text-transform: uppercase; }
 .wg-head span.off { text-decoration: line-through; text-decoration-thickness: 1.5px; opacity: 0.6; }
-.wg-body { position: relative; height: calc(var(--hours) * var(--hour)); background-image: repeating-linear-gradient(to bottom, transparent 0 calc(var(--hour) - 1px), color-mix(in srgb, var(--rule) 70%, transparent) calc(var(--hour) - 1px) var(--hour)); }
-.wg-times { display: grid; grid-template-rows: repeat(var(--hours), var(--hour)); }
-.wg-times span { padding: 4px 7px 0 0; color: var(--ink-3); font: 650 11px/1 var(--sign); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.wg-body { position: relative; height: calc(var(--hours) * var(--hour)); }
+.wg-times { position: relative; }
+.wg-times span { position: absolute; right: 0; padding: 0 7px 0 0; transform: translateY(-50%); color: var(--ink-3); font: 650 11px/1 var(--sign); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.wg-tick { position: absolute; left: var(--times); right: 0; border-top: 1px solid color-mix(in srgb, var(--rule) 70%, transparent); pointer-events: none; }
+.plan-step { margin: 0 0 8px; color: var(--ink-3); font: 700 12px/1.3 var(--sign); letter-spacing: 0.08em; text-transform: uppercase; }
+.plan-preferences summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; cursor: pointer; font: 700 13.5px/1.4 var(--sign); text-transform: uppercase; letter-spacing: 0.08em; }
+.plan-preferences summary span { color: var(--ink-3); font: 450 12px/1.4 var(--text); text-transform: none; letter-spacing: 0; }
+.plan-preferences .rules { margin-top: 18px; }
 .wg-day { position: relative; min-width: 0; border-left: 1px solid var(--rule); }
 .wg-day.off { background: repeating-linear-gradient(135deg, transparent 0 7px, color-mix(in srgb, var(--rule) 55%, transparent) 7px 8px); }
 .wg-block { position: absolute; padding: 1px 2px; container-type: size; }

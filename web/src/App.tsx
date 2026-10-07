@@ -16,6 +16,7 @@ import { PlanPage } from './pages/Plan';
 import { PostPage } from './pages/Post';
 import { QuestionPage, QuestionsPage } from './pages/Questions';
 import { SettingsPage } from './pages/Settings';
+import { ThreadSearch } from './pages/Threads';
 import { navigate, onLinkClick, routePath, useRoute, type Route } from './router';
 import { applyTheme, loadActiveConversation, loadConversations, loadOnboarded, loadProfile, loadSidebarClosed, loadTheme, onConversationsChange, saveOnboarded, saveProfile, saveSidebarClosed, type Conversation, type Theme } from './store';
 import { standingFor } from './year';
@@ -28,12 +29,12 @@ const NAV: Array<{ route: Route; label: string; line: Line; icon: typeof IconAsk
   { route: { name: 'questions' }, label: 'Questions', line: 'questions', icon: IconQuestions, matches: ['questions', 'question'] },
   { route: { name: 'announcements' }, label: 'Notices', line: 'notices', icon: IconMegaphone, matches: ['announcements'] },
   { route: { name: 'market', tab: 'items' }, label: 'Market', line: 'market', icon: IconBag, matches: ['market'] },
-  { route: { name: 'courses' }, label: 'Courses', line: 'guide', icon: IconBook, matches: ['courses', 'threads', 'post'] },
+  { route: { name: 'courses' }, label: 'Reviews', line: 'guide', icon: IconBook, matches: ['courses', 'professors', 'threads', 'post'] },
 ];
 
 /** The button names what it switches to. */
 const THEME_LABEL: Record<Theme, string> = { light: 'Switch to dark mode', dark: 'Switch to light mode' };
-const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Notices', market: 'Market', courses: 'Courses', threads: 'Threads', post: 'Thread', plan: 'Plan', settings: 'Settings' };
+const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Notices', market: 'Market', courses: 'Reviews', professors: 'Professors', threads: 'Threads', post: 'Thread', plan: 'Plan', settings: 'Settings' };
 const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: '' };
 
 function useConversations(): Conversation[] {
@@ -53,6 +54,7 @@ export function App() {
   const { route, search } = useRoute();
   const [health, setHealth] = useState<Health | null>(null);
   const [profile, setProfileState] = useState<Profile | null>(loadProfile);
+  const [helpCount, setHelpCount] = useState(0);
   const [theme, setThemeState] = useState<Theme>(loadTheme);
   const [toastState, setToastState] = useState<{ message: string; leaving: boolean; id: number } | null>(null);
   const [askPrefill, setAskPrefillState] = useState<(Prefill & { token: number }) | null>(null);
@@ -105,6 +107,21 @@ export function App() {
       .catch(() => setAdmin(false));
   }, []);
   useEffect(refreshAdmin, [refreshAdmin]);
+
+  useEffect(() => {
+    if (!profile) { setHelpCount(0); return; }
+    let live = true;
+    const refresh = () => {
+      if (document.visibilityState === 'hidden') return;
+      void api.board.feed().then(({ questions }) => {
+        if (live) setHelpCount(questions.filter((question) => !question.mine && question.status !== 'closed' && question.answers.length < 3 && (question.majors.includes(profile.major) || question.years.includes(profile.year) || (!question.majors.length && !question.years.length))).length);
+      }).catch(() => {});
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 120_000);
+    document.addEventListener('visibilitychange', refresh);
+    return () => { live = false; window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
+  }, [profile?.netId, profile?.major, profile?.year, route.name]);
 
   useEffect(() => onSignupRequired(() => setResignup(true)), []);
 
@@ -216,8 +233,10 @@ export function App() {
         return <MarketPage tab={route.tab} />;
       case 'courses':
         return <CoursesPage view="courses" code={route.code} />;
+      case 'professors':
+        return <CoursesPage view="professors" professor={route.nameQuery} />;
       case 'threads':
-        return <CoursesPage view="threads" />;
+        return <ThreadSearch />;
       case 'plan':
         return <PlanPage />;
       case 'post':
@@ -230,7 +249,7 @@ export function App() {
   })();
 
   // A new key per page replays its entrance. Market tabs and a course opening beside the list keep the key, so they do not.
-  const pageKey = route.name === 'market' ? 'market' : route.name === 'courses' || route.name === 'threads' ? 'courses' : routePath(route);
+  const pageKey = route.name === 'market' ? 'market' : route.name === 'courses' || route.name === 'professors' ? 'reviews' : routePath(route);
   const settingsActive = route.name === 'settings';
 
   const me = (
@@ -260,7 +279,7 @@ export function App() {
               <Wordmark />
             </a>
           </div>
-          <LineNav activeIndex={activeIndex} hrefOf={hrefOf} />
+          <LineNav activeIndex={activeIndex} hrefOf={hrefOf} helpCount={helpCount} />
           <div className="bar-tools">
             {admin && (
               <a href="/settings#admin" className="admin-badge" onClick={onLinkClick} title="Admin mode is on">
@@ -292,6 +311,7 @@ export function App() {
             <a key={item.label} href={hrefOf(item.route)} data-line={item.line} aria-current={index === activeIndex ? 'page' : undefined} onClick={onLinkClick}>
               <item.icon />
               <span>{item.label}</span>
+              {item.line === 'questions' && helpCount > 0 && <span className="help-count" aria-label={`${helpCount} questions need help`}>{helpCount}</span>}
             </a>
           ))}
         </nav>
@@ -324,7 +344,7 @@ export function App() {
 }
 
 /** The six lines as tabs, with one enamel plate that slides to the line you are on and takes its colour. */
-function LineNav({ activeIndex, hrefOf }: { activeIndex: number; hrefOf(route: Route): string }) {
+function LineNav({ activeIndex, hrefOf, helpCount }: { activeIndex: number; hrefOf(route: Route): string; helpCount: number }) {
   const ref = useRef<HTMLElement>(null);
   const [plate, setPlate] = useState<{ x: number; w: number } | null>(null);
   const [ready, setReady] = useState(false);
@@ -361,6 +381,7 @@ function LineNav({ activeIndex, hrefOf }: { activeIndex: number; hrefOf(route: R
         <a key={item.label} href={hrefOf(item.route)} className="line-tab" data-line={item.line} aria-current={index === activeIndex ? 'page' : undefined} onClick={onLinkClick}>
           <span className="swatch" />
           {item.label}
+          {item.line === 'questions' && helpCount > 0 && <span className="help-count" aria-label={`${helpCount} questions need help`}>{helpCount}</span>}
         </a>
       ))}
     </nav>

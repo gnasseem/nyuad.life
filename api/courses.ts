@@ -178,9 +178,9 @@ const RATING_SYSTEM = [
   'score: how students rate taking it, 1.0 to 5.0 with one decimal: would they recommend it, is it worth the work, did they enjoy it. Use the whole range: 4.5 and up when students love it, 2 and below when they warn others off it, 3.0 only when they are truly split. Judge from what students say, never from the description.',
   'difficulty: 1 (easy A) to 5 (very hard), and workload: 1 (light) to 5 (heavy), estimated from what students say about exams, grading, problem sets and hours; null only when the threads give nothing to go on.',
   'verdict: one plain sentence on what taking it is like and who it suits.',
-  'pros: up to 4 things students liked. cons: up to 4 things students complained about. tips: up to 3 practical tips students gave.',
+  'pros: the single most useful thing students liked. cons: the single most useful complaint. tips: leave empty.',
   'basis: how many different students gave a first-hand account of taking it (count people, not threads). 0 when the threads say nothing about what taking it is like.',
-  'confidence: high when several recent first-hand accounts agree, medium when there are few or older ones, low when they are thin, very old or split.',
+  'confidence: high when several recent first-hand accounts agree, medium when there are few or older ones, low when they are thin, very old or split. Read the dates on posts and comments; do not present old reviews as current.',
   'Every point must be specific to this course: name the thing (the final, weekly problem sets, the lab reports, the group project, a professor and what students said about their teaching). Never write vague points like "some professors are good" or "experiences vary". If students only say something general, leave it out.',
   'Each point under 16 words, plain words, no citations, source numbers or thread references. Report complaints as plainly as praise.',
   'About professors, only how they teach, grade or run the class, as students reported it ("students found her exams fair"); nothing personal, no rumours. When a point held only in one year or with one professor, say so in a few words.',
@@ -191,7 +191,7 @@ const RATING_TTL_MS = 30 * 86_400_000;
 const hot = new Map<string, CourseRating | null>();
 
 function ratingKey(code: string): string {
-  return `course-rating:v2:${code}`;
+  return `course-rating:v3:${code}`;
 }
 
 /** A fresh rating already written (null: students have not written enough), or undefined when one has to be written. */
@@ -350,7 +350,7 @@ function teachers(catalog: Catalog): Map<string, Teacher> {
 }
 
 function profKey(name: string): string {
-  return `prof-rating:v1:${foldName(name)}`;
+  return `prof-rating:v2:${foldName(name)}`;
 }
 
 function fresh(entry: SavedProf | null | undefined): entry is SavedProf {
@@ -497,6 +497,7 @@ const PROF_SYSTEM = [
   'verdict: one plain sentence under 20 words on what their classes are like, as students describe them ("Clear lectures and fair exams, but the weekly problem sets take many hours.").',
   'basis: how many different students gave a first-hand account of being taught by them (count people, not threads). Questions with no answer, hearsay and their name alone count for nothing.',
   'confidence: high when several recent first-hand accounts agree, medium when there are few or older ones, low when they are thin, very old or split.',
+  'Use the dates on posts and comments. State a bad teaching review directly; do not soften repeated complaints or treat an old review as current.',
   'Only teaching, grading and how they run the class, as students reported it. Nothing personal: nothing about their looks, private life or character outside class, and no rumours. No citations or thread references.',
   'Never invent anything. When the excerpts say nothing first-hand about their teaching, return basis 0.',
 ].join('\n');

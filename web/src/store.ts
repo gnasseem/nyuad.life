@@ -188,9 +188,9 @@ export function saveContact(value: { contactKind: ContactKind; contact: string }
   write(CONTACT_KEY, value);
 }
 
-/** Removes everything this site keeps in the browser: profile, conversations, the anonymous key, the contact and the theme. */
-export function forgetDevice(): void {
-  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, KEY_KEY, ANNOUNCED_KEY, CONTACT_KEY, PLAN_KEY, ONBOARDED_KEY, SIDEBAR_KEY]) {
+/** Clears local preferences and history. Keep the browser key so this browser can reclaim its existing NetID. */
+export function forgetDevice(removeIdentity = false): void {
+  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, ...(removeIdentity ? [KEY_KEY] : []), ANNOUNCED_KEY, CONTACT_KEY, PLAN_KEY, ONBOARDED_KEY, SIDEBAR_KEY]) {
     try {
       localStorage.removeItem(key);
     } catch {

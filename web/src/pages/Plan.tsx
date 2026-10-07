@@ -20,8 +20,8 @@ const SHAPE_HELP: Record<Rules['shape'], string> = {
   compact: 'Packs classes into as few days on campus as it can, even with gaps.',
   spread: 'Spreads classes over the week so no day is long.',
 };
-const STARTS = ['', '09:00', '10:00', '11:00', '12:00', '13:00'];
-const ENDS = ['', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'];
+const STARTS = ['', '08:30', '09:55', '11:20', '12:45', '13:55', '15:20', '17:00'];
+const ENDS = ['', '09:45', '11:10', '12:35', '14:00', '15:10', '16:50', '18:00', '19:25'];
 const PER_DAY = [0, 1, 2, 3, 4];
 const DAY_LETTER: Record<string, string> = { Mon: 'M', Tue: 'T', Wed: 'W', Thu: 'Th', Fri: 'F', Sat: 'Sa', Sun: 'Su' };
 const SHORT: Record<string, string> = { Lecture: 'Lec', Seminar: 'Sem', Recitation: 'Rec', Laboratory: 'Lab', Studio: 'Studio', Workshop: 'Wksp' };
@@ -30,9 +30,14 @@ const TRUST: Record<ProfRating['confidence'], number> = { high: 1, medium: 0.8, 
 /** NYUAD's usual load is 16 credits a term; under 12 or over 18 is unusual. */
 const LOAD = { usual: 16, low: 12, high: 18 };
 
-/** The term students plan for: the newest fall or spring the schedule has, else the newest of any kind. */
+/** Only regular semesters have the weekly schedule this planner models. */
+function regularTerms(terms: Term[]): Term[] {
+  return terms.filter((term) => /^(fall|spring)\b/i.test(term.name));
+}
+
+/** The term students plan for: the newest regular semester in the schedule. */
 function planTerm(terms: Term[]): string {
-  return terms.find((term) => /^(fall|spring)/i.test(term.name))?.name ?? terms[0]?.name ?? '';
+  return regularTerms(terms)[0]?.name ?? '';
 }
 
 /** "MATH-UH 1012Q" and "MATH-UH 1012" are one course; the term's own code wins. */
@@ -74,7 +79,7 @@ export function PlanPage() {
   const [notes, setNotes] = useState<string[]>([]);
   const [viewing, setViewing] = useState<{ key: string; index: number } | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
-  const term = saved.term && terms?.some((entry) => entry.name === saved.term) ? saved.term : planTerm(terms ?? []);
+  const term = saved.term && regularTerms(terms ?? []).some((entry) => entry.name === saved.term) ? saved.term : planTerm(terms ?? []);
 
   const update = (patch: Partial<SavedPlan>) =>
     setSaved((current) => {
@@ -141,7 +146,7 @@ export function PlanPage() {
   );
   // Ratings arrive a few at a time: the plans are ranked again once a burst has landed, not on every one.
   const settled = useSettled(quality, 600);
-  const result = useMemo(() => (rows && saved.wants.length ? solve(catalog, saved.wants, saved.rules, settled) : null), [catalog, rows, saved.wants, saved.rules, settled]);
+  const result = useMemo(() => (rows && saved.wants.length ? solve(catalog, saved.wants, saved.rules, settled, { options: 3, ms: 1200 }) : null), [catalog, rows, saved.wants, saved.rules, settled]);
 
   // A new request starts at the best plan; new ratings keep the plan being looked at, wherever it now ranks.
   useEffect(() => setViewing(null), [saved.wants, saved.rules, term]);
@@ -218,7 +223,7 @@ export function PlanPage() {
       <Sign title="Plan" ar="الجدول">
         {terms && terms.length > 0 && (
           <select className="input sign-select" value={term} onChange={(event) => update({ term: event.target.value })} aria-label="Term">
-            {terms.map((entry) => (
+            {regularTerms(terms).map((entry) => (
               <option key={entry.name} value={entry.name}>
                 {entry.name}
               </option>
@@ -229,6 +234,7 @@ export function PlanPage() {
       {error && <div className="alert error">{error}</div>}
       <div className="plan">
         <div className="plan-side">
+          <p className="plan-step">Describe a plan</p>
           <div className="plan-ask">
             <textarea
               className="input"
@@ -243,7 +249,7 @@ export function PlanPage() {
                 }
               }}
               placeholder={saved.wants.length ? 'Change it: "swap calc for linear algebra, Fridays off"' : 'What do you need? "Calc, intro to CS, any Arts Core, nothing before 10"'}
-              aria-label="Describe your plan"
+              aria-label="Describe your plan for AI to read"
             />
             <button type="button" className="btn primary" onClick={() => void read()} disabled={!text.trim() || reading || !rows}>
               {reading ? <span className="spinner" /> : <IconArrow />}
@@ -260,7 +266,7 @@ export function PlanPage() {
 
           <div className="plan-block">
             <div className="plan-block-head">
-              <h2>Courses</h2>
+              <h2>Your courses</h2>
               {saved.wants.length > 0 && (
                 <button type="button" className="link-btn small" onClick={clear}>
                   Start over
@@ -274,17 +280,16 @@ export function PlanPage() {
                 ))}
               </div>
             )}
+            <p className="plan-step">Or add a course directly</p>
             <CoursePicker rows={rows?.courses ?? null} taken={new Set(saved.wants.flatMap((want) => want.codes))} onPick={addCode} />
             {saved.wants.length > 0 && <Load low={credits.low} high={credits.high} />}
           </div>
 
-          <div className="plan-block">
-            <div className="plan-block-head">
-              <h2>Rules</h2>
-            </div>
+          <details className="plan-block plan-preferences" key={term}>
+            <summary>Preferences <span>Apply to all plans, however courses were added</span></summary>
             <div className="rules">
               <label className="rule">
-                <span>Start after</span>
+                <span>No class before</span>
                 <select className="input" value={saved.rules.earliest} onChange={(event) => setRules({ earliest: event.target.value })}>
                   {[...new Set([...STARTS, saved.rules.earliest])].map((time) => (
                     <option key={time} value={time}>
@@ -363,7 +368,7 @@ export function PlanPage() {
                 <small className="rule-help">With: plans with them come first. Not: they are left out.</small>
               </div>
             </div>
-          </div>
+          </details>
         </div>
 
         <div className="plan-main" ref={mainRef}>
@@ -723,8 +728,8 @@ function halfOf(session: string): string {
   return session === 'First 7 weeks' ? '1st half' : session === 'Second 7 weeks' ? '2nd half' : '';
 }
 
-const DAY_START = 8 * 60;
-const DAY_END = 19 * 60;
+const DAY_START = minutes('08:30');
+const DAY_END = minutes('19:25');
 
 /**
  * The week as a timetable, Monday to Friday and the weekend when a class meets then, with days off shaded. Blocks that
@@ -769,12 +774,12 @@ function WeekGrid({ option, daysOff, empty }: { option: Option | null; daysOff: 
     const list = blocks.filter((block) => block.day === day);
     lanes(list).forEach((place, i) => Object.assign(list[i]!, place));
   }
-  const from = Math.min(DAY_START, ...blocks.map((block) => Math.floor(block.start / 60) * 60));
-  const to = Math.max(DAY_END, ...blocks.map((block) => Math.ceil(block.end / 60) * 60));
-  const hours = Array.from({ length: (to - from) / 60 }, (_, i) => from + i * 60);
+  const from = Math.min(DAY_START, ...blocks.map((block) => block.start));
+  const to = Math.max(DAY_END, ...blocks.map((block) => block.end));
+  const ticks = STARTS.slice(1).map(minutes).filter((time) => time >= from && time < to);
   const span = to - from;
   return (
-    <div className={`week-grid${option ? '' : ' blank'}`} style={{ '--days': days.length, '--hours': hours.length } as CSSProperties}>
+    <div className={`week-grid${option ? '' : ' blank'}`} style={{ '--days': days.length, '--hours': span / 60 } as CSSProperties}>
       <div className="wg-head">
         <span />
         {days.map((day) => (
@@ -785,10 +790,11 @@ function WeekGrid({ option, daysOff, empty }: { option: Option | null; daysOff: 
       </div>
       <div className="wg-body">
         <div className="wg-times" aria-hidden="true">
-          {hours.map((hour) => (
-            <span key={hour}>{clock(hour)}</span>
+          {ticks.map((time) => (
+            <span key={time} style={{ top: `${((time - from) / span) * 100}%` }}>{`${String(Math.floor(time / 60)).padStart(2, '0')}:${String(time % 60).padStart(2, '0')}`}</span>
           ))}
         </div>
+        {ticks.map((time) => <span key={`line-${time}`} className="wg-tick" style={{ top: `${((time - from) / span) * 100}%` }} aria-hidden="true" />)}
         {days.map((day) => (
           <div key={day} className={`wg-day${daysOff.includes(day) ? ' off' : ''}`}>
             {blocks
