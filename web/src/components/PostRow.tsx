@@ -20,9 +20,9 @@ export function PostRow({ post, terms }: { post: PostSummary; terms?: string[] }
         ))}
       </span>
       <span className="body">{terms ? highlight(passage, terms) : passage}</span>
-      {post.commentCount > 0 && (
+      {(post.commentCount > 0 || (post.facebookCommentCount ?? 0) > 0) && (
         <span className="pr-foot">
-          <IconChat /> {plural(post.commentCount, 'comment')}
+          <IconChat /> {post.commentCount > 0 ? plural(post.commentCount, 'comment') : `${plural(post.facebookCommentCount ?? 0, 'comment')} listed on Facebook`}
         </span>
       )}
     </button>

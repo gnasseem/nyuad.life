@@ -104,7 +104,7 @@ export function toSourceCards(archive: Archive, hits: Hit[], terms: string[], st
       author: post.author,
       date: post.date,
       text: truncate(post.text, 600),
-      commentCount: Math.max(post.commentCount ?? 0, post.comments.length),
+      commentCount: post.facebookCommentCount ?? Math.max(post.commentCount ?? 0, post.comments.length),
       reactions: post.reactions ?? 0,
       topics: post.topics,
       courses: post.courses,
@@ -389,8 +389,10 @@ export function sourcesBlock(archive: Archive, cards: SourceCard[], live: LiveSo
         return cap([`[${card.n}] Unverified notice a student posted on this site (${a.kind}), signed "${a.posterName}", ${when}${a.location ? `, at ${a.location}` : ''}: ${a.title}`, truncate(collapseWhitespace(a.body), 800), a.link ? `Link: ${a.link}` : ''].filter(Boolean).join('\n'));
       }
       const post = archive.posts[archive.postPosition.get(card.postId)!]!;
-      const missing = card.commentCount > post.comments.length ? ` · only ${post.comments.length} comments saved` : '';
-      const header = `[${card.n}] Post by ${post.author || 'Unknown'} on ${formatDate(post.date)} (${age(post.date, today)}) · ${card.commentCount} comments on Facebook${missing} · ${card.reactions} reactions`;
+      const captured = post.scrapedCommentCount ?? post.comments.length;
+      const missing = card.commentCount > captured ? ` · ${captured} captured` : '';
+      const filtered = captured > post.comments.length ? ` · ${post.comments.length} left after filtering short replies` : '';
+      const header = `[${card.n}] Post by ${post.author || 'Unknown'} on ${formatDate(post.date)} (${age(post.date, today)}) · ${card.commentCount} comments on Facebook${missing}${filtered} · ${card.reactions} reactions`;
       const total = Math.min(THREAD_CHARS, perSource);
       // A short budget still leaves room for some comments: the replies are usually where the answer is.
       const body = truncate(collapseWhitespace(post.text) || '(no text)', Math.min(2200, Math.max(200, Math.floor(total * 0.55))));

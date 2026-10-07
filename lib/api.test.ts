@@ -228,6 +228,8 @@ describe('api', () => {
     const result = await getJson(`${apiUrl}/api/post?id=p1`, { headers });
     expect(result.post.comments).toHaveLength(2); // the "bump" is gone
     expect(result.post.commentCount).toBe(2);
+    expect(result.post.facebookCommentCount).toBe(3);
+    expect(result.post.scrapedCommentCount).toBe(3);
     expect(result.post.courses).toEqual(['MATH-UH 1012']);
     expect(result.related.map((r: { id: string }) => r.id)).toContain('p4');
     expect((await fetch(`${apiUrl}/api/post?id=nope`, { headers })).status).toBe(404);

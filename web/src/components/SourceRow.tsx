@@ -27,7 +27,7 @@ export function SourceRow({ source, hot, id, onHover }: Props) {
         <span className="kind">{KIND_LABEL[source.kind]}</span>
         {source.kind !== 'official' && source.kind !== 'schedule' && source.author && <b>{source.author}</b>}
         {source.date && <span>{formatDate(source.date)}</span>}
-        {source.kind === 'archive' && source.commentCount > 0 && <span>{plural(source.commentCount, 'comment')}</span>}
+        {source.kind === 'archive' && source.commentCount > 0 && <span>{plural(source.commentCount, 'comment')} listed on Facebook</span>}
       </div>
       {source.title && <div className="source-title">{source.title}</div>}
       <div className="source-text">{source.snippet || source.text}</div>

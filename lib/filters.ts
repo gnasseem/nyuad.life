@@ -140,11 +140,13 @@ export function isNoiseComment(comment: Pick<SourceComment, 'text'>, names: Set<
   return false;
 }
 
-/** A copy of the post without noise comments; commentCount follows what is left. */
+/** Keep Facebook and scrape counts when removing low-information comments. */
 export function cleanPost<T extends SourcePost>(post: T, names: Set<string> = new Set()): T {
   const comments = post.comments.filter((comment) => !isNoiseComment(comment, names));
-  if (comments.length === post.comments.length && post.commentCount === comments.length) return post;
-  return { ...post, comments, commentCount: comments.length };
+  const facebookCommentCount = post.facebookCommentCount ?? Math.max(post.commentCount ?? 0, post.comments.length);
+  const scrapedCommentCount = post.scrapedCommentCount ?? post.comments.length;
+  if (comments.length === post.comments.length && post.commentCount === comments.length && post.facebookCommentCount === facebookCommentCount && post.scrapedCommentCount === scrapedCommentCount) return post;
+  return { ...post, comments, commentCount: comments.length, facebookCommentCount, scrapedCommentCount };
 }
 
 interface CleanResult<T extends SourcePost> {

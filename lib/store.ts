@@ -189,6 +189,8 @@ export function summarizePost(post: SourcePost & Partial<IndexedPost>, snippet?:
     preview: post.text.length > 280 ? post.text.slice(0, 280).trimEnd() + '…' : post.text,
     snippet: snippet ?? '',
     commentCount: Math.max(post.commentCount ?? 0, post.comments.length),
+    facebookCommentCount: post.facebookCommentCount,
+    scrapedCommentCount: post.scrapedCommentCount,
     reactions: post.reactions ?? 0,
     topics: post.topics ?? [],
     courses: post.courses ?? [],

@@ -77,6 +77,8 @@ describe('cleanPost and cleanPosts', () => {
     const cleaned = cleanPost(archive[0]!, collectNames(archive));
     expect(cleaned.comments.map((comment) => comment.text)).toEqual(['Dania']);
     expect(cleaned.commentCount).toBe(1);
+    expect(cleaned.facebookCommentCount).toBe(4);
+    expect(cleaned.scrapedCommentCount).toBe(4);
     expect(archive[0]!.comments).toHaveLength(4);
   });
   it('reports what it dropped', () => {

@@ -45,6 +45,8 @@ export function PostPage({ id }: Props) {
   };
 
   const topics = post?.topics.filter((topic) => topic !== 'general') ?? [];
+  const facebookComments = post?.facebookCommentCount ?? post?.commentCount ?? 0;
+  const scrapedComments = post?.scrapedCommentCount ?? post?.comments.length ?? 0;
 
   return (
     <div className="page">
@@ -75,7 +77,15 @@ export function PostPage({ id }: Props) {
 
             <h2 className="section-title">Comments</h2>
             {post.comments.length === 0 ? (
-              <p className="muted">{post.commentCount > 0 ? `${post.commentCount} ${post.commentCount === 1 ? 'comment exists' : 'comments exist'} on Facebook, but none were saved in the archive yet.` : 'No comments saved in the archive.'}</p>
+              <p className="muted">
+                {facebookComments > scrapedComments
+                  ? scrapedComments === 0
+                    ? `Facebook lists ${facebookComments} comments, but none were captured in the archive.`
+                    : `Facebook lists ${facebookComments} comments; ${scrapedComments} were captured, but none remain after filtering short replies and tags.`
+                  : scrapedComments > 0
+                    ? `${scrapedComments} comments were captured, but they were short replies or tags and are hidden here.`
+                    : 'No comments recorded on Facebook.'}
+              </p>
             ) : (
               <div className="comments">
                 <div className="stations">
@@ -91,7 +101,8 @@ export function PostPage({ id }: Props) {
                 </div>
               </div>
             )}
-            {post.commentCount > post.comments.length && post.comments.length > 0 && <p className="muted">Showing {post.comments.length} of {post.commentCount} comments recorded on Facebook.</p>}
+            {post.comments.length > 0 && facebookComments > scrapedComments && <p className="muted">Showing {post.comments.length} comments after filtering short replies and tags; {scrapedComments} of {facebookComments} listed on Facebook were captured.</p>}
+            {post.comments.length > 0 && facebookComments <= scrapedComments && scrapedComments > post.comments.length && <p className="muted">Showing {post.comments.length} of {scrapedComments} captured comments after filtering short replies and tags.</p>}
           </div>
 
           <aside className="rail">

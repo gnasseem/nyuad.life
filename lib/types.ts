@@ -17,6 +17,10 @@ export interface SourcePost {
   comments: SourceComment[];
   reactions?: number;
   commentCount?: number;
+  /** Count Facebook displayed before scraping or filtering comments. */
+  facebookCommentCount?: number;
+  /** Comments captured from Facebook before low-information replies were filtered. */
+  scrapedCommentCount?: number;
   scrapedAt?: string;
 }
 

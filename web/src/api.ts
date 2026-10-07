@@ -11,6 +11,8 @@ export interface PostSummary {
   preview: string;
   snippet: string;
   commentCount: number;
+  facebookCommentCount?: number;
+  scrapedCommentCount?: number;
   reactions: number;
   topics: string[];
   courses: string[];
