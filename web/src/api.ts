@@ -339,6 +339,7 @@ export interface ProfRating {
   /** How many students' first-hand accounts it rests on. */
   basis: number;
   confidence: 'high' | 'medium' | 'low';
+  sources: Array<{ url: string; date: string; excerpt: string }>;
 }
 
 export class ApiError extends Error {

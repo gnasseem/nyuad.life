@@ -291,6 +291,7 @@ interface ProfRating {
   basis: number;
   verdict: string;
   confidence: 'high' | 'medium' | 'low';
+  sources: Array<{ url: string; date: string; excerpt: string }>;
   model: string;
   createdAt: string;
 }
@@ -356,7 +357,7 @@ function teachers(catalog: Catalog): Map<string, Teacher> {
 }
 
 function profKey(name: string): string {
-  return `prof-rating:v2:${foldName(name)}`;
+  return `prof-rating:v3:${foldName(name)}`;
 }
 
 function fresh(entry: SavedProf | null | undefined): entry is SavedProf {
@@ -376,8 +377,8 @@ async function savedProf(name: string): Promise<SavedProf | undefined> {
   return saved;
 }
 
-function publicProf(entry: SavedProf | null): { score: number; basis: number; verdict: string; confidence: ProfRating['confidence'] } | null {
-  return !entry || 'none' in entry ? null : { score: entry.score, basis: entry.basis, verdict: entry.verdict, confidence: entry.confidence };
+function publicProf(entry: SavedProf | null): Omit<ProfRating, 'model' | 'createdAt'> | null {
+  return !entry || 'none' in entry ? null : { score: entry.score, basis: entry.basis, verdict: entry.verdict, confidence: entry.confidence, sources: entry.sources };
 }
 
 /**
@@ -441,6 +442,15 @@ function spend(req: ApiRequest): boolean {
 }
 
 const TEACHING = /\b(?:prof|profs|professor|professors|dr|teach\w*|taught|class|classes|course|courses|lectures?|exams?|midterms?|finals?|grad(?:e|es|ed|ing)|syllabus|section|office hours)\b/;
+const TEACHING_REVIEW = /\b(?:take|took|taken|teach\w*|taught|explain\w*|clear|fair\w*|grad\w*|lectur\w*|exam\w*|assignment\w*|homework|workload|helpful|supportive|strict|lenient|organiz\w*|engag\w*|boring|great|excellent|awful|terrible|hard|easy|difficult|recommend\w*|avoid|enjoy\w*|learn\w*)\b/;
+
+function namesAndReviews(text: string, named: RegExp): boolean {
+  return (text.match(/[^.!?]+[.!?]?/g) ?? []).some((sentence) => {
+    if (sentence.trimEnd().endsWith('?')) return false;
+    const words = foldName(sentence);
+    return named.test(words) && TEACHING_REVIEW.test(words);
+  });
+}
 const MAX_PROF_THREADS = 8;
 
 /**
@@ -448,7 +458,7 @@ const MAX_PROF_THREADS = 8;
  * they name the surname and talk about teaching (or name the first name or one of their courses), cut down to the
  * post and the comments that mention them, with the reply after each.
  */
-async function profThreads(archive: Archive, teacher: Teacher): Promise<string[]> {
+async function profThreads(archive: Archive, teacher: Teacher): Promise<Array<{ text: string; url: string; date: string; excerpt: string }>> {
   const surname = foldName(teacher.surname);
   if (surname.length < 3) return [];
   const named = new RegExp(`\\b${surname.replace(/ /g, '\\s+')}\\b`);
@@ -457,7 +467,7 @@ async function profThreads(archive: Archive, teacher: Teacher): Promise<string[]
   const title = teacher.courses[0]?.replace(/^\S+ \S+ /, '') ?? '';
   const [byName, byCourse] = await Promise.all([retrieve(archive, `professor ${teacher.surname} ${teacher.first}`, { k: 40, useDense: false }), retrieve(archive, `${teacher.surname} ${title}`, { k: 20, useDense: false })]);
   const seen = new Set<number>();
-  const out: string[] = [];
+  const out: Array<{ text: string; url: string; date: string; excerpt: string }> = [];
   for (const hit of [...byName.hits, ...byCourse.hits]) {
     if (out.length >= MAX_PROF_THREADS) break;
     if (seen.has(hit.post)) continue;
@@ -468,11 +478,13 @@ async function profThreads(archive: Archive, teacher: Teacher): Promise<string[]
     if (!named.test(all)) continue;
     // A surname alone could be a student's: the thread has to be about teaching.
     if (!TEACHING.test(all) && !(first.length > 2 && all.includes(first)) && !numbers.some((value) => all.includes(value))) continue;
+    const reviewed = [post.text, ...post.comments.map((comment) => comment.text)].map((text) => namesAndReviews(text, named));
+    if (!reviewed.some(Boolean)) continue;
     const terms = [teacher.surname.toLowerCase(), surname];
-    const lines = [`Post by ${post.author || 'a student'} on ${formatDate(post.date)}: ${named.test(folded[0]!) ? bestWindow(post.text, terms, 900) : truncate(collapseWhitespace(post.text), 400)}`];
+    const lines = [`Post by ${post.author || 'a student'} on ${formatDate(post.date)}: ${reviewed[0] ? bestWindow(post.text, terms, 900) : truncate(collapseWhitespace(post.text), 400)}`];
     const shown = new Set<number>();
     post.comments.forEach((_, i) => {
-      if (!named.test(folded[i + 1]!)) return;
+      if (!reviewed[i + 1]) return;
       shown.add(i);
       if (i + 1 < post.comments.length) shown.add(i + 1);
     });
@@ -480,7 +492,7 @@ async function profThreads(archive: Archive, teacher: Teacher): Promise<string[]
       const comment = post.comments[i]!;
       lines.push(`- ${comment.author || 'Someone'}${comment.date ? ` (${formatDate(comment.date)})` : ''}: ${bestWindow(comment.text, terms, 500)}`);
     }
-    out.push(lines.join('\n'));
+    out.push({ text: lines.join('\n'), url: post.url, date: post.date, excerpt: lines.slice(1).join(' ').slice(0, 220) || lines[0]!.slice(0, 220) });
   }
   return out;
 }
@@ -492,8 +504,9 @@ const PROF_SCHEMA = {
     verdict: { type: 'STRING' },
     basis: { type: 'INTEGER' },
     confidence: { type: 'STRING', enum: ['high', 'medium', 'low'] },
+    evidence: { type: 'ARRAY', items: { type: 'INTEGER' } },
   },
-  required: ['score', 'verdict', 'basis', 'confidence'],
+  required: ['score', 'verdict', 'basis', 'confidence', 'evidence'],
 };
 
 const PROF_SYSTEM = [
@@ -502,10 +515,11 @@ const PROF_SYSTEM = [
   'score: how students rate being taught by them, 1.0 to 5.0 with one decimal: clear teaching, fair grading, a well-run class, help when students need it. Use the whole range: 4.5 and up when students praise them, 2 and below when they warn others off, 3.0 only when they are truly split.',
   'verdict: one plain sentence under 20 words on what their classes are like, as students describe them ("Clear lectures and fair exams, but the weekly problem sets take many hours.").',
   'basis: how many different students gave a first-hand account of being taught by them (count people, not threads). Questions with no answer, hearsay and their name alone count for nothing.',
+  'evidence: the numbers of threads that directly support your verdict and score. Return only supplied thread numbers; leave empty when no thread directly supports them.',
   'confidence: high when several recent first-hand accounts agree, medium when there are few or older ones, low when they are thin, very old or split.',
   'Use the dates on posts and comments. State a bad teaching review directly; do not soften repeated complaints or treat an old review as current.',
-  'Only teaching, grading and how they run the class, as students reported it. Nothing personal: nothing about their looks, private life or character outside class, and no rumours. No citations or thread references.',
-  'Never invent anything. When the excerpts say nothing first-hand about their teaching, return basis 0.',
+  'Only teaching, grading and how they run the class, as students reported it. Nothing personal: nothing about their looks, private life or character outside class, and no rumours. Keep citations out of the verdict.',
+  'Never invent anything. When fewer than two different students describe being taught by them first-hand, return basis below 2.',
 ].join('\n');
 
 /** A new rating, or null when students have not written enough first-hand; both are kept. Throws when the model fails. */
@@ -515,16 +529,16 @@ async function profRating(archive: Archive, teacher: Teacher): Promise<SavedProf
   if (threads.length) {
     const gemini = geminiConfig();
     const backups = providersFromEnv();
-    const result = await siteJson<Partial<ProfRating>>(gemini, backups, {
+    const result = await siteJson<Partial<ProfRating> & { evidence?: number[] }>(gemini, backups, {
       system: PROF_SYSTEM,
-      prompt: `Professor: ${teacher.name} (Albert lists "${teacher.surname}${teacher.first ? `, ${teacher.first}` : ''}"), who teaches ${teacher.courses.join('; ') || 'at NYU Abu Dhabi'}.\n\nWhat students wrote that mentions ${teacher.surname}:\n\n${threads.join('\n\n')}`,
+      prompt: `Professor: ${teacher.name} (Albert lists "${teacher.surname}${teacher.first ? `, ${teacher.first}` : ''}"), who teaches ${teacher.courses.join('; ') || 'at NYU Abu Dhabi'}.\n\nWhat students wrote that mentions ${teacher.surname}:\n\n${threads.map((thread, i) => `[${i + 1}] ${thread.text}`).join('\n\n')}`,
       schema: PROF_SCHEMA,
       tier: 'main',
       temperature: 0.2,
       maxOutputTokens: 512,
       timeoutMs: 25_000,
     });
-    rating = cleanProf(result, gemini?.chatModel ?? backups[0]?.models[0] ?? '');
+    rating = cleanProf(result, threads, gemini?.chatModel ?? backups[0]?.models[0] ?? '');
   }
   const entry: SavedProf = rating ?? { none: true, createdAt: new Date().toISOString() };
   const key = profKey(teacher.name);
@@ -533,11 +547,13 @@ async function profRating(archive: Archive, teacher: Teacher): Promise<SavedProf
   return entry;
 }
 
-function cleanProf(raw: Partial<ProfRating>, model: string): ProfRating | null {
+function cleanProf(raw: Partial<ProfRating> & { evidence?: number[] }, threads: Awaited<ReturnType<typeof profThreads>>, model: string): ProfRating | null {
   const basis = Math.max(0, Math.round(Number(raw.basis) || 0));
-  const score = Math.round(Math.min(5, Math.max(1, Number(raw.score) || 0)) * 10) / 10;
+  const given = Number(raw.score);
+  const score = Math.round(given * 10) / 10;
   const verdict = collapseWhitespace(String(raw.verdict ?? '').replace(/\s*\[\d+\](?:\[\d+\])*/g, '')).slice(0, 220);
-  if (basis === 0 || !Number.isFinite(score) || !verdict) return null;
+  const evidence = [...new Set(raw.evidence ?? [])].filter((n) => Number.isInteger(n) && n >= 1 && n <= threads.length).slice(0, 3);
+  if (basis < 2 || !Number.isFinite(given) || given < 1 || given > 5 || !verdict || !evidence.length) return null;
   const level = String(raw.confidence ?? '').toLowerCase();
-  return { score, basis, verdict, confidence: level === 'high' || level === 'low' ? level : 'medium', model, createdAt: new Date().toISOString() };
+  return { score, basis, verdict, confidence: level === 'high' || level === 'low' ? level : 'medium', sources: evidence.map((n) => ({ url: threads[n - 1]!.url, date: threads[n - 1]!.date, excerpt: threads[n - 1]!.excerpt })), model, createdAt: new Date().toISOString() };
 }

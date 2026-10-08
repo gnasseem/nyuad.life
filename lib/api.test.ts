@@ -117,6 +117,8 @@ beforeAll(async () => {
         text = JSON.stringify({ scores: Array.from({ length: count }, (_, i) => ({ i, s: i < 2 ? 9 : 5 })) });
       } else if (schema?.properties?.questions) {
         text = JSON.stringify({ questions: ['How is her grading?', 'Which section is best?', 'What about the new professor?'] });
+      } else if (schema?.properties?.evidence && !schema?.properties?.difficulty) {
+        text = JSON.stringify({ score: 4.1, verdict: 'Clear lectures and fair grading [1].', basis: 2, confidence: 'medium', evidence: [1] });
       } else if (schema?.properties?.basis) {
         text = JSON.stringify({ score: 4.26, difficulty: 3, workload: null, verdict: 'Hard but fair [1].', pros: ['Dania explains clearly [1][4]', ''], cons: [], tips: [], basis: 3, confidence: 'high', evidence: [1] });
       } else if (schema?.properties?.daysOff) {
@@ -411,6 +413,14 @@ describe('api', () => {
     const ratingCall = geminiCalls.at(-1)!;
     expect(ratingCall.prompt).toContain('What students wrote:');
     expect(ratingCall.url).toMatch(/gemini-[\d.]+-flash(?:-preview)?:generateContent/);
+  });
+
+  it('rates a current professor only with first-hand evidence and links the thread', async () => {
+    const detail = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012`);
+    expect(detail.instructors).toEqual(['Rana Dania']);
+    const result = await getJson(`${apiUrl}/api/courses?profs=${encodeURIComponent('Rana Dania')}`, { headers });
+    expect(result.ratings['Rana Dania']).toMatchObject({ score: 4.1, basis: 2, verdict: 'Clear lectures and fair grading.' });
+    expect(result.ratings['Rana Dania'].sources).toEqual([expect.objectContaining({ url: 'https://fb/p1' })]);
   });
 
   it('reads a plan request into codes the term has and rules the planner can use', async () => {

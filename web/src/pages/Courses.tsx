@@ -489,7 +489,8 @@ function ProfessorDetail({ name, courses, onClose }: { name: string; courses: st
               <div className="rating-score" aria-label={`Rated ${rating.score} out of 5`}><b>{rating.score.toFixed(1)}</b><span>out of 5</span></div>
               <p className="rating-verdict">{rating.verdict}</p>
             </div>
-            <p className="rating-basis">Based on {rating.basis} {rating.basis === 1 ? 'student' : 'students'}{rating.confidence === 'low' ? ' · limited evidence' : ''}.</p>
+            <p className="rating-basis">AI rating from {rating.basis} students in the group{rating.confidence === 'low' ? ' · limited evidence' : ''}.</p>
+            {rating.sources?.length > 0 && <div className="rating-evidence"><span>Read the threads</span>{rating.sources.map((source, index) => <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer">{source.date || 'Undated'} · {source.excerpt.slice(0, 90)}</a>)}</div>}
           </div>
         )}
         {courses.length > 0 && <p className="muted">Listed in Albert for {courses.slice(0, 4).join(', ')}{courses.length > 4 ? ' and more' : ''}.</p>}
