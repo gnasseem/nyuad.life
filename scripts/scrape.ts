@@ -129,11 +129,14 @@ interface State {
   feedCursorOldest?: string;
   /** How often each thread was opened for comments; threads that still look incomplete after two visits are left alone. */
   commentTries?: Record<string, number>;
+  /** Last thread attempted, so another limited run starts farther down the archive. */
+  lastCommentId?: string;
   /**
    * Facebook's comment count when each thread was last read to the end. The archive can still look short afterwards,
    * because identical comments by one author (a second "bump") collapse into one; such threads wait for the count to rise.
    */
   commentsRead?: Record<string, number>;
+  commentCaptureVersion?: number;
   /** Months (YYYY-MM) an --all-time walk has fully searched; the next --all-time run skips them. */
   monthsDone?: string[];
 }
@@ -159,6 +162,7 @@ const commentTemplates = new Map<string, RequestTemplate>();
 const COMMENT_ROOT = 'CommentListComponentsRootQuery';
 const COMMENT_PAGE = 'CommentsListComponentsPaginationQuery';
 const REPLY_PAGES = ['Depth1CommentsListPaginationQuery', 'Depth2CommentsListPaginationQuery'];
+const COMMENT_CAPTURE_VERSION = 2;
 /** Post ids the current search (one month, one word) returned, known or not. */
 const searchHits = new Set<string>();
 let currentPostId = '';
@@ -871,18 +875,33 @@ const EXPANDERS = /^(view|see|show) (\d+ |all \d+ |more |previous )?(more )?(com
 
 async function collectComments(walk: WalkContext, archive: SourcePost[], known: Map<string, SourcePost>): Promise<void> {
   const { state } = walk;
+  if (state.commentCaptureVersion !== COMMENT_CAPTURE_VERSION) {
+    state.commentTries = {};
+    state.commentsRead = {};
+    delete state.lastCommentId;
+    state.commentCaptureVersion = COMMENT_CAPTURE_VERSION;
+  }
   const tries = (state.commentTries ??= {});
   const read = (state.commentsRead ??= {});
   const queue = new Set<string>(state.pendingComments);
   for (const post of archive) if (needsComments(post)) queue.add(post.id);
-  const wanted = sortNewestFirst(archive).filter((post) => queue.has(post.id) && (ONLY_COMMENTS || !((read[post.id] ?? -1) >= (post.commentCount ?? 0))));
-  const ordered = wanted.filter((post) => ONLY_COMMENTS || (tries[post.id] ?? 0) < 2).slice(0, MAX_COMMENTS).map((post) => post.id);
+  const sorted = sortNewestFirst(archive);
+  const cursor = sorted.findIndex((post) => post.id === state.lastCommentId);
+  const rotated = cursor < 0 ? sorted : [...sorted.slice(cursor + 1), ...sorted.slice(0, cursor + 1)];
+  const wanted = rotated
+    .filter((post) => queue.has(post.id) && needsComments(post) && (read[post.id] ?? -1) < (post.commentCount ?? 0))
+    .sort((a, b) => {
+      const priority = (post: SourcePost) => (read[post.id] ?? -1) >= (post.commentCount ?? 0) ? 10_000 : (tries[post.id] ?? 0);
+      return priority(a) - priority(b);
+    });
+  const ordered = wanted.filter((post) => (tries[post.id] ?? 0) < 2).slice(0, MAX_COMMENTS).map((post) => post.id);
   const skipped = wanted.length - ordered.length;
-  log(`${ordered.length} threads need comments${skipped ? ` (${skipped} more were already opened twice and still look incomplete; --only-comments retries them)` : ''}.`);
+  log(`${ordered.length} incomplete threads scheduled${skipped ? ` (${skipped} remain outside this batch)` : ''}.`);
   let failures = 0;
   let processed = 0;
   for (const id of ordered) {
     if (stopping) break;
+    state.lastCommentId = id;
     const post = known.get(id);
     if (!post) {
       queue.delete(id);
@@ -900,12 +919,9 @@ async function collectComments(walk: WalkContext, archive: SourcePost[], known: 
       if (replayed === 'unavailable') complete = await fetchComments(walk.page, post);
       else complete = replayed === 'complete' || (post.commentCount ?? 0) <= countCommentsFor(post.id);
       failures = 0;
-      if (complete) {
-        delete tries[id];
-        read[id] = Math.max(post.commentCount ?? 0, stories.get(id)?.commentCount ?? 0);
-      }
-      // Every page was read, but Facebook's count includes comments it no longer shows: opening it again will not help.
-      else if (replayed === 'exhausted') tries[id] = 2;
+      if (complete) delete tries[id];
+      // A displayed total can include deleted or unavailable replies. Wait for that total to change before retrying.
+      if (complete || countCommentsFor(id) > 0) read[id] = Math.max(post.commentCount ?? 0, stories.get(id)?.commentCount ?? 0);
       else tries[id] = (tries[id] ?? 0) + 1;
     } catch (error) {
       failures++;
@@ -927,7 +943,7 @@ async function collectComments(walk: WalkContext, archive: SourcePost[], known: 
     state.pendingComments = [...queue];
     if (++processed % 50 === 0) {
       const changed = await walk.persist();
-      log(`Saved (${changed} posts changed this run, ${ordered.length - processed} threads to go).`);
+      log(`Saved this checkpoint (${changed} posts changed, ${ordered.length - processed} threads to go).`);
     }
     await polite(500);
   }
@@ -963,7 +979,7 @@ async function replayComments(page: Page, post: SourcePost): Promise<'complete' 
       }
       const errors = graphqlErrors(result.docs);
       const read = extractCommentPage(result.docs);
-      if (errors.length && !read.pageInfo) {
+      if (!read.pageInfo) {
         if (DEBUG) log(`${name} for ${post.id} failed: ${errors[0]}`);
         return null;
       }
@@ -1017,6 +1033,7 @@ async function fetchComments(page: Page, post: SourcePost): Promise<boolean> {
     await polite(2200);
     if (/\/login|\/checkpoint/.test(safeUrl(page))) throw new Error('logged out');
     await ingestPage(page);
+    await ingestVisibleComments(page, post.id);
     await switchToAllComments(page);
 
     const target = post.commentCount ?? 0;
@@ -1031,12 +1048,35 @@ async function fetchComments(page: Page, post: SourcePost): Promise<boolean> {
         await page.evaluate('window.scrollBy(0, Math.max(1200, window.innerHeight))').catch(noop);
       }
       await polite(900);
+      await ingestVisibleComments(page, post.id);
     }
     const got = countCommentsFor(post.id);
     log(`${post.id}: ${got} comments (${before} before, Facebook says ${post.commentCount ?? '?'}).`);
     return target === 0 || got >= target;
   } finally {
     currentPostId = '';
+  }
+}
+
+/** Older Facebook threads can show comments in the page without issuing a comment GraphQL request. */
+async function ingestVisibleComments(page: Page, postId: string): Promise<void> {
+  const visible = await page.locator('[role="article"][aria-label^="Comment by "]').evaluateAll((articles, id) => articles.flatMap((article) => {
+    const links = [...article.querySelectorAll('a[href*="comment_id="]')];
+    const permalink = links.find((link) => link.getAttribute('href')?.includes(`/posts/${id}/`));
+    if (!permalink) return [];
+    const href = permalink.getAttribute('href') ?? '';
+    const commentId = new URL(href, 'https://www.facebook.com').searchParams.get('reply_comment_id') ?? new URL(href, 'https://www.facebook.com').searchParams.get('comment_id');
+    if (!commentId) return [];
+    const author = [...article.querySelectorAll('a[role="link"]')].find((link) => link !== permalink && link.getAttribute('aria-hidden') !== 'true' && link.textContent?.trim())?.textContent?.trim() ?? '';
+    const text = [...article.querySelectorAll('div[dir="auto"][style*="text-align"]')].filter((part) => !part.querySelector('div[dir="auto"]')).map((part) => part.textContent?.trim() ?? '').filter(Boolean).join('\n');
+    if (!text) return [];
+    const label = permalink.getAttribute('aria-label') ?? '';
+    return [{ commentId, author, text, label }];
+  }), postId).catch(() => []);
+  for (const entry of visible) {
+    const id = Buffer.from(`comment:${postId}_${entry.commentId}`).toString('base64');
+    const parsed = Date.parse(entry.label.replace(/\bat\b/, ''));
+    if (!comments.has(id)) comments.set(id, { id, postId, author: entry.author, text: entry.text, date: Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : '' });
   }
 }
 
@@ -1095,6 +1135,8 @@ async function main(): Promise<void> {
   const file = postsFile();
   mkdirSync(path.dirname(file), { recursive: true });
   let archive = await readPostsJsonl(file);
+  const initialPosts = archive.length;
+  const initialComments = archive.reduce((sum, post) => sum + post.comments.length, 0);
   const known = new Map(archive.map((post) => [post.id, post]));
   const state = loadState();
   log(`${archive.length} posts on disk (${archive.filter(needsComments).length} missing comments). Group: ${GROUP_URL}`);
@@ -1116,7 +1158,7 @@ async function main(): Promise<void> {
   process.on('SIGTERM', stop);
 
   const persist = async (): Promise<number> => {
-    const fresh = toSourcePosts([...stories.values()], [...comments.values()]);
+    const fresh = toSourcePosts([...stories.values()], [...comments.values()]).filter((post) => !ONLY_COMMENTS || known.has(post.id));
     const merged = mergePosts(archive, fresh);
     archive = merged.posts;
     for (const post of archive) known.set(post.id, post);
@@ -1140,9 +1182,11 @@ async function main(): Promise<void> {
     }
     if (FETCH_COMMENTS && !stopping) await collectComments(walk, archive, known);
   } finally {
-    const changed = await persist();
+    await persist();
     const total = archive.reduce((sum, post) => sum + post.comments.length, 0);
-    log(`Done. ${archive.length} posts and ${total} comments on disk; ${changed} changed in this run.`);
+    const incomplete = archive.filter(needsComments);
+    const checked = incomplete.filter((post) => (state.commentsRead?.[post.id] ?? -1) >= (post.commentCount ?? 0)).length;
+    log(`Done. ${archive.length} posts and ${total} comments on disk; this run added ${archive.length - initialPosts} posts and ${total - initialComments} comments. ${incomplete.length} posts show fewer comments than Facebook reported; ${checked} were checked to the end.`);
     if (browserGone) log('The browser window was closed. Run the command again to continue where this run stopped.');
     else if (ALL_TIME && monthsLeft > 0) log(`The month-by-month walk is not finished yet (${monthsLeft} months to go). Run \`npm run scrape -- --all-time\` again to continue.`);
     else if (state.feedCursor && FULL) log(`The full walk is not finished yet (oldest post so far ${state.feedCursorOldest || 'unknown'}). Run \`npm run scrape -- --full\` again to continue.`);
