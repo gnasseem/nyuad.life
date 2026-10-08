@@ -418,7 +418,7 @@ describe('api', () => {
   it('rates a current professor only with first-hand evidence and links the thread', async () => {
     const detail = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012`);
     expect(detail.instructors).toEqual(['Rana Dania']);
-    const result = await getJson(`${apiUrl}/api/courses?profs=${encodeURIComponent('Rana Dania')}`, { headers });
+    const result = await getJson(`${apiUrl}/api/courses?profs=${encodeURIComponent('Rana Dania')}`);
     expect(result.ratings['Rana Dania']).toMatchObject({ score: 4.1, basis: 2, verdict: 'Clear lectures and fair grading.' });
     expect(result.ratings['Rana Dania'].sources).toEqual([expect.objectContaining({ url: 'https://fb/p1' })]);
   });

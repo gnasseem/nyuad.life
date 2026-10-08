@@ -383,7 +383,7 @@ function publicProf(entry: SavedProf | null): Omit<ProfRating, 'model' | 'create
 
 /**
  * Ratings for the professors the planner may put in a plan. Only names in the schedule count, so arbitrary strings
- * cannot spend model calls. Cached ratings are free; a couple of new ones are written per request, within a per-person
+ * cannot spend model calls. Cached ratings are free; a couple of new ones are written per request, within a per-IP
  * budget, and the rest come back in `pending` for the client to ask again.
  */
 async function profRatings(req: ApiRequest, catalog: Catalog, param: string) {
@@ -406,10 +406,8 @@ async function profRatings(req: ApiRequest, catalog: Catalog, param: string) {
   }
   const writing: string[] = [];
   const pending: string[] = [];
-  // New ratings cost model calls, so only students who signed up get them written; anyone gets the written ones.
-  const member = unwritten.length > 0 && (await requireMember(req).then(() => true, () => false));
   for (const name of unwritten) {
-    if (member && writing.length < NEW_PER_REQUEST && spend(req)) writing.push(name);
+    if (writing.length < NEW_PER_REQUEST && spend(req)) writing.push(name);
     else pending.push(name);
   }
   if (writing.length) {
