@@ -1034,6 +1034,17 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .rating-points li::before { content: ''; position: absolute; left: 2px; top: 0.5em; width: 9px; height: 9px; border-radius: 50%; box-sizing: border-box; border: 2.5px solid var(--tone); }
 .rating-basis { color: var(--ink-3); font-size: 12.5px; }
 .rating-none { margin-bottom: 22px; color: var(--ink-2); font-size: 15px; }
+.course-teachers { display: grid; gap: 9px; margin-bottom: 26px; }
+.course-teachers h3, .rating-evidence > span { margin: 0; color: var(--ink-3); font: 700 12px/1.3 var(--sign); letter-spacing: 0.06em; text-transform: uppercase; }
+.course-teachers p { margin: 0; color: var(--ink-3); font-size: 13px; }
+.teacher-list { display: grid; gap: 1px; border-block: 1px solid var(--rule); }
+.teacher-list a { display: flex; justify-content: space-between; gap: 12px; padding: 11px 3px; border-bottom: 1px solid var(--rule); color: var(--ink); text-decoration: none; }
+.teacher-list a:last-child { border-bottom: 0; }
+.teacher-list a:hover span { text-decoration: underline; }
+.teacher-list b { flex: none; color: var(--ink-2); font-size: 13px; font-variant-numeric: tabular-nums; }
+.rating-evidence { display: grid; gap: 7px; }
+.rating-evidence a { color: var(--ink-2); font-size: 12.5px; line-height: 1.4; }
+.rating-evidence a:hover { color: var(--line); }
 
 /* ---------- Plan ---------- */
 /* What you want on the left, the week it makes on the right: a timetable in the colours of your courses, and under
@@ -1131,9 +1142,22 @@ select.input.sign-select:focus { border-color: var(--line-on); box-shadow: 0 0 0
 .wg-times span { position: absolute; right: 0; padding: 0 7px 0 0; transform: translateY(-50%); color: var(--ink-3); font: 650 11px/1 var(--sign); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .wg-tick { position: absolute; left: var(--times); right: 0; border-top: 1px solid color-mix(in srgb, var(--rule) 70%, transparent); pointer-events: none; }
 .plan-step { margin: 0 0 8px; color: var(--ink-3); font: 700 12px/1.3 var(--sign); letter-spacing: 0.08em; text-transform: uppercase; }
-.plan-preferences summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; cursor: pointer; font: 700 13.5px/1.4 var(--sign); text-transform: uppercase; letter-spacing: 0.08em; }
-.plan-preferences summary span { color: var(--ink-3); font: 450 12px/1.4 var(--text); text-transform: none; letter-spacing: 0; }
-.plan-preferences .rules { margin-top: 18px; }
+.plan-preferences { gap: 0; border: 1px solid var(--rule); border-radius: 13px; background: var(--plate); overflow: hidden; }
+.plan-preferences summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 15px 17px; cursor: pointer; list-style: none; transition: background 0.2s; }
+.plan-preferences summary::-webkit-details-marker { display: none; }
+.plan-preferences summary:hover { background: var(--plate-2); }
+.plan-preferences summary:focus-visible { outline: 2px solid var(--line); outline-offset: -3px; }
+.preference-title { color: var(--ink); font: 720 15px/1.2 var(--sign); }
+.preference-summary { grid-column: 1; color: var(--ink-3); font-size: 12.5px; line-height: 1.45; }
+.preference-action { grid-column: 2; grid-row: 1 / span 2; color: var(--line); font: 670 12px/1 var(--sign); }
+.plan-preferences[open] .preference-action { font-size: 0; }
+.plan-preferences[open] .preference-action::after { content: 'Done'; font-size: 12px; }
+.plan-preferences .rules { gap: 12px; padding: 16px; border-top: 1px solid var(--rule); }
+.rules-heading { grid-column: 1 / -1; margin: 12px 0 0; padding-top: 14px; border-top: 1px solid var(--rule); color: var(--ink-2); font: 680 12px/1.2 var(--sign); letter-spacing: 0.03em; }
+.rules-heading:first-child { margin: 0; padding: 0; border: 0; }
+.plan-preferences .rule { gap: 8px; }
+.plan-preferences .switch { border: 0; border-radius: 8px; background: var(--plate-2); }
+.plan-preferences .switch:hover { background: var(--plate-3); }
 .wg-day { position: relative; min-width: 0; border-left: 1px solid var(--rule); }
 .wg-day.off { background: repeating-linear-gradient(135deg, transparent 0 7px, color-mix(in srgb, var(--rule) 55%, transparent) 7px 8px); }
 .wg-block { position: absolute; padding: 1px 2px; container-type: size; }

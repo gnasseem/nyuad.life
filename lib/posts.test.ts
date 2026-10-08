@@ -39,6 +39,15 @@ describe('mergePosts', () => {
     expect(changed.updated).toBe(1);
     expect(changed.posts[0]!.scrapedAt).toBe('2026-09-01T00:00:00.000Z');
   });
+  it('keeps separate Facebook comments with identical text and upgrades a legacy copy', () => {
+    const old = [{ id: '1', url: 'u', author: 'A', date: '2026-01-01', text: 'Question', comments: [{ author: 'X', date: '2026-01-02', text: 'Bump' }] }];
+    const fresh = [{ ...old[0]!, comments: [
+      { id: 'c1', author: 'X', date: '2026-01-02', text: 'Bump' },
+      { id: 'c2', author: 'X', date: '2026-01-02', text: 'Bump' },
+    ] }];
+    const merged = mergePosts(old, fresh);
+    expect(merged.posts[0]!.comments.map((comment) => comment.id)).toEqual(['c1', 'c2']);
+  });
 });
 
 describe('enrichment', () => {

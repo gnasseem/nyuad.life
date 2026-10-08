@@ -247,6 +247,8 @@ function Detail({ code, onClose }: { code: string; onClose(): void }) {
   const { setAskPrefill } = useApp();
   const [detail, setDetail] = useState<CourseDetail | null>(null);
   const [rating, setRating] = useState<{ value: CourseRating | null; done: boolean; failed: boolean }>({ value: null, done: false, failed: false });
+  const [teachers, setTeachers] = useState<Map<string, ProfRating | null>>(new Map());
+  const [teacherPending, setTeacherPending] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -263,6 +265,26 @@ function Detail({ code, onClose }: { code: string; onClose(): void }) {
       live = false;
     };
   }, [code]);
+
+  useEffect(() => {
+    if (!detail?.instructors.length) return;
+    let live = true;
+    let timer: number | undefined;
+    const load = async (attempt: number) => {
+      try {
+        const result = await api.courses.profs(detail.instructors);
+        if (!live) return;
+        setTeachers(result.ratings);
+        setTeacherPending(result.pending.length > 0 && attempt < 4);
+        if (result.pending.length && attempt < 4) timer = window.setTimeout(() => void load(attempt + 1), 2500);
+      } catch {
+        if (live) setTeacherPending(false);
+      }
+    };
+    setTeacherPending(true);
+    void load(0);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [detail]);
 
   const ask = () => {
     if (!detail) return;
@@ -286,6 +308,16 @@ function Detail({ code, onClose }: { code: string; onClose(): void }) {
         </button>
       </div>
       <div className="pane-body">
+        {detail && <section className="course-teachers" aria-label={`Professors this ${detail.currentTerm}`}>
+          <h3>Teaching this {detail.currentTerm}</h3>
+          {detail.instructors.length ? <div className="teacher-list">{detail.instructors.map((name) => {
+            const score = teachers.get(name);
+            return <a key={name} href={`/professors/${encodeURIComponent(name)}`} onClick={(event) => {
+              event.preventDefault();
+              navigate({ name: 'professors', nameQuery: name });
+            }}><span>{name}</span><b>{score ? `${score.score.toFixed(1)} / 5` : teacherPending && !teachers.has(name) ? 'Reading…' : 'No rating yet'}</b></a>;
+          })}</div> : <p>Albert does not list this course in {detail.currentTerm}.</p>}
+        </section>}
         {error ? (
           <div className="alert error">{error}</div>
         ) : !rating.done ? (
@@ -330,6 +362,7 @@ function Rating({ rating }: { rating: CourseRating }) {
       <p className="rating-basis">
         AI rating from {rating.basis === 1 ? 'one student' : `${rating.basis} students`} in the group{rating.confidence === 'low' ? ', so take it lightly' : ''}.
       </p>
+      {rating.sources?.length > 0 && <div className="rating-evidence"><span>Read the threads</span>{rating.sources.map((source, index) => <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer">{source.date || 'Undated'} · {source.excerpt.slice(0, 90)}</a>)}</div>}
     </div>
   );
 }

@@ -315,6 +315,8 @@ export interface CourseDetail {
   credits: string;
   core: boolean;
   description: string;
+  currentTerm: string;
+  instructors: string[];
 }
 
 export interface CourseRating {
@@ -327,6 +329,7 @@ export interface CourseRating {
   tips: string[];
   basis: number;
   confidence: 'high' | 'medium' | 'low';
+  sources: Array<{ url: string; date: string; excerpt: string }>;
 }
 
 /** How students in the group rate being taught by a professor. */

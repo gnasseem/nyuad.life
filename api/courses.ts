@@ -88,12 +88,16 @@ function courseDetail(official: OfficialCorpus | null, catalog: Catalog, code: s
   const history = courseHistory(catalog, code);
   const doc = bulletinEntry(official, code);
   if (!history && !doc) throw new ApiError(404, 'No course with that code.', 'not_found');
+  const current = history?.offerings.find((offering) => offering.term === catalog.current);
+  const primary = current?.sections.filter((section) => section.component !== 'Recitation' && section.component !== 'Laboratory') ?? [];
   return {
     code,
     title: titleOf(catalog, official, code) || code,
     credits: history?.credits || (doc?.credits ? String(doc.credits) : ''),
     core: history?.core ?? false,
     description: history?.description || (doc ? truncate(collapseWhitespace(doc.text), 1500) : ''),
+    currentTerm: catalog.current,
+    instructors: [...new Set((primary.length ? primary : current?.sections ?? []).flatMap((section) => section.instructors))],
   };
 }
 
@@ -152,6 +156,7 @@ interface CourseRating {
   /** How many students' first-hand accounts it rests on. */
   basis: number;
   confidence: 'high' | 'medium' | 'low';
+  sources: Array<{ url: string; date: string; excerpt: string }>;
   model: string;
   createdAt: string;
 }
@@ -168,8 +173,9 @@ const RATING_SCHEMA = {
     tips: { type: 'ARRAY', items: { type: 'STRING' } },
     basis: { type: 'INTEGER' },
     confidence: { type: 'STRING', enum: ['high', 'medium', 'low'] },
+    evidence: { type: 'ARRAY', items: { type: 'INTEGER' } },
   },
-  required: ['score', 'difficulty', 'workload', 'verdict', 'pros', 'cons', 'tips', 'basis', 'confidence'],
+  required: ['score', 'difficulty', 'workload', 'verdict', 'pros', 'cons', 'tips', 'basis', 'confidence', 'evidence'],
 };
 
 const RATING_SYSTEM = [
@@ -177,28 +183,29 @@ const RATING_SYSTEM = [
   'Return:',
   'score: how students rate taking it, 1.0 to 5.0 with one decimal: would they recommend it, is it worth the work, did they enjoy it. Use the whole range: 4.5 and up when students love it, 2 and below when they warn others off it, 3.0 only when they are truly split. Judge from what students say, never from the description.',
   'difficulty: 1 (easy A) to 5 (very hard), and workload: 1 (light) to 5 (heavy), estimated from what students say about exams, grading, problem sets and hours; null only when the threads give nothing to go on.',
-  'verdict: one plain sentence on what taking it is like and who it suits.',
-  'pros: the single most useful thing students liked. cons: the single most useful complaint. tips: leave empty.',
+  'verdict: one direct sentence. If most first-hand reviews are negative, lead with a warning to avoid it. Do not balance a bad course with token praise.',
+  'pros and cons: at most one specific point each. Either may be empty. Never invent a positive point to balance a negative one, or vice versa. tips: leave empty.',
   'basis: how many different students gave a first-hand account of taking it (count people, not threads). 0 when the threads say nothing about what taking it is like.',
+  'evidence: the numbers of the threads that directly support your verdict and points. Return only numbers from the supplied threads; leave empty if none directly support the rating.',
   'confidence: high when several recent first-hand accounts agree, medium when there are few or older ones, low when they are thin, very old or split. Read the dates on posts and comments; do not present old reviews as current.',
   'Every point must be specific to this course: name the thing (the final, weekly problem sets, the lab reports, the group project, a professor and what students said about their teaching). Never write vague points like "some professors are good" or "experiences vary". If students only say something general, leave it out.',
   'Each point under 16 words, plain words, no citations, source numbers or thread references. Report complaints as plainly as praise.',
   'About professors, only how they teach, grade or run the class, as students reported it ("students found her exams fair"); nothing personal, no rumours. When a point held only in one year or with one professor, say so in a few words.',
-  'Never invent anything.',
+  'If fewer than two different students describe taking this course first-hand, set basis below 2. Never invent anything.',
 ].join('\n');
 
 const RATING_TTL_MS = 30 * 86_400_000;
-const hot = new Map<string, CourseRating | null>();
+const hot = new Map<string, CourseRating>();
 
 function ratingKey(code: string): string {
-  return `course-rating:v3:${code}`;
+  return `course-rating:v4:${code}`;
 }
 
 /** A fresh rating already written (null: students have not written enough), or undefined when one has to be written. */
 async function savedRating(code: string): Promise<CourseRating | null | undefined> {
   const key = ratingKey(code);
   const remembered = hot.get(key);
-  if (remembered !== undefined && (!remembered || Date.now() - Date.parse(remembered.createdAt) < RATING_TTL_MS)) return remembered;
+  if (remembered && Date.now() - Date.parse(remembered.createdAt) < RATING_TTL_MS) return remembered;
   const saved = (await boardStore()?.getSummary(key).catch(() => null))?.payload as CourseRating | null | undefined;
   if (saved && Date.now() - Date.parse(saved.createdAt) < RATING_TTL_MS) {
     hot.set(key, saved);
@@ -219,42 +226,40 @@ async function courseRating(archive: Archive, official: OfficialCorpus | null, c
     throw new ApiError(503, 'Ratings are off on this server.', 'no_model');
   }
   const hits = await courseThreads(archive, catalog, official, code);
-  if (hits.length === 0) {
-    hot.set(key, null);
-    return null;
-  }
-  const doc = bulletinEntry(official, code);
-  const history = courseHistory(catalog, code);
+  if (hits.length === 0) return null;
   const title = titleOf(catalog, official, code) || code;
-  const bulletin = doc ? `Bulletin entry:\n${truncate(collapseWhitespace(doc.text), 2500)}` : history?.description ? `Description: ${truncate(history.description, 800)}` : '';
-  const threads = sourcesBlock(archive, toSourceCards(archive, hits.slice(0, 7), [], 1));
+  const cards = toSourceCards(archive, hits.slice(0, 7), [], 1);
+  const threads = sourcesBlock(archive, cards);
   let rating: CourseRating | null;
   try {
-    const result = await siteJson<Partial<CourseRating>>(gemini, backups, {
+    const result = await siteJson<Partial<CourseRating> & { evidence?: number[] }>(gemini, backups, {
       system: RATING_SYSTEM,
-      prompt: `Course: ${code} ${title}\n${bulletin}\n\nWhat students wrote:\n${threads}`,
+      prompt: `Course: ${code} ${title}\n\nWhat students wrote:\n${threads}`,
       schema: RATING_SCHEMA,
       tier: 'main',
       temperature: 0.2,
       maxOutputTokens: 2048,
       timeoutMs: 25_000,
     });
-    rating = cleanRating(result, gemini?.chatModel ?? backups[0]?.models[0] ?? '');
+    rating = cleanRating(result, cards, gemini?.chatModel ?? backups[0]?.models[0] ?? '');
   } catch (error) {
     console.warn('[courses] rating failed:', (error as Error).message);
     if (saved) return saved;
     throw new ApiError(503, 'The rating could not be written right now.', 'busy');
   }
-  hot.set(key, rating);
+  if (rating) hot.set(key, rating);
   // Only a real rating is kept; a course students have not described yet is looked at again after the next cold start.
   if (rating) await store?.putSummary(key, rating).catch((error) => console.warn('[courses] could not cache the rating:', (error as Error).message));
   return rating;
 }
 
-function cleanRating(raw: Partial<CourseRating>, model: string): CourseRating | null {
+function cleanRating(raw: Partial<CourseRating> & { evidence?: number[] }, cards: ReturnType<typeof toSourceCards>, model: string): CourseRating | null {
   const basis = Math.max(0, Math.round(Number(raw.basis) || 0));
-  const score = Math.round(Math.min(5, Math.max(1, Number(raw.score) || 0)) * 10) / 10;
-  if (basis === 0 || !Number.isFinite(score)) return null;
+  const given = Number(raw.score);
+  if (basis < 2 || !Number.isFinite(given) || given < 1 || given > 5) return null;
+  const score = Math.round(given * 10) / 10;
+  const evidence = [...new Set(raw.evidence ?? [])].filter((n) => Number.isInteger(n) && n >= 1 && n <= cards.length).slice(0, 3);
+  if (!evidence.length || !raw.verdict?.trim()) return null;
   const scale = (value: unknown) => (Number.isFinite(Number(value)) && value !== null ? Math.min(5, Math.max(1, Math.round(Number(value)))) : null);
   // Citations are not shown, so any the model writes anyway are taken out.
   const tidy = (value: unknown) => collapseWhitespace(String(value ?? '').replace(/\s*\[\d+\](?:\[\d+\])*/g, ''));
@@ -270,6 +275,7 @@ function cleanRating(raw: Partial<CourseRating>, model: string): CourseRating | 
     tips: list(raw.tips, 3),
     basis,
     confidence: level === 'high' || level === 'low' ? level : 'medium',
+    sources: evidence.map((n) => ({ url: cards[n - 1]!.url, date: cards[n - 1]!.date, excerpt: cards[n - 1]!.snippet })),
     model,
     createdAt: new Date().toISOString(),
   };

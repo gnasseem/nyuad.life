@@ -26,10 +26,6 @@ const CANDIDATES = 40;
 const RERANK_CANDIDATES = 30;
 /** Eight good sources answer better, and faster, than twelve with noise among them. */
 const MAX_SOURCES = 8;
-/** How many threads to keep when few are clearly relevant, so the answer can still say what students think… */
-const MIN_SOURCES = 3;
-/** …as long as each is at least this relevant to the cross-encoder; below it a thread is noise, not context. */
-const WEAK_FLOOR = 0.2;
 /** Threads named for the course a question asks about, read ahead of keyword matches. */
 const COURSE_THREADS = 12;
 /** Words that ask about how things are now, so newer threads count for even more. */
@@ -533,7 +529,7 @@ async function rerankWithModel(reranker: Reranker, archive: Archive, question: s
   try {
     const scores = await reranker.rerank(question, documents, { timeoutMs: 6_000 });
     const best = Math.max(...scores);
-    const floor = Math.max(0.25, best * 0.6);
+    const floor = Math.max(0.38, best * 0.68);
     // Advice goes stale: a thread from this year gets up to 0.1 over one from three years ago (0.2 when the question
     // asks about how things are now), enough to win among equally relevant threads, not to beat a better answer.
     const lift = timely ? 0.2 : 0.1;
@@ -544,9 +540,7 @@ async function rerankWithModel(reranker: Reranker, archive: Archive, question: s
         return { hit: { ...hit, score: scores[i]! + lift * recency }, relevance: scores[i]! };
       })
       .sort((a, b) => b.hit.score - a.hit.score);
-    const strong = archiveScored.filter((entry) => entry.relevance >= floor).map((entry) => entry.hit);
-    // A few threads even when few clear the bar, but never ones the cross-encoder found unrelated: those only add noise.
-    const chosen = strong.length >= MIN_SOURCES ? strong.slice(0, MAX_SOURCES) : archiveScored.filter((entry) => entry.relevance >= WEAK_FLOOR).slice(0, MIN_SOURCES).map((entry) => entry.hit);
+    const chosen = archiveScored.filter((entry) => entry.relevance >= floor).slice(0, MAX_SOURCES).map((entry) => entry.hit);
     const officialChosen = officialPool
       .map((hit, i) => ({ hit: { ...hit, score: scores[pool.length + i]! }, relevance: scores[pool.length + i]! }))
       .filter((entry) => entry.relevance >= Math.max(0.4, floor))
@@ -565,7 +559,7 @@ async function rerankWithModel(reranker: Reranker, archive: Archive, question: s
 
 /** Without a cross-encoder: the lite model scores thread snippets 0–10. Null when that fails too. */
 async function rerankWithLite(cfg: GeminiConfig, archive: Archive, question: string, hits: Hit[], terms: string[]): Promise<Hit[] | null> {
-  if (hits.length <= MIN_SOURCES) return hits;
+  if (hits.length === 0) return [];
   const pool = hits.slice(0, RERANK_CANDIDATES);
   const candidates = pool.map((hit, i) => {
     const post = archive.posts[hit.post]!;
@@ -600,9 +594,7 @@ async function rerankWithLite(cfg: GeminiConfig, archive: Archive, question: str
       return { hit: { ...hit, score: 0.7 * (llm / 10) + 0.3 * (hit.score / maxFused) }, llm };
     });
     rescored.sort((a, b) => b.hit.score - a.hit.score);
-    const strong = rescored.filter((entry) => entry.llm >= 4).map((entry) => entry.hit);
-    if (strong.length >= MIN_SOURCES) return strong.slice(0, MAX_SOURCES);
-    return rescored.filter((entry) => entry.llm >= 2).slice(0, MIN_SOURCES).map((entry) => entry.hit);
+    return rescored.filter((entry) => entry.llm >= 5).slice(0, MAX_SOURCES).map((entry) => entry.hit);
   } catch (error) {
     console.warn('[rerank] falling back to hybrid order:', (error as Error).message);
     return null;
@@ -616,11 +608,18 @@ async function rank(cfg: GeminiConfig | null, archive: Archive, question: string
     if (ranked) return ranked;
   }
   const officialHits = official ? strongOfficial(official) : [];
-  if (retrieval.hits.length === 0) return { archive: [], official: officialHits, live, reranked: false };
+  if (retrieval.hits.length === 0) return { archive: [], official: officialHits, live: live.filter((entry) => sharesQuestionWords(entry.card.text, retrieval.terms)), reranked: false };
   // The lite-model fallback is the site's Gemini; without it the fused order stands.
   const lite = cfg ? await rerankWithLite(cfg, archive, question, retrieval.hits, retrieval.terms) : null;
-  // Keyword order alone is the noisiest, so it gets the fewest threads.
-  return { archive: (lite ?? retrieval.hits.slice(0, 6)).slice(0, MAX_SOURCES), official: officialHits, live, reranked: lite !== null };
+  const fallback = retrieval.hits.filter((hit) => hit.lexicalRank !== undefined && sharesQuestionWords(archive.chunks[hit.chunk]!.text, retrieval.terms));
+  return { archive: (lite ?? fallback).slice(0, MAX_SOURCES), official: officialHits, live: live.filter((entry) => sharesQuestionWords(`${entry.card.title} ${entry.card.text}`, retrieval.terms)), reranked: lite !== null };
+}
+
+function sharesQuestionWords(text: string, terms: string[]): boolean {
+  const wanted = [...new Set(terms.filter((term) => term.length >= 3))];
+  if (!wanted.length) return false;
+  const found = new Set(tokenize(text));
+  return wanted.filter((term) => found.has(term)).length >= Math.min(2, wanted.length);
 }
 
 /**
@@ -807,9 +806,12 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
   const { answer, model, truncated } = writers.chatgpt ? await writeWithChatGPT(writers.chatgpt, prompt(), events, signal, deadline, term) : await writeAnswer(writers, system, prompt, events, signal, deadline);
   if (!answer.trim()) throw new ApiError(502, 'The model returned an empty answer.', 'empty_answer');
   const parsed = parseConfidence(answer);
+  const cited = new Set([...parsed.text.matchAll(/\[(\d+(?:,\s*\d+)*)\]/g)].flatMap((match) => match[1]!.split(',').map(Number)));
+  const usedSources = cards.filter((card) => cited.has(card.n));
+  events.sources?.(usedSources);
   const response: AskResponse = {
     answer: parsed.text,
-    sources: cards,
+    sources: usedSources,
     model,
     confidence: parsed.confidence,
     ...(truncated ? { truncated: true } : {}),
@@ -858,7 +860,7 @@ export async function gatherSources(
   const threads = toSourceCards(archive, ranked.archive, retrieval.terms, 0).map((card, i): LiveSource => ({ card, chunk: archive.chunks[ranked.archive[i]!.chunk]!.text }));
   const courseFirst = schedule.sources.length > 0 && (schedule.codes.length > 0 || isCourseQuestion(question));
   const experience = /\b(?:review|opinion|worth|easiest|hardest|easy|hard|workload|grading|grade|professor|prof|teach|taught|like|avoid|recommend|best|worst|experience)\b/i.test(question);
-  const usefulOfficial = experience ? official.slice(0, 1) : official;
+  const usefulOfficial = experience ? [] : official;
   const entries = experience
     ? [...threads, ...live, ...schedule.sources, ...usefulOfficial]
     : courseFirst ? [...schedule.sources, ...official, ...threads, ...live] : [...official, ...schedule.sources, ...threads, ...live];

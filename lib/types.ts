@@ -1,6 +1,8 @@
 /** Shared data shapes for the scraper, indexer, API and clients. */
 
 export interface SourceComment {
+  /** Facebook's stable comment id, when the scraper captured it. */
+  id?: string;
   author: string;
   date: string;
   text: string;

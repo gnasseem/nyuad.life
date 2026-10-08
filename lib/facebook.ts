@@ -161,7 +161,7 @@ export function toSourcePosts(stories: StoryRecord[], comments: CommentRecord[],
     const postId = comment.postId ?? fallbackPostId;
     if (!postId) continue;
     const list = grouped.get(postId) ?? [];
-    list.push({ author: comment.author, date: comment.date, text: comment.text });
+    list.push({ id: comment.id, author: comment.author, date: comment.date, text: comment.text });
     grouped.set(postId, list);
   }
   return stories.map((story) => {

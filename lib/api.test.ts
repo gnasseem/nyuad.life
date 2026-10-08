@@ -13,7 +13,7 @@ import { createApiServer } from './devserver.ts';
 import { embedderFromEnv } from './embeddings.ts';
 import { geminiConfig, normalize } from './gemini.ts';
 import { buildIndex } from './indexer.ts';
-import { ask } from './rag.ts';
+import { ask, gatherSources } from './rag.ts';
 import { loadArchive, resetArchive } from './store.ts';
 
 const DIMS = 16;
@@ -118,7 +118,7 @@ beforeAll(async () => {
       } else if (schema?.properties?.questions) {
         text = JSON.stringify({ questions: ['How is her grading?', 'Which section is best?', 'What about the new professor?'] });
       } else if (schema?.properties?.basis) {
-        text = JSON.stringify({ score: 4.26, difficulty: 3, workload: null, verdict: 'Hard but fair [1].', pros: ['Dania explains clearly [1][4]', ''], cons: [], tips: [], basis: 3, confidence: 'high' });
+        text = JSON.stringify({ score: 4.26, difficulty: 3, workload: null, verdict: 'Hard but fair [1].', pros: ['Dania explains clearly [1][4]', ''], cons: [], tips: [], basis: 3, confidence: 'high', evidence: [1] });
       } else if (schema?.properties?.daysOff) {
         text = JSON.stringify({ wants: [{ label: 'Calculus', codes: ['MATH-UH 1012Q'] }, { label: 'an Arts Core', codes: ['CADT-UH 9999'] }], missing: [], earliest: '9:00', latest: null, daysOff: ['Fri', 'Sat'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Prof. Dania'], avoid: ['Nobody Here'] });
       } else if (schema?.properties?.verdict) {
@@ -312,9 +312,11 @@ describe('api', () => {
   it('orders threads by the cross-encoder when there is one', async () => {
     const archive = await loadArchive();
     const reranker = { name: 'fake', rerank: async (_query: string, documents: string[]) => documents.map((doc) => (doc.includes('new professor') ? 0.9 : doc.includes('Dania') ? 0.7 : 0.05)) };
+    const gathered = await gatherSources(archive, 'calculus professor', 'calculus professor', { cfg: geminiConfig()!, reranker, catalog: null, board: null });
+    expect(gathered.reranked).toBe(true);
+    expect(gathered.cards.map((source) => source.postId).slice(0, 2)).toEqual(['p4', 'p1']);
     const result = await ask(archive, geminiConfig()!, { question: 'calculus professor', stream: false }, {}, undefined, { reranker, catalog: null });
-    expect(result.retrieval.reranked).toBe(true);
-    expect(result.sources.map((source) => source.postId).slice(0, 2)).toEqual(['p4', 'p1']);
+    expect(result.sources.map((source) => source.postId)).toEqual(['p4']);
   });
 
   it('keeps contacts out of the lists and hands them out one post at a time', async () => {
@@ -392,6 +394,7 @@ describe('api', () => {
     expect(list.courses.map((row: { code: string }) => row.code)).toEqual(['MATH-UH 1012']);
     const detail = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012`);
     expect(detail).toMatchObject({ code: 'MATH-UH 1012', title: 'Calculus', credits: '4' });
+    expect(detail).toMatchObject({ currentTerm: 'Fall 2026', instructors: expect.any(Array) });
     expect(detail).not.toHaveProperty('offerings');
     const all = await getJson(`${apiUrl}/api/courses?all=1`);
     expect(all.courses).toEqual([expect.objectContaining({ code: 'MATH-UH 1012', title: 'Calculus', core: false })]);
@@ -404,6 +407,7 @@ describe('api', () => {
     expect(rating).toMatchObject({ score: 4.3, difficulty: 3, workload: null, basis: 3, confidence: 'high' });
     // Citations the model wrote anyway are taken out.
     expect(rating.pros).toEqual(['Dania explains clearly']);
+    expect(rating.sources).toEqual([expect.objectContaining({ url: 'https://fb/p1' })]);
     const ratingCall = geminiCalls.at(-1)!;
     expect(ratingCall.prompt).toContain('What students wrote:');
     expect(ratingCall.url).toMatch(/gemini-[\d.]+-flash(?:-preview)?:generateContent/);

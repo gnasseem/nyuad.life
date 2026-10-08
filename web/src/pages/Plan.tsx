@@ -286,8 +286,15 @@ export function PlanPage() {
           </div>
 
           <details className="plan-block plan-preferences" key={term}>
-            <summary>Preferences <span>Apply to all plans, however courses were added</span></summary>
+            <summary><span className="preference-title">Shape your week</span><span className="preference-summary">{[
+              saved.rules.earliest && `After ${clock(saved.rules.earliest)}`,
+              saved.rules.latest && `By ${clock(saved.rules.latest)}`,
+              saved.rules.daysOff.length && `${saved.rules.daysOff.join(', ')} off`,
+              saved.rules.shape !== 'any' && SHAPES.find((shape) => shape.id === saved.rules.shape)?.label,
+              saved.rules.bestRated && 'Top professors',
+            ].filter(Boolean).join(' · ') || 'Set times, days off and priorities'}</span><span className="preference-action">Edit</span></summary>
             <div className="rules">
+              <h3 className="rules-heading">Time on campus</h3>
               <label className="rule">
                 <span>No class before</span>
                 <select className="input" value={saved.rules.earliest} onChange={(event) => setRules({ earliest: event.target.value })}>
@@ -308,6 +315,7 @@ export function PlanPage() {
                   ))}
                 </select>
               </label>
+              <h3 className="rules-heading">Arrange the week</h3>
               <div className="rule">
                 <span id="days-off">Days off</span>
                 <div className="day-toggles" role="group" aria-labelledby="days-off">
@@ -336,6 +344,7 @@ export function PlanPage() {
                 <Segmented label="Shape of the week" value={saved.rules.shape} onChange={(shape) => setRules({ shape })} options={SHAPES} />
                 <small className="rule-help">{SHAPE_HELP[saved.rules.shape]}</small>
               </div>
+              <h3 className="rules-heading">Priorities</h3>
               <div className="rule wide switches">
                 <Switch on={saved.rules.bestRated} onChange={(bestRated) => setRules({ bestRated })} label="Best-rated professors">
                   Professors students praise in the group come first; unrated ones count as average.

@@ -49,6 +49,7 @@ export function normalizePost(raw: Partial<SourcePost>): SourcePost {
 
 function normalizeComment(raw: Partial<SourceComment>): SourceComment {
   return {
+    ...(raw.id ? { id: String(raw.id) } : {}),
     author: collapseWhitespace(String(raw.author ?? '')),
     date: normalizeDate(String(raw.date ?? '')),
     text: String(raw.text ?? '').replace(/\r\n?/g, '\n').trim(),
@@ -103,12 +104,27 @@ export function mergePosts(existing: SourcePost[], incoming: SourcePost[]): { po
 }
 
 function unionComments(a: SourceComment[], b: SourceComment[]): SourceComment[] {
-  const seen = new Set<string>();
+  const ids = new Set<string>();
+  const identified = new Set<string>();
+  const legacy = new Map<string, number>();
+  const fingerprint = (comment: SourceComment) => `${comment.author}|${comment.date}|${collapseWhitespace(comment.text).toLowerCase()}`;
   const out: SourceComment[] = [];
   for (const comment of [...a, ...b]) {
-    const key = `${comment.author}|${collapseWhitespace(comment.text).toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const key = fingerprint(comment);
+    if (comment.id) {
+      if (ids.has(comment.id)) continue;
+      ids.add(comment.id);
+      identified.add(key);
+      const old = legacy.get(key);
+      if (old !== undefined) {
+        out[old] = comment;
+        legacy.delete(key);
+        continue;
+      }
+    } else {
+      if (legacy.has(key) || identified.has(key)) continue;
+      legacy.set(key, out.length);
+    }
     out.push(comment);
   }
   return out;
