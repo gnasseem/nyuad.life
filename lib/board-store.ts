@@ -2,7 +2,7 @@
  * Where the board lives. Supabase (Postgres through PostgREST, with the service key kept on the server) in
  * production; an in-memory store for local development and tests. `boardStore()` picks one from the environment.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { ENOUGH_ANSWERS, type Announcement, type Answer, type BoardEvent, type EventKind, type Listing, type Offer, type Profile, type Question } from './board.ts';
 import { ApiError } from './http.ts';
 
@@ -26,8 +26,11 @@ export interface BoardStore {
   readonly persistent: boolean;
   /** Talks to the database once and says whether it is usable, and if not, why. */
   check(): Promise<BoardCheck>;
+  reserveOtp(netId: string, digest: string): Promise<boolean>;
+  consumeOtp(netId: string, digest: string): Promise<boolean>;
+  rebindProfile(netId: string, owner: string, key: string): Promise<void>;
   getProfile(netId: string): Promise<Profile | null>;
-  /** Saves a profile; `ownerKey` binds the NetID to the browser that set it up (see Profile.ownerKey). */
+  /** Saves a profile; `ownerKey` binds the NetID to its verified account (see Profile.ownerKey). */
   upsertProfile(profile: Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'>, ownerKey?: string): Promise<Profile>;
   /** Binds a profile that has no owner yet to this browser; leaves one that has an owner alone. */
   claimProfile(netId: string, ownerKey: string): Promise<void>;
@@ -86,10 +89,6 @@ export interface BoardStore {
   adminDelete(type: AdminTarget, id: string): Promise<Record<string, unknown> | null>;
   /** Keeps a record of what an admin did. Best effort: a missing table is not an error. */
   recordAudit(entry: { action: string; target: string; snapshot?: unknown; ip: string }): Promise<void>;
-  /** Until when admin sign-in is locked for this bucket (an IP or "global"), or null when it is not. */
-  adminLockedUntil(bucket: string): Promise<number | null>;
-  /** Counts a wrong admin code against a bucket; returns until when it is now locked, or null. */
-  adminFailure(bucket: string, max: number, windowMs: number): Promise<number | null>;
 }
 
 export type AdminTarget = 'question' | 'answer' | 'notice' | 'listing' | 'offer';
@@ -116,6 +115,33 @@ export class MemoryBoardStore implements BoardStore {
   private listings = new Map<string, Listing>();
   private summaries = new Map<string, { payload: unknown; createdAt: string }>();
 
+  private otps = new Map<string, { digest: string; sent: number; window: number; count: number; attempts: number; consumed: boolean }>();
+  async reserveOtp(netId: string, digest: string): Promise<boolean> {
+    const now = Date.now();
+    const old = this.otps.get(netId);
+    if (old && (now - old.sent < 60_000 || (now - old.window < 3_600_000 && old.count >= 5))) return false;
+    const sameWindow = old && now - old.window < 3_600_000;
+    this.otps.set(netId, { digest, sent: now, window: sameWindow ? old.window : now, count: sameWindow ? old.count + 1 : 1, attempts: 0, consumed: false });
+    return true;
+  }
+  async consumeOtp(netId: string, digest: string): Promise<boolean> {
+    const otp = this.otps.get(netId);
+    if (!otp || otp.consumed || otp.attempts >= 5 || Date.now() - otp.sent >= 600_000) return false;
+    otp.attempts++;
+    if (otp.digest !== digest) return false;
+    otp.consumed = true;
+    return true;
+  }
+  async rebindProfile(netId: string, owner: string, key: string): Promise<void> {
+    const profile = this.profiles.get(netId);
+    if (!profile) return;
+    for (const question of this.questions.values()) {
+      const hash = createHash('sha256').update(`ror-owner:${question.askerKey}`).digest('hex').slice(0, 40);
+      if (hash === profile.ownerKey) question.askerKey = key;
+    }
+    for (const post of [...this.announcements.values(), ...this.offers.values(), ...this.listings.values()]) if (post.posterNetId === netId) post.posterKey = key;
+    profile.ownerKey = owner;
+  }
   async getProfile(netId: string): Promise<Profile | null> {
     return this.profiles.get(netId) ?? null;
   }
@@ -270,7 +296,6 @@ export class MemoryBoardStore implements BoardStore {
     for (const [key, entry] of this.summaries) if (key.startsWith(prefix) && entry.createdAt < before) this.summaries.delete(key);
   }
   private bans = new Map<string, Ban>();
-  private attempts = new Map<string, { failures: number; windowStart: number; lockedUntil: number | null }>();
   readonly audit: Array<{ action: string; target: string; snapshot?: unknown; ip: string; createdAt: string }> = [];
   async listFeed(limit: number, before?: string): Promise<Question[]> {
     return this.sorted()
@@ -314,19 +339,6 @@ export class MemoryBoardStore implements BoardStore {
   }
   async recordAudit(entry: { action: string; target: string; snapshot?: unknown; ip: string }): Promise<void> {
     this.audit.push({ ...entry, createdAt: new Date().toISOString() });
-  }
-  async adminLockedUntil(bucket: string): Promise<number | null> {
-    const until = this.attempts.get(bucket)?.lockedUntil ?? null;
-    return until && until > Date.now() ? until : null;
-  }
-  async adminFailure(bucket: string, max: number, windowMs: number): Promise<number | null> {
-    const now = Date.now();
-    const current = this.attempts.get(bucket);
-    const fresh = !current || current.windowStart < now - windowMs;
-    const next = { failures: fresh ? 1 : current.failures + 1, windowStart: fresh ? now : current.windowStart, lockedUntil: current?.lockedUntil ?? null };
-    if (next.failures >= max) next.lockedUntil = now + windowMs;
-    this.attempts.set(bucket, next);
-    return next.lockedUntil && next.lockedUntil > now ? next.lockedUntil : null;
   }
   private sorted(): Question[] {
     return [...this.questions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -460,6 +472,15 @@ export class SupabaseBoardStore implements BoardStore {
     }
   }
 
+  async reserveOtp(netId: string, digest: string): Promise<boolean> {
+    return Boolean(await this.rpc('auth_reserve_otp', { p_net_id: netId, p_digest: digest }));
+  }
+  async consumeOtp(netId: string, digest: string): Promise<boolean> {
+    return Boolean(await this.rpc('auth_consume_otp', { p_net_id: netId, p_digest: digest }));
+  }
+  async rebindProfile(netId: string, owner: string, key: string): Promise<void> {
+    await this.rpc('auth_rebind_profile', { p_net_id: netId, p_owner: owner, p_key: key });
+  }
   async getProfile(netId: string): Promise<Profile | null> {
     const rows = await this.select('board_profiles', `net_id=eq.${enc(netId)}&limit=1`);
     return rows[0] ? profileFrom(rows[0]) : null;
@@ -534,7 +555,12 @@ export class SupabaseBoardStore implements BoardStore {
   }
   async listAnswers(questionIds: string[]): Promise<Answer[]> {
     if (questionIds.length === 0) return [];
-    return (await this.select('board_answers', `question_id=in.(${questionIds.map(enc).join(',')})&order=created_at.asc`)).map(answerFrom);
+    const batches: Array<Promise<Row[]>> = [];
+    for (let offset = 0; offset < questionIds.length; offset += 75) {
+      const ids = questionIds.slice(offset, offset + 75);
+      batches.push(this.select('board_answers', `question_id=in.(${ids.map(enc).join(',')})&order=created_at.asc`));
+    }
+    return (await Promise.all(batches)).flat().map(answerFrom).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
   async listRecentAnswers(limit: number): Promise<Answer[]> {
     return (await this.select('board_answers', `order=created_at.desc&limit=${limit}`)).map(answerFrom);
@@ -722,17 +748,6 @@ export class SupabaseBoardStore implements BoardStore {
   async recordAudit(entry: { action: string; target: string; snapshot?: unknown; ip: string }): Promise<void> {
     await this.write('POST', 'admin_audit', { action: entry.action, target: entry.target, snapshot: entry.snapshot ?? null, ip: entry.ip }, 'return=minimal').catch((error) => console.warn('[admin] could not write the audit log (run supabase/schema.sql again?):', (error as Error).message));
   }
-  async adminLockedUntil(bucket: string): Promise<number | null> {
-    const rows = await this.select('admin_attempts', `bucket=eq.${enc(bucket)}&select=locked_until&limit=1`);
-    const until = rows[0]?.locked_until ? Date.parse(String(rows[0].locked_until)) : NaN;
-    return until > Date.now() ? until : null;
-  }
-  async adminFailure(bucket: string, max: number, windowMs: number): Promise<number | null> {
-    const result = (await this.rpc('admin_register_failure', { p_bucket: bucket, p_max: max, p_window_seconds: Math.round(windowMs / 1000) })) as string | null;
-    const until = result ? Date.parse(String(result)) : NaN;
-    return until > Date.now() ? until : null;
-  }
-
   private headers(prefer?: string): Record<string, string> {
     const headers: Record<string, string> = { apikey: this.cfg.serviceKey, authorization: `Bearer ${this.cfg.serviceKey}`, 'content-type': 'application/json' };
     if (prefer) headers.prefer = prefer;

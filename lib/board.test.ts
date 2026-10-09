@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { eligibleQuestions, pickNext, searchAnnouncements, searchBoard, standingFor, tagByRules, validateAnnouncement, validateNetId, validateProfile, validateQuestionText, type Announcement, type Answer, type Offer, type Profile, type Question } from './board.ts';
-import { MemoryBoardStore } from './board-store.ts';
+import { emailNetId, otpDigest, sendLoginCode } from './auth.ts';
+import { MemoryBoardStore, SupabaseBoardStore } from './board-store.ts';
 
 const now = new Date('2026-09-29T12:00:00Z');
 
@@ -377,4 +378,42 @@ describe('the market', () => {
     expect((await store.listListingsByPoster('key-1234567')).map((entry) => entry.status)).toContain('done');
     expect(await store.closeListing(fridge.id, 'key-1234567', true)).toBe(true);
   });
+});
+
+
+it('emails a code to the canonical NYU address and stores only its digest', async () => {
+  vi.stubEnv('SESSION_SECRET', 'test-email-secret-at-least-thirty-two-characters');
+  vi.stubEnv('RESEND_API_KEY', 'resend-test-key');
+  vi.stubEnv('RESEND_FROM', 'nyuad.life <login@nyuad.life>');
+  const mail = vi.fn(async () => new Response('{"id":"email-1"}', { status: 200 }));
+  vi.stubGlobal('fetch', mail);
+  try {
+    const store = new MemoryBoardStore();
+    expect(emailNetId(' ABC1234@nyu.edu ')).toBe('abc1234');
+    expect(() => emailNetId('abc1234@example.com')).toThrow('NetID email');
+    await sendLoginCode(store, 'abc1234');
+    const [url, options] = mail.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://api.resend.com/emails');
+    const body = JSON.parse(String(options.body));
+    expect(body.to).toEqual(['abc1234@nyu.edu']);
+    const code = body.text.match(/code is (\d{6})/)[1];
+    expect(await store.consumeOtp('abc1234', code)).toBe(false);
+    expect(await store.consumeOtp('abc1234', otpDigest('abc1234', code))).toBe(true);
+    expect(await store.consumeOtp('abc1234', otpDigest('abc1234', code))).toBe(false);
+    await expect(sendLoginCode(store, 'abc1234')).rejects.toThrow('Wait a minute');
+    expect(mail).toHaveBeenCalledTimes(1);
+  } finally { vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+});
+
+
+it('batches large question feeds to keep database request URLs within proxy limits', async () => {
+  const requests: string[] = [];
+  vi.stubGlobal('fetch', async (input: string) => { requests.push(String(input)); return new Response('[]', { status: 200 }); });
+  try {
+    const store = new SupabaseBoardStore({ url: 'https://database.example', serviceKey: 'server-only-test-key' });
+    const ids = Array.from({ length: 300 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+    expect(await store.listAnswers(ids)).toEqual([]);
+    expect(requests).toHaveLength(4);
+    expect(requests.every((url) => url.length < 4000)).toBe(true);
+  } finally { vi.unstubAllGlobals(); }
 });

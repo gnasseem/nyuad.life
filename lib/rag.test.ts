@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gatherSources, parseConfidence, poolHoursAnswer, searchQueries, systemPrompt } from './rag.ts';
+import { gatherSources, matchesPerson, personName, safeRewrite, parseConfidence, poolHoursAnswer, searchQueries, systemPrompt } from './rag.ts';
 import type { OfficialCorpus } from './official.ts';
 import type { Archive } from './store.ts';
 import { buildBm25 } from './search.ts';
@@ -59,4 +59,35 @@ it('answers pool hours from the pool section without using the gym hours', () =>
   expect(result?.sources).toHaveLength(1);
   expect(result?.sources[0]?.url).toBe(corpus.docs[0]?.url);
   expect(poolHoursAnswer('pool reviews at nyuad', corpus)).toBeNull();
+});
+
+
+it('preserves full person identities and rejects rewritten substitutions', () => {
+  expect(personName('Morgan Testname')).toBe('Morgan Testname');
+  expect(personName('who is morgan testname?')).toBe('morgan testname');
+  expect(personName('best calculus professor?')).toBeNull();
+  expect(personName('calculus professor')).toBeNull();
+  expect(personName('pool hours')).toBeNull();
+  expect(matchesPerson('George Smith is a professor', 'Morgan Testname')).toBe(false);
+  expect(matchesPerson('Written by Morgan Testname.', 'Morgan Testname')).toBe(true);
+  expect(matchesPerson('Morgan Testnameson', 'Morgan Testname')).toBe(false);
+  expect(safeRewrite('Who is Morgan Testname?', 'George Smith NYUAD')).toBe('Who is Morgan Testname?');
+  expect(safeRewrite('CS-UH 1001 workload', 'computer science workload')).toBe('CS-UH 1001 workload');
+  expect(safeRewrite('pool timings', '{}')).toBe('pool timings');
+});
+
+it('returns no evidence for a different person even when the reranker gives it a perfect score', async () => {
+  const posts = [{ id: 'wrong', url: 'https://example.com', author: 'George Smith', date: '2026-10-01', text: 'George Smith teaches at NYUAD.', comments: [], courses: [], topics: [], commentCount: 0 }];
+  const chunk = { id: 'wrong#1', postId: 'wrong', n: 1, text: 'George Smith\nGeorge Smith teaches at NYUAD.', hash: 'x' };
+  const archive = { posts, chunks: [chunk], chunkPost: new Int32Array([0]), postChunk: new Int32Array([0]), postPosition: new Map([['wrong', 0]]), byCourse: new Map(), vectors: emptyTable(0), bm25: buildBm25([chunk.text]), meta: { model: 'none' } } as unknown as Archive;
+  const result = await gatherSources(archive, 'Who is Morgan Testname?', 'Who is George Smith?', { cfg: null, official: null, catalog: null, board: null, reranker: { name: 'always-perfect', rerank: async (_q, texts) => texts.map(() => 1) } });
+  expect(result.cards).toEqual([]);
+});
+
+it('keeps current deadline evidence official even when old threads rank highly', async () => {
+  const post = { id: 'old', url: 'https://example.com', author: 'Student', date: '2025-09-01', text: 'Registration deadlines for Fall 2026 will be September 20.', comments: [], courses: [], topics: [] };
+  const chunk = { id: 'old#1', postId: 'old', n: 1, text: 'Student\nRegistration deadlines for Fall 2026 will be September 20.', hash: 'x' };
+  const archive = { posts: [post], chunks: [chunk], chunkPost: new Int32Array([0]), postChunk: new Int32Array([0]), postPosition: new Map([['old', 0]]), byCourse: new Map(), vectors: emptyTable(0), bm25: buildBm25([chunk.text]), meta: { model: 'none' } } as unknown as Archive;
+  const result = await gatherSources(archive, 'Registration deadlines for Fall 2026?', 'Registration deadlines for Fall 2026?', { cfg: null, official: null, catalog: null, board: null, reranker: { name: 'always-perfect', rerank: async (_q, texts) => texts.map(() => 1) } });
+  expect(result.cards).toEqual([]);
 });

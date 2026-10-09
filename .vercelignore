@@ -8,10 +8,12 @@ dist/
 .scraper-profile/
 .scraper-debug/
 .albert-profile/
-desktopApp/
 .gradle/
 build/
 .claude/worktrees/
 data/index/cache-*
 data/posts.jsonl.tmp
 data/scrape-state.json
+
+.portal-profile/
+.kotlin/

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import { api, ApiError, type ModelCheck } from '../api';
 import { GROUP_URL } from '../brand';
 import { ChatGPTSignIn } from '../components/ChatGPT';
@@ -53,8 +53,9 @@ export function SettingsPage() {
     toast('Conversations deleted');
   };
 
-  const forget = () => {
-    if (!window.confirm('Clear conversations, your plan, profile details and preferences from this browser? Your sign-in key stays so you can add the same NetID again.')) return;
+  const forget = async () => {
+    if (!window.confirm('Clear conversations, your plan, profile details and preferences from this browser? You can log in again with your NYU email.')) return;
+    await api.auth.logout();
     forgetDevice();
     setProfile(null);
     window.location.href = '/';
@@ -66,6 +67,7 @@ export function SettingsPage() {
     setDeleteError('');
     try {
       await api.board.deleteProfile(profile.netId);
+      await api.auth.logout();
       await api.chatgpt.logout().catch(() => {});
       forgetDevice(true);
       setProfile(null);
@@ -125,6 +127,12 @@ export function SettingsPage() {
         </section>
       )}
 
+      <section className="settings-section">
+        <h2>Account</h2>
+        <div className="settings-row"><div className="text"><b>{profile ? `${profile.netId}@nyu.edu` : 'Not logged in'}</b><span>Use this email to log in on your phone or laptop.</span></div>
+          <button type="button" className="btn" onClick={async () => { await api.auth.logout(); setProfile(null); window.location.href = '/'; }}>Log out</button>
+        </div>
+      </section>
       <section className="settings-section">
         <h2>Your details</h2>
         <div className="list">
@@ -223,16 +231,10 @@ export function SettingsPage() {
   );
 }
 
-/**
- * Admin mode: the code from ROR_ADMIN_CODE turns it on for this browser (the server keeps it in an HttpOnly cookie for
- * an hour). Then every post gets a remove button, and this section checks the models and lists barred NetIDs.
- */
+/** Moderation controls and model checks for verified administrators. */
 function AdminSection() {
-  const { admin, refreshAdmin, toast } = useApp();
+  const { admin, toast } = useApp();
   const [available, setAvailable] = useState<boolean | null>(null);
-  const [code, setCode] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
   const [checks, setChecks] = useState<{ geminiKeyProblem: string | null; results: ModelCheck[] } | null>(null);
   const [checking, setChecking] = useState(false);
   const [bans, setBans] = useState<Array<{ netId: string; reason: string; createdAt: string }> | null>(null);
@@ -255,30 +257,6 @@ function AdminSection() {
   useEffect(() => {
     if (window.location.hash === '#admin') document.getElementById('admin')?.scrollIntoView({ block: 'start' });
   }, []);
-
-  const signIn = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!code.trim() || busy) return;
-    setBusy(true);
-    setError('');
-    try {
-      await api.admin.login(code.trim());
-      setCode('');
-      refreshAdmin();
-      toast('Admin mode on');
-    } catch (err) {
-      setError(err instanceof ApiError || err instanceof Error ? err.message : 'Could not turn admin mode on.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const signOut = async () => {
-    await api.admin.logout().catch(() => undefined);
-    refreshAdmin();
-    setChecks(null);
-    toast('Admin mode off');
-  };
 
   const check = async () => {
     setChecking(true);
@@ -310,11 +288,8 @@ function AdminSection() {
                 <b className="admin-on">
                   <IconShield /> Admin mode is on
                 </b>
-                <span>Every post shows a remove button. It turns off by itself after an hour.</span>
+                <span>Your verified NetID is on the administrator list. Every post shows a remove button.</span>
               </div>
-              <button type="button" className="btn sm" onClick={() => void signOut()}>
-                Turn off
-              </button>
             </div>
             <div className="settings-row">
               <div className="text">
@@ -359,19 +334,7 @@ function AdminSection() {
             ))}
           </>
         ) : (
-          <form className="settings-row admin-login" onSubmit={(event) => void signIn(event)}>
-            <div className="text">
-              <b>Admin code</b>
-              <span>For the people who run the site. Wrong codes lock this browser out for a while.</span>
-              {error && <span className="admin-error">{error}</span>}
-            </div>
-            <div className="actions">
-              <input className="input" type="password" value={code} onChange={(event) => setCode(event.target.value)} placeholder="Code" autoComplete="off" aria-label="Admin code" maxLength={256} />
-              <button type="submit" className="btn sm primary" disabled={!code.trim() || busy}>
-                {busy ? 'Checking' : 'Unlock'}
-              </button>
-            </div>
-          </form>
+          <div className="settings-row"><div className="text"><b>Administrator access</b><span>Granted automatically to verified accounts on the site's administrator list.</span></div></div>
         )}
       </div>
     </section>

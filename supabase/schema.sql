@@ -247,3 +247,61 @@ grant execute on function public.board_bump(uuid, int, int, int) to service_role
 grant execute on function public.board_touch_profile(text, boolean) to service_role;
 grant execute on function public.board_stats() to service_role;
 grant execute on function public.admin_register_failure(text, int, int) to service_role;
+
+-- Email codes are server-only, single-use, and rate limited across serverless instances.
+create table if not exists public.auth_email_codes (
+  net_id text primary key,
+  digest text not null,
+  sent_at timestamptz not null default now(),
+  window_start timestamptz not null default now(),
+  sends int not null default 1,
+  attempts int not null default 0,
+  consumed boolean not null default false
+);
+alter table public.auth_email_codes enable row level security;
+revoke all on public.auth_email_codes from anon, authenticated;
+grant all on public.auth_email_codes to service_role;
+
+create or replace function public.auth_reserve_otp(p_net_id text, p_digest text)
+returns boolean language sql security invoker set search_path = public as $$
+  with reserved as (
+    insert into public.auth_email_codes as c (net_id, digest) values (p_net_id, p_digest)
+    on conflict (net_id) do update set digest = p_digest, sent_at = now(), attempts = 0, consumed = false,
+      window_start = case when c.window_start <= now() - interval '1 hour' then now() else c.window_start end,
+      sends = case when c.window_start <= now() - interval '1 hour' then 1 else c.sends + 1 end
+    where c.sent_at <= now() - interval '1 minute' and (c.window_start <= now() - interval '1 hour' or c.sends < 5)
+    returning 1
+  ) select exists(select 1 from reserved)
+$$;
+create or replace function public.auth_consume_otp(p_net_id text, p_digest text)
+returns boolean language sql security invoker set search_path = public as $$
+  with checked as (
+    update public.auth_email_codes set attempts = attempts + 1, consumed = (digest = p_digest)
+    where net_id = p_net_id and not consumed and attempts < 5 and sent_at > now() - interval '10 minutes'
+    returning consumed
+  ) select coalesce((select consumed from checked), false)
+$$;
+-- Recover ownership of existing questions and market posts when an old browser-only account verifies its email.
+create or replace function public.auth_rebind_profile(p_net_id text, p_owner text, p_key text)
+returns void language sql security invoker set search_path = public as $$
+  with current_profile as materialized (
+    select owner_key from public.board_profiles where net_id = p_net_id for update
+  ), questions as (
+    update public.board_questions set asker_key = p_key
+    where substring(encode(sha256(convert_to('ror-owner:' || asker_key, 'UTF8')), 'hex'), 1, 40) = (select owner_key from current_profile)
+    returning id
+  ), notices as (
+    update public.board_announcements set poster_key = p_key where poster_net_id = p_net_id returning id
+  ), offers as (
+    update public.board_offers set poster_key = p_key where poster_net_id = p_net_id returning id
+  ), listings as (
+    update public.board_listings set poster_key = p_key where poster_net_id = p_net_id returning id
+  ) update public.board_profiles set owner_key = p_owner where net_id = p_net_id
+    and (select count(*) from questions) >= 0
+$$;
+revoke execute on function public.auth_reserve_otp(text, text) from public, anon, authenticated;
+revoke execute on function public.auth_consume_otp(text, text) from public, anon, authenticated;
+revoke execute on function public.auth_rebind_profile(text, text, text) from public, anon, authenticated;
+grant execute on function public.auth_reserve_otp(text, text) to service_role;
+grant execute on function public.auth_consume_otp(text, text) to service_role;
+grant execute on function public.auth_rebind_profile(text, text, text) to service_role;

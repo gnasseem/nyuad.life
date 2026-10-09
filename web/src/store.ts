@@ -151,6 +151,8 @@ export function saveProfile(profile: Profile | null): void {
   }
 }
 
+export function saveAccountKey(key: string): void { localStorage.setItem(KEY_KEY, key); }
+
 /** A random key that ties questions and notices to this browser without asking who you are. */
 export function askerKey(): string {
   let key = '';

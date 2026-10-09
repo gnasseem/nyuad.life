@@ -70,3 +70,37 @@ describe('supabase/schema.sql', () => {
     await db.close();
   });
 });
+
+
+it('enforces code cooldown, attempts, expiry and single-use in the database', async () => {
+  const { PGlite } = await import('@electric-sql/pglite');
+  const db = new PGlite();
+  await db.exec(SUPABASE_ROLES);
+  await db.exec(schema);
+  const call = async (name: string, digest: string) => (await db.query<{ ok: boolean }>(`select ${name}('abc1234', $1) as ok`, [digest])).rows[0]!.ok;
+  expect(await call('auth_reserve_otp', 'hash-one')).toBe(true);
+  expect(await call('auth_reserve_otp', 'hash-two')).toBe(false);
+  for (let i = 0; i < 5; i++) expect(await call('auth_consume_otp', 'wrong')).toBe(false);
+  expect(await call('auth_consume_otp', 'hash-one')).toBe(false);
+  await db.exec("update auth_email_codes set sent_at = now() - interval '2 minutes'");
+  expect(await call('auth_reserve_otp', 'hash-two')).toBe(true);
+  expect(await call('auth_consume_otp', 'hash-two')).toBe(true);
+  expect(await call('auth_consume_otp', 'hash-two')).toBe(false);
+  await db.exec("update auth_email_codes set sent_at = now() - interval '11 minutes', consumed = false");
+  expect(await call('auth_consume_otp', 'hash-two')).toBe(false);
+  await db.close();
+});
+
+it('recovers ownership of old posts without losing profile details', async () => {
+  const { createHash } = await import('node:crypto');
+  const { PGlite } = await import('@electric-sql/pglite');
+  const db = new PGlite();
+  await db.exec(SUPABASE_ROLES); await db.exec(schema);
+  const owner = createHash('sha256').update('ror-owner:old-browser-key').digest('hex').slice(0, 40);
+  await db.query("insert into board_profiles (net_id, name, major, class_of, owner_key) values ('abc1234', 'Sara', 'Mathematics', 2027, $1)", [owner]);
+  await db.query("insert into board_questions (text, asker_key) values ('Help with calculus?', 'old-browser-key')");
+  await db.query("select auth_rebind_profile('abc1234', 'new-owner', 'shared-device-key')");
+  expect((await db.query<{ asker_key: string }>('select asker_key from board_questions')).rows[0]!.asker_key).toBe('shared-device-key');
+  expect((await db.query<{ owner_key: string; name: string }>('select owner_key, name from board_profiles')).rows[0]).toEqual({ owner_key: 'new-owner', name: 'Sara' });
+  await db.close();
+});

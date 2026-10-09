@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from 'react';
-import { api, ApiError, type Profile } from '../api';
+import { useEffect, useState, type FormEvent } from 'react';
+import { api, type Profile } from '../api';
 import { useApp } from '../context';
+import { saveAccountKey } from '../store';
 import { Modal } from './Modal';
-import { classYears, standingFor } from '../year';
+import { classYears } from '../year';
 
 // Mirrors MAJORS in lib/board.ts; the web bundle cannot import server code.
 const MAJORS = [
@@ -20,6 +21,19 @@ export function ProfileForm({ onDone, submitLabel = 'Save' }: { onDone(profile: 
   const [netId, setNetId] = useState(profile?.netId ?? '');
   const [major, setMajor] = useState(profile?.major ?? '');
   const [classOf, setClassOf] = useState<number>(profile?.classOf ?? years[1]!.value);
+  const [verified, setVerified] = useState(false);
+  const [email, setEmail] = useState(profile ? `${profile.netId}@nyu.edu` : '');
+  const [sent, setSent] = useState(false);
+  const [code, setCode] = useState('');
+  const [retryAt, setRetryAt] = useState(0);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    void api.auth.me().then((result) => {
+      if (result.netId) { setVerified(true); setNetId(result.netId); }
+    }).catch(() => {});
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -33,17 +47,52 @@ export function ProfileForm({ onDone, submitLabel = 'Save' }: { onDone(profile: 
       setProfile(result.profile);
       onDone(result.profile);
     } catch (err) {
-      // A server without a working board must not stop anyone using the rest of the site: keep the profile on the device.
-      if (err instanceof ApiError && err.status === 503 && /^[a-z]{1,8}\d{1,6}$/.test(draft.netId) && draft.name.length >= 2 && draft.major) {
-        const local: Profile = { ...draft, year: standingFor(classOf), answers: profile?.answers ?? 0 };
-        setProfile(local);
-        onDone(local);
-      } else setError(err instanceof Error ? err.message : 'Could not save the details.');
+      setError(err instanceof Error ? err.message : 'Could not save the details.');
     } finally {
       setSaving(false);
     }
   };
 
+  const login = async (event: FormEvent) => {
+    event.preventDefault();
+    setSaving(true); setError('');
+    try {
+      if (!sent) {
+        const result = await api.auth.send(email);
+        setEmail(result.email); setSent(true); setRetryAt(Date.now() + 60_000);
+      } else {
+        const result = await api.auth.verify(email, code);
+        saveAccountKey(result.key); setNetId(result.netId); setVerified(true);
+        if (result.profile) { setProfile(result.profile); onDone(result.profile); }
+      }
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not log in.'); }
+    finally { setSaving(false); }
+  };
+  if (!verified) return (
+    <form className="stack auth-form" onSubmit={(event) => void login(event)}>
+      <p className="muted">Log in or create an account with your NYU email. Your account works on every device.</p>
+      <div className="field">
+        <label htmlFor="pf-email">NYU email</label>
+        <input id="pf-email" className="input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="abc1234@nyu.edu" autoComplete="email" autoCapitalize="off" required disabled={sent} data-autofocus />
+      </div>
+      {sent && <div className="field">
+        <label htmlFor="pf-code">Verification code</label>
+        <input id="pf-code" className="input otp-input" value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required autoFocus />
+        <p className="small muted">Check your inbox and spam folder. The code expires in 10 minutes.</p>
+      </div>}
+      {error && <div className="alert error" role="alert">{error}</div>}
+      <button type="submit" className="btn primary" disabled={saving}>{saving ? 'Please wait…' : sent ? 'Verify and log in' : 'Send verification code'}</button>
+      {sent && <div className="actions">
+        <button type="button" className="btn ghost" disabled={saving || now < retryAt} onClick={async () => {
+          setSaving(true); setError('');
+          try { await api.auth.send(email); setRetryAt(Date.now() + 60_000); }
+          catch (err) { setError(err instanceof Error ? err.message : 'Could not resend.'); }
+          finally { setSaving(false); }
+        }}>{now < retryAt ? `Resend in ${Math.ceil((retryAt - now) / 1000)}s` : 'Resend code'}</button>
+        <button type="button" className="btn ghost" disabled={saving} onClick={() => { setSent(false); setCode(''); setError(''); }}>Change email</button>
+      </div>}
+    </form>
+  );
   return (
     <form className="stack" style={{ gap: 14 }} onSubmit={(event) => void submit(event)}>
       <div className="form-grid">
@@ -53,7 +102,7 @@ export function ProfileForm({ onDone, submitLabel = 'Save' }: { onDone(profile: 
         </div>
         <div className="field">
           <label htmlFor="pf-netid">NetID</label>
-          <input id="pf-netid" className="input" value={netId} onChange={(event) => setNetId(event.target.value)} placeholder="abc1234" autoCapitalize="off" autoCorrect="off" spellCheck={false} maxLength={14} required />
+          <input id="pf-netid" className="input" readOnly value={netId} onChange={(event) => setNetId(event.target.value)} placeholder="abc1234" autoCapitalize="off" autoCorrect="off" spellCheck={false} maxLength={14} required />
         </div>
         <div className="field">
           <label htmlFor="pf-major">Major</label>

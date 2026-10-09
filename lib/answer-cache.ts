@@ -12,7 +12,7 @@ import type { AskResponse } from './types.ts';
 /** Long enough to absorb a busy day, short enough that new notices, listings and board answers show up. */
 export const ANSWER_TTL_MS = 6 * 3_600_000;
 /** Bumped whenever the prompt changes, so answers written under the old one are not served. */
-const VERSION = 'v5';
+const VERSION = 'v6';
 const PREFIX = `answer:${VERSION}:`;
 const MAX_HOT = 500;
 

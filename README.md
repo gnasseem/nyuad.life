@@ -53,7 +53,8 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
    | `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Free backup models for answers when Gemini is overloaded or out of quota (below). Any or all. |
    | `MISTRAL_API_KEY` | Optional backup when its account has capacity; add `mistral` to `ROR_MODEL_ORDER` to use it. |
    | `DEEPSEEK_API_KEY` | Optional paid safety net, about $0.002 an answer: used only when every free model is down (below). |
-   | `ROR_ADMIN_CODE` | Admin mode (below): at least 12 characters, ideally 32 random ones (`openssl rand -base64 32`). |
+   | `ROR_ADMIN_NETIDS` | Comma-separated verified administrator NetIDs, for example `gnn9245`. |
+   | `RESEND_API_KEY`, `RESEND_FROM`, `SESSION_SECRET` | NYU email login: a verified Resend sender and a 32+ character session secret. |
    | `OPENAI_CLIENT_ID`, `SESSION_SECRET`, `ROR_SITE_URL` | Sign in with ChatGPT: answers on each student's own plan (below). |
    | `VOYAGE_API_KEY` | Semantic search (must be the provider that built the index) and the reranker. |
    | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | The board: questions, notices, offers, listings, course summaries. |
@@ -194,8 +195,7 @@ Manual: `cp .env.example .env`, add the key, `npm run index`, commit `data/index
 
 1. Create a Supabase project and run the whole of `supabase/schema.sql` in its SQL editor. It is safe to run again, and
    running it again is how an existing project gets new columns and tables (Campus Dirham offers need the `currency`
-   column, binding NetIDs to a browser needs `owner_key`, and admin mode needs `board_bans`, `admin_audit` and
-   `admin_attempts`; until they are there, admin sign-in counts wrong codes per instance only and nobody can be barred).
+   column, verified accounts need `owner_key` and `auth_email_codes`, and admin mode needs `board_bans` and `admin_audit`).
    Row level security is on with no policies, so only the service role, which the API holds, can read or write.
 2. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on Vercel and in `.env`, then redeploy.
 
@@ -203,24 +203,37 @@ If the pages say the board tables are missing, the schema was not run in the pro
 say the key was rejected, the anon key was pasted instead of the service role key. Locally, with nothing set, the board
 runs in memory.
 
-A NetID belongs to the browser that set it up: the profile keeps a hash of that browser's key, and answering, posting,
-trading or editing the profile as the NetID from another browser is refused. Profiles made before this are claimed by
-the first browser that uses them.
+Official-page refreshes include the academic calendar, registration resources and student portal links.
+`npm run scrape:official` refreshes public pages; `npm run index:official` updates their semantic index incrementally.
+For protected portal reference pages, run `npm run scrape:official -- --host students.nyuad.nyu.edu --portal-login`
+and complete NYU sign-in in the browser once. Subsequent runs can use `--portal-browser` with the saved
+`.portal-profile` login (`--portal-profile PATH` reuses another NYU browser profile). Login pages, personal
+records, account widgets and student directories are excluded. Refresh and reindex after deadlines change;
+stale pages are not treated as evidence for a current deadline. No credentials are sent to the deployed app.
+
+Retrieval preserves full names and course codes during query rewriting, searches the original and expanded queries,
+filters person matches before ranking, and reranks all source kinds with backup models when needed. Keyword
+fallbacks require meaningful term coverage. Current official policy and deadline evidence comes before anecdotes.
+Unanswered board questions enter the first feed page even when older and get priority, then major/year matches.
+
+Accounts use a six-digit code sent to `netid@nyu.edu` through Resend. Set `RESEND_API_KEY`,
+`RESEND_FROM` (a sender on a domain verified in Resend), and `SESSION_SECRET` (32+ random characters,
+for example `openssl rand -base64 32`). Run `supabase/schema.sql` again before deploying the email login upgrade.
+The same form handles signup and returning users. Codes expire after ten minutes, allow five attempts, and work
+once. Requests are limited to five per email per hour and one per minute in the database. Verified sessions use
+30-day encrypted HttpOnly cookies. Phones and laptops share account ownership; the first email verification
+recovers existing browser-owned posts. Settings includes Log out.
 
 ## Admin mode
 
-Set `ROR_ADMIN_CODE` on Vercel and redeploy. In Settings, enter the code under Admin: every question, answer, notice,
-listing and offer then shows a remove button, with "Remove and bar the writer" to stop that NetID posting again (the
-list of barred NetIDs is in Settings, with a way to undo it). Settings also gets "Check models".
+Set `ROR_ADMIN_NETIDS=gnn9245` on Vercel, or a comma-separated list of NetIDs, and redeploy. An allowlisted user
+gets admin controls after verifying their NYU email and saving their profile. The allowlist is checked on every
+admin request. Removing a NetID from it removes its privileges without waiting for the login session to expire.
+Admins can remove posts, bar or unbar accounts, and check the answer models in Settings. Actions are recorded in
+`admin_audit`. Shared admin codes are no longer accepted.
 
-- The code is compared in constant time. Five wrong codes from one address lock it out for 15 minutes, and 25 in a day
-  lock admin sign-in for everyone until the day is over; these are counted in the database (`admin_attempts`), so they
-  hold across serverless instances. A locked-out try gets the same answer as a wrong code.
-- A right code sets an encrypted, HttpOnly, `SameSite=Strict` cookie that expires after an hour. Changing the code
-  ends every admin session.
-- Every removal is written to `admin_audit` with a copy of what was removed.
-
-Routes: `GET /api/admin?op=me|bans|models`, `POST /api/admin {op: login|logout|remove|unban}`.
+Routes: `GET /api/admin?op=me|bans|models`, `POST /api/admin {op: remove|unban}`.
+Email routes use `/api/board` operations `auth_send`, `auth_verify`, `auth_me`, and `auth_logout`.
 
 ## Safety
 
@@ -250,10 +263,10 @@ Everything students write is screened by rules in `lib/moderation.ts`, which add
 Ask is limited per address (a burst, a per-minute rate and a daily ceiling; IPv6 counted per /64), and only answers
 students who signed up. The API refuses posts from other sites' pages (Origin and Sec-Fetch-Site), sends no CORS
 headers in production, and the site is served with a strict Content-Security-Policy and frame-ancestors 'none'. The
-browser's key travels in a header rather than the address, and database errors reach the logs, not the browser.
+verified session travels in an HttpOnly cookie, and database errors reach the logs, not the browser.
 `ROR_REQUIRE_SIGNUP=0` turns the sign-up requirement off on the server.
 
-How questions are handed out (`lib/board.ts`): a helper never sees their own question (matched by their browser key) or
+How questions are handed out (`lib/board.ts`): a helper never sees their own question (matched by their shared account key) or
 one they answered or skipped,
 or one that already has three answers. Unanswered questions come first, then the least seen; a question tagged for the
 helper's major or year gets a lift, and one many people skipped sinks.

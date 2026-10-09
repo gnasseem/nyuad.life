@@ -42,7 +42,9 @@ export function QuestionsPage(_props: { search: URLSearchParams }) {
   const [more, setMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<Filter>('for-you');
+  const [filter, setFilter] = useState<Filter>('all');
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
   const [asking, setAsking] = useState(false);
   const [prefill, setPrefill] = useState('');
 
@@ -53,6 +55,7 @@ export function QuestionsPage(_props: { search: URLSearchParams }) {
       .then((result) => {
         setQuestions(result.questions);
         setMore(result.more);
+        setCursor(result.next);
         setError('');
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Could not load the questions.'));
@@ -75,13 +78,13 @@ export function QuestionsPage(_props: { search: URLSearchParams }) {
   }, []);
 
   const loadMore = async () => {
-    const last = questions?.at(-1);
-    if (!last || loadingMore) return;
+    if (!cursor || loadingMore) return;
     setLoadingMore(true);
     try {
-      const result = await api.board.feed(last.createdAt);
+      const result = await api.board.feed(cursor);
       setQuestions((current) => [...(current ?? []), ...result.questions.filter((entry) => !current?.some((known) => known.id === entry.id))]);
       setMore(result.more);
+      setCursor(result.next);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load more.');
     } finally {
@@ -93,11 +96,21 @@ export function QuestionsPage(_props: { search: URLSearchParams }) {
     setQuestions((current) => current?.map((entry) => (entry.id === questionId ? { ...entry, answers: [...entry.answers, answer], status: 'answered' } : entry)) ?? null);
 
   const shown = (questions ?? []).filter((entry) => {
+    if (query.trim() && !`${entry.text} ${entry.summary} ${entry.answers.map((answer) => answer.text).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())) return false;
+    if (entry.status === 'closed') return false;
     if (filter === 'open') return entry.answers.length === 0;
     if (filter === 'answered') return entry.answers.length > 0;
     if (filter === 'mine') return entry.mine;
-    if (filter === 'for-you') return !entry.mine && entry.answers.length < 3 && (entry.majors.length === 0 || (profile ? entry.majors.includes(profile.major) : false) || (profile ? entry.years.includes(profile.year) : false));
+    if (filter === 'for-you') return !entry.mine && entry.answers.length < 3 && ((!entry.majors.length && !entry.years.length) || (profile ? entry.majors.includes(profile.major) || entry.years.includes(profile.year) : false));
     return true;
+  }).sort((a, b) => {
+    const score = (entry: FeedQuestion) => {
+      const need = entry.answers.length === 0 ? 10 : entry.answers.length < 3 ? 3 : 0;
+      const fit = profile ? (entry.majors.includes(profile.major) ? 3 : 0) + (entry.years.includes(profile.year) ? 2 : 0) : 0;
+      const waiting = Math.min(2, Math.max(0, (Date.now() - Date.parse(entry.createdAt)) / 86_400_000) / 7);
+      return need + fit + (entry.answers.length === 0 ? waiting : 0) - (entry.mine ? 2 : 0);
+    };
+    return score(b) - score(a) || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id);
   });
   const openCount = (questions ?? []).filter((entry) => entry.answers.length === 0).length;
 
@@ -113,6 +126,8 @@ export function QuestionsPage(_props: { search: URLSearchParams }) {
       ) : (
         <div className="split">
           <div className="feed">
+            <div className="field"><label htmlFor="question-search">Find a question</label><input id="question-search" className="input" type="search" placeholder="Search questions and answers" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+            <p className="small muted" style={{ margin: '12px 0' }}>Unanswered questions come first, with a lift for your major and year.</p>
             <div className="chips scroll-x feed-filters" role="radiogroup" aria-label="Show">
               {FILTERS.map((entry) => (
                 <button key={entry.id} type="button" role="radio" aria-checked={filter === entry.id} className={`chip${filter === entry.id ? ' on' : ''}`} onClick={() => setFilter(entry.id)}>
@@ -130,9 +145,9 @@ export function QuestionsPage(_props: { search: URLSearchParams }) {
               </div>
             )}
             {questions && shown.length === 0 && (
-              <EmptyState icon={<IconChat />} title={filter === 'mine' ? 'You have not asked anything yet' : filter === 'open' ? 'Every question has an answer' : filter === 'for-you' ? 'Nothing matched you yet' : 'No questions here yet'} text={filter === 'for-you' ? 'Other students may still need an answer.' : 'Ask what the archive could not answer: students in the right major and year see it first.'}>
-                <button type="button" className="btn primary" onClick={() => filter === 'for-you' ? setFilter('open') : setAsking(true)}>
-                  {filter === 'for-you' ? 'See questions needing help' : <><IconPlus /> Ask a question</>}
+              <EmptyState icon={<IconChat />} title={query.trim() ? 'No matching questions' : filter === 'mine' ? 'You have not asked anything yet' : filter === 'open' ? 'Every question has an answer' : filter === 'for-you' ? 'Nothing matched you yet' : 'No questions here yet'} text={query.trim() ? 'Try a different phrase or clear your search.' : filter === 'for-you' ? 'Other students may still need an answer.' : 'Ask what the archive could not answer: students in the right major and year see it first.'}>
+                <button type="button" className="btn primary" onClick={() => query.trim() ? setQuery('') : filter === 'for-you' ? setFilter('open') : setAsking(true)}>
+                  {query.trim() ? 'Clear search' : filter === 'for-you' ? 'See questions needing help' : <><IconPlus /> Ask a question</>}
                 </button>
               </EmptyState>
             )}

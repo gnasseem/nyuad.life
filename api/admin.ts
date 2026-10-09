@@ -1,16 +1,5 @@
-/**
- * Admin mode (lib/admin.ts): sign in with ROR_ADMIN_CODE, then remove any post, bar its writer from posting, and
- * check which models answer.
- *
- *   GET  /api/admin?op=me                    { available, admin }
- *   GET  /api/admin?op=bans                  the barred NetIDs
- *   GET  /api/admin?op=models                one tiny request to every model, and what each said
- *   POST /api/admin { op: login, code }      turns admin mode on for this browser (an HttpOnly cookie)
- *   POST /api/admin { op: logout }
- *   POST /api/admin { op: remove, type: question|answer|notice|listing|offer, id, ban?, reason? }
- *   POST /api/admin { op: unban, netId }
- */
-import { adminConfig, adminSession, requireAdmin, signIn, signOut } from '../lib/admin.ts';
+/** Moderation and model diagnostics for verified accounts on ROR_ADMIN_NETIDS. */
+import { adminConfig, adminSession, requireAdmin } from '../lib/admin.ts';
 import { validateNetId } from '../lib/board.ts';
 import { boardStore, type AdminTarget, type BoardStore } from '../lib/board-store.ts';
 import { geminiConfig, geminiKeyProblem } from '../lib/gemini.ts';
@@ -28,24 +17,10 @@ export default route(['GET', 'POST'], async (req, res) => {
   const store = boardStore();
 
   if (op === 'me') {
-    sendJson(res, 200, { available: Boolean(cfg), admin: Boolean(adminSession(cfg, req)) });
+    sendJson(res, 200, { available: cfg.size > 0, admin: Boolean(await adminSession(cfg, req)) });
     return;
   }
-  if (op === 'login' && req.method === 'POST') {
-    // The database limit (lib/admin.ts) is the real one; this keeps one instance from being hammered meanwhile.
-    rateLimit(req, 5, 2, 'admin-login');
-    if (!cfg) throw new ApiError(404, 'Admin mode is not set up on this server (ROR_ADMIN_CODE).', 'admin_off');
-    await signIn(cfg, store, req, res, body.code);
-    sendJson(res, 200, { admin: true });
-    return;
-  }
-  if (op === 'logout' && req.method === 'POST') {
-    signOut(req, res);
-    sendJson(res, 200, { admin: false });
-    return;
-  }
-
-  const session = requireAdmin(cfg, req);
+  const session = await requireAdmin(cfg, req);
   rateLimit(req, 60, 60, 'admin');
   const ip = `ip:${clientKey(clientIp(req))}`;
   switch (op) {

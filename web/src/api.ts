@@ -393,7 +393,7 @@ async function failure(response: Response, fallback: string): Promise<ApiError> 
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${apiBase()}${path}`, { ...init, headers: { ...identity(), ...(init.headers as Record<string, string> | undefined) } });
+  const response = await fetch(`${apiBase()}${path}`, { ...init, credentials: 'include', headers: { ...identity(), ...(init.headers as Record<string, string> | undefined) } });
   if (!response.ok) throw await failure(response, `Request failed (${response.status}).`);
   return (await response.json()) as T;
 }
@@ -448,12 +448,18 @@ export const api = {
     return request<SearchResult>(`/api/search?${query}`);
   },
   post: (id: string) => request<{ post: PostDetail; related: PostSummary[] }>(`/api/post?id=${encodeURIComponent(id)}`),
+  auth: {
+    me: () => request<{ netId: string; key: string; profile: Profile | null }>('/api/board?op=auth_me'),
+    send: (email: string) => post<{ email: string }>('/api/board', { op: 'auth_send', email }),
+    verify: (email: string, code: string) => post<{ netId: string; key: string; profile: Profile | null }>('/api/board', { op: 'auth_verify', email, code }),
+    logout: () => post<{ ok: boolean }>('/api/board', { op: 'auth_logout' }),
+  },
   board: {
     stats: () => request<{ open: number; answered: number; answers: number; helpers: number }>('/api/board?op=stats'),
     recent: () => request<{ questions: QuestionWithAnswers[] }>('/api/board?op=recent'),
     question: (id: string) => request<{ question: Question; answers: Answer[] }>(`/api/board?op=question&id=${encodeURIComponent(id)}`),
     mine: (_key?: string) => request<{ questions: QuestionWithAnswers[] }>('/api/board?op=mine'),
-    feed: (before?: string) => request<{ questions: FeedQuestion[]; more: boolean }>(`/api/board?op=feed${before ? `&before=${encodeURIComponent(before)}` : ''}`),
+    feed: (before?: string) => request<{ questions: FeedQuestion[]; more: boolean; next: string | null }>(`/api/board?op=feed${before ? `&before=${encodeURIComponent(before)}` : ''}`),
     announcements: () => request<{ announcements: Announcement[] }>('/api/board?op=announcements'),
     // The browser key goes with everything done as a NetID: the server only lets the browser that set a NetID up act as it.
     profile: (body: { netId: string; name: string; major: string; classOf: number }) => post<{ profile: Profile }>('/api/board', { op: 'profile', key: askerKey(), ...body }),
@@ -477,8 +483,6 @@ export const api = {
   },
   admin: {
     me: () => request<{ available: boolean; admin: boolean }>('/api/admin?op=me'),
-    login: (code: string) => post<{ admin: boolean }>('/api/admin', { op: 'login', code }),
-    logout: () => post<{ admin: boolean }>('/api/admin', { op: 'logout' }),
     remove: (body: { type: AdminTarget; id: string; ban?: boolean; reason?: string }) => post<{ ok: true; banned: string | null }>('/api/admin', { op: 'remove', ...body }),
     bans: () => request<{ bans: Array<{ netId: string; reason: string; createdAt: string }> }>('/api/admin?op=bans'),
     unban: (netId: string) => post<{ ok: true }>('/api/admin', { op: 'unban', netId }),
@@ -514,6 +518,7 @@ interface AskHandlers {
 export async function askStream(question: string, history: ChatTurn[], handlers: AskHandlers, signal?: AbortSignal): Promise<{ answer: string; complete: boolean }> {
   const response = await fetch(`${apiBase()}/api/ask`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'content-type': 'application/json', ...identity() },
     body: JSON.stringify({ question, history, stream: true }),
     signal,

@@ -35,7 +35,8 @@ import { detectRedirect } from '../lib/domains.ts';
 import { embedderForIndex } from '../lib/embeddings.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, queryString, rateLimit, readJson, route, sendJson, type ApiRequest } from '../lib/http.ts';
-import { claimedIdentity, forgetMember, NETID_TAKEN, ownerOf, requireMember, requireProfile } from '../lib/identity.ts';
+import { accountKey, clearEmailSession, emailNetId, emailSession, otpDigest, requireEmailSession, sendLoginCode, setEmailSession } from '../lib/auth.ts';
+import { claimedIdentity, NETID_TAKEN, ownerOf, requireMember, requireProfile } from '../lib/identity.ts';
 import { reviewPost, screenPost, type PostKind, type ReviewedKind } from '../lib/moderation.ts';
 import { providersFromEnv, warmModels } from '../lib/providers.ts';
 import { retrieve } from '../lib/rag.ts';
@@ -49,8 +50,47 @@ export default route(['GET', 'POST'], async (req, res) => {
   if (!store) throw new ApiError(503, 'The board is not set up on this server.', 'board_unavailable');
   const body: Body = req.method === 'POST' ? await readJson<Body>(req) : {};
   const op = String(req.method === 'POST' ? body.op ?? '' : queryString(req, 'op')).trim();
-  // The browser key: from the header, or from the query string as older clients sent it (which leaves it in logs).
-  const headerKey = claimedIdentity(req).key || queryString(req, 'key').trim();
+  if (['auth_send', 'auth_verify', 'auth_logout'].includes(op) && req.method !== 'POST') throw new ApiError(405, 'Use POST for login operations.', 'method_not_allowed');
+  if (op === 'auth_send') {
+    rateLimit(req, 5, 1, 'email-send');
+    const netId = emailNetId(body.email);
+    await sendLoginCode(store, netId);
+    sendJson(res, 200, { email: `${netId}@nyu.edu` });
+    return;
+  }
+  if (op === 'auth_verify') {
+    rateLimit(req, 15, 5, 'email-verify');
+    const netId = emailNetId(body.email);
+    const code = String(body.code ?? '').trim();
+    if (!/^\d{6}$/.test(code) || !await store.consumeOtp(netId, otpDigest(netId, code))) throw new ApiError(400, 'That code is incorrect or expired. Request a new code after five tries.', 'bad_otp');
+    if (await store.isBanned(netId)) throw new ApiError(403, 'This account can no longer use the site.', 'banned');
+    const key = accountKey(netId);
+    await store.rebindProfile(netId, ownerOf(key), key);
+    const profile = await store.getProfile(netId);
+    setEmailSession(req, res, netId);
+    sendJson(res, 200, { netId, key, profile: profile ? publicProfile(profile) : null });
+    return;
+  }
+  if (op === 'auth_me') {
+    const session = emailSession(req);
+    const profile = session && !await store.isBanned(session.netId) ? await store.getProfile(session.netId) : null;
+    sendJson(res, 200, { netId: session?.netId ?? '', key: profile ? session!.key : '', profile: profile ? publicProfile(profile) : null });
+    return;
+  }
+  if (op === 'auth_logout') {
+    clearEmailSession(req, res);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+  const publicReads = ['stats', 'announcements', 'offers', 'listings', 'recent', 'feed', 'leaderboard', 'question'];
+  if (req.method === 'POST' || !publicReads.includes(op)) {
+    const session = requireEmailSession(req);
+    if (body.netId && body.netId !== session.netId) throw new ApiError(403, 'Use the account you logged in with.', 'identity_mismatch');
+    body.netId = session.netId;
+    body.key = session.key;
+  }
+  // Ownership comes from the verified session, including on another device.
+  const headerKey = emailSession(req)?.key ?? '';
 
   switch (op) {
     case 'stats':
@@ -90,12 +130,15 @@ export default route(['GET', 'POST'], async (req, res) => {
     case 'feed': {
       rateLimit(req, 60, 60, 'board-read');
       const before = queryString(req, 'before').trim();
-      const questions = await store.listFeed(FEED_PAGE, before || undefined);
+      const page = await store.listFeed(FEED_PAGE, before || undefined);
+      const pending = before ? [] : await store.listOpen(300);
+      const questions = [...new Map([...pending, ...page].map((entry) => [entry.id, entry])).values()];
       const answers = await store.listAnswers(questions.map((question) => question.id));
       const key = /^[a-z0-9-]{8,64}$/i.test(headerKey) ? headerKey : '';
       sendJson(res, 200, {
         questions: questions.map((question) => ({ ...publicQuestion(question), mine: Boolean(key) && question.askerKey === key, answers: answers.filter((answer) => answer.questionId === question.id).map(publicAnswer) })),
-        more: questions.length === FEED_PAGE,
+        more: page.length === FEED_PAGE,
+        next: page.at(-1)?.createdAt ?? null,
       });
       return;
     }
@@ -152,7 +195,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       const profile = await requireProfile(store, body.netId, body.key);
       const key = validateKey(body.key);
       if (!await store.deleteProfile(profile.netId, ownerOf(key), key)) throw new ApiError(403, NETID_TAKEN, 'netid_taken');
-      forgetMember(profile.netId, key);
+      clearEmailSession(req, res);
       sendJson(res, 200, { ok: true });
       return;
     }

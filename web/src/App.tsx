@@ -18,7 +18,7 @@ import { QuestionPage, QuestionsPage } from './pages/Questions';
 import { SettingsPage } from './pages/Settings';
 import { ThreadSearch } from './pages/Threads';
 import { navigate, onLinkClick, routePath, useRoute, type Route } from './router';
-import { applyTheme, loadActiveConversation, loadConversations, loadOnboarded, loadProfile, loadSidebarClosed, loadTheme, onConversationsChange, saveOnboarded, saveProfile, saveSidebarClosed, type Conversation, type Theme } from './store';
+import { applyTheme, loadActiveConversation, loadConversations, loadOnboarded, loadProfile, loadSidebarClosed, loadTheme, onConversationsChange, saveOnboarded, saveAccountKey, saveProfile, saveSidebarClosed, type Conversation, type Theme } from './store';
 import { standingFor } from './year';
 
 type Line = 'ask' | 'questions' | 'notices' | 'market' | 'guide' | 'plan';
@@ -106,7 +106,13 @@ export function App() {
       .then((result) => setAdmin(result.admin))
       .catch(() => setAdmin(false));
   }, []);
-  useEffect(refreshAdmin, [refreshAdmin]);
+  useEffect(refreshAdmin, [refreshAdmin, profile]);
+  useEffect(() => {
+    void api.auth.me().then((result) => {
+      if (result.profile) { saveAccountKey(result.key); setProfileState(result.profile); saveProfile(result.profile); }
+      else setResignup(true);
+    }).catch(() => setResignup(true));
+  }, []);
 
   useEffect(() => {
     if (!profile) { setHelpCount(0); return; }
@@ -270,14 +276,14 @@ export function App() {
         <div className="ground" aria-hidden="true" />
         <header className="appbar">
           <div className="bar-start">
+            <a href={askHref} className="brand" onClick={onLinkClick} aria-label={`${APP_NAME}, home`}>
+              <Wordmark />
+            </a>
             {onAsk && (
               <button type="button" className="icon-btn panel-toggle" onClick={togglePanel} aria-expanded={panelOpen} aria-label={panelOpen ? 'Hide conversations' : 'Show conversations'} title={panelOpen ? 'Hide conversations' : 'Your conversations'}>
                 <IconSidebar />
               </button>
             )}
-            <a href={askHref} className="brand" onClick={onLinkClick} aria-label={`${APP_NAME}, home`}>
-              <Wordmark />
-            </a>
           </div>
           <LineNav activeIndex={activeIndex} hrefOf={hrefOf} helpCount={helpCount} />
           <div className="bar-tools">
@@ -325,7 +331,7 @@ export function App() {
       {gate && (
         <Welcome
           tour={!onboarded && !resignup}
-          reason={resignup && profile ? 'Your details need saving again on this browser. Check them and press Get started.' : undefined}
+          reason={resignup && profile ? 'Verify your NYU email to log in on this device.' : undefined}
           onToured={() => {
             saveOnboarded();
             setOnboarded(true);

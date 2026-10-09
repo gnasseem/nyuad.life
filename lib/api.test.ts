@@ -8,6 +8,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { accountKey, otpDigest, setEmailSession } from './auth.ts';
+import { boardStore } from './board-store.ts';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { resetAnswerCache } from './answer-cache.ts';
 import { createApiServer } from './devserver.ts';
 import { embedderFromEnv } from './embeddings.ts';
@@ -102,7 +105,8 @@ beforeAll(async () => {
       }
       expect(prompt).toContain('Sources:');
       expect(body.systemInstruction.parts[0].text).toContain('Room of Requirement');
-      const pieces = ['**Dania** is the favourite', ' [1][4].', '\n\n- 3 of 3 commenters recommend her [1][4].', '\n\nConfidence: high – three people agree, all this year.'];
+      const fourth = (prompt.match(/^\[(\d+)\]/gm) ?? []).some((label) => label === '[4]') ? '[1][4]' : '[1]';
+      const pieces = ['**Dania** is the favourite', ` ${fourth}.`, `\n\n- 3 of 3 commenters recommend her ${fourth}.`, '\n\nConfidence: high – three people agree, all this year.'];
       for (const piece of pieces) res.write(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: piece }] } }] })}\n\n`);
       res.write(`data: ${JSON.stringify({ candidates: [{ content: { parts: [] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20, totalTokenCount: 120 } })}\n\n`);
       res.end();
@@ -138,6 +142,9 @@ beforeAll(async () => {
   });
   await new Promise<void>((resolve) => fakeGemini.listen(0, '127.0.0.1', resolve));
   const geminiPort = (fakeGemini.address() as { port: number }).port;
+  process.env.SESSION_SECRET = 'test-email-secret-at-least-thirty-two-characters';
+  MEMBER.key = accountKey(MEMBER.netId);
+  Object.assign(headers, verifiedHeaders(MEMBER.netId));
   process.env.GEMINI_API_KEY = 'test-key';
   process.env.GEMINI_BASE_URL = `http://127.0.0.1:${geminiPort}/v1beta`;
   // The tests walk a fixed chain; the defaults themselves are checked in gemini.test.ts.
@@ -170,18 +177,26 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => api.listen(0, '127.0.0.1', resolve));
   apiUrl = `http://127.0.0.1:${(api.address() as { port: number }).port}`;
   // Answers, plan reading and contacts are for students who signed up: the tests ask as one.
-  const signup = await fetch(`${apiUrl}/api/board`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'profile', netId: MEMBER.netId, key: MEMBER.key, name: 'Test Member', major: 'Mathematics', classOf: 2027 }) });
+  const signup = await fetch(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify({ op: 'profile', netId: MEMBER.netId, key: MEMBER.key, name: 'Test Member', major: 'Mathematics', classOf: 2027 }) });
   expect(signup.status).toBe(200);
 });
 
 afterAll(async () => {
+  api?.closeAllConnections();
+  fakeGemini?.closeAllConnections();
   await new Promise((resolve) => api?.close(resolve));
   await new Promise((resolve) => fakeGemini?.close(resolve));
   rmSync(dataRoot, { recursive: true, force: true });
 });
 
-const MEMBER = { netId: 'tst1234', key: 'test-member-key-1' };
-const headers = { 'content-type': 'application/json', 'x-ror-netid': MEMBER.netId, 'x-ror-key': MEMBER.key };
+const MEMBER = { netId: 'tst1234', key: '' };
+const headers: Record<string, string> = { 'content-type': 'application/json' };
+function verifiedHeaders(netId: string): Record<string, string> {
+  let cookies: string[] = [];
+  const response = { getHeader: () => undefined, setHeader: (_name: string, value: string[]) => { cookies = value; } } as unknown as ServerResponse;
+  const key = setEmailSession({ headers: {} } as IncomingMessage, response, netId);
+  return { 'content-type': 'application/json', cookie: cookies.map((cookie) => cookie.split(';')[0]).join('; '), 'x-ror-netid': netId, 'x-ror-key': key };
+}
 
 describe('api', () => {
   // Each test asks afresh; the cache has its own test.
@@ -322,7 +337,7 @@ describe('api', () => {
   });
 
   it('keeps contacts out of the lists and hands them out one post at a time', async () => {
-    const post = (body: Record<string, unknown>) => getJson(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
+    const post = (body: Record<string, unknown>) => getJson(`${apiUrl}/api/board`, { method: 'POST', headers: verifiedHeaders('abc1234'), body: JSON.stringify(body) });
     await post({ op: 'profile', netId: 'abc1234', key: 'key-12345678', name: 'Sara Ali', major: 'Computer Science', classOf: 2027 });
     const { listing } = await post({ op: 'listing', netId: 'abc1234', key: 'key-12345678', kind: 'sell', title: 'Mini fridge', price: 150, contactKind: 'instagram', contact: '@sara' });
     const { offer } = await post({ op: 'offer', netId: 'abc1234', key: 'key-12345678', currency: 'campus', side: 'sell', amount: 360, rate: 0.5, contactKind: 'instagram', contact: '@sara' });
@@ -338,28 +353,44 @@ describe('api', () => {
     expect((await fetch(`${apiUrl}/api/board?op=contact&type=listing&id=${listing.id}`)).status).toBe(401);
   });
 
-  it('lets only the browser that set a NetID up act as it', async () => {
-    const post = (body: Record<string, unknown>) => fetch(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
-    expect((await post({ op: 'profile', netId: 'vic1234', key: 'victim-key-1', name: 'Vic Tim', major: 'Economics', classOf: 2027 })).status).toBe(200);
-    // Someone else's browser can neither take the NetID over nor post as it.
-    const takeover = await post({ op: 'profile', netId: 'vic1234', key: 'mallory-key', name: 'Mallory', major: 'Economics', classOf: 2027 });
-    expect(takeover.status).toBe(403);
-    expect(((await takeover.json()) as { error: string }).error).toBe('netid_taken');
-    expect((await post({ op: 'announce', netId: 'vic1234', key: 'mallory-key', title: 'Free food at D2', body: 'Come by', kind: 'event' })).status).toBe(403);
-    // The owner still can.
-    expect((await post({ op: 'profile', netId: 'vic1234', key: 'victim-key-1', name: 'Vic Tim', major: 'Economics', classOf: 2028 })).status).toBe(200);
-    expect((await post({ op: 'delete_profile', netId: 'vic1234', key: 'mallory-key' })).status).toBe(403);
-    expect((await post({ op: 'delete_profile', netId: 'vic1234', key: 'victim-key-1' })).status).toBe(200);
-    expect((await post({ op: 'profile', netId: 'vic1234', key: 'new-browser-key', name: 'Vic Tim', major: 'Economics', classOf: 2028 })).status).toBe(200);
+  it('consumes email codes once and grants admin access only to a verified allowlisted NetID', async () => {
+    const store = boardStore()!;
+    await store.reserveOtp(MEMBER.netId, otpDigest(MEMBER.netId, '123456'));
+    const verify = (code: string) => fetch(`${apiUrl}/api/board`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'auth_verify', email: `${MEMBER.netId}@nyu.edu`, code }) });
+    expect((await verify('654321')).status).toBe(400);
+    const success = await verify('123456');
+    expect(success.status).toBe(200);
+    expect(success.headers.get('set-cookie')).toContain('HttpOnly');
+    expect(((await success.json()) as { profile: { netId: string } }).profile.netId).toBe(MEMBER.netId);
+    expect((await verify('123456')).status).toBe(400);
+    process.env.ROR_ADMIN_NETIDS = MEMBER.netId;
+    expect((await getJson(`${apiUrl}/api/admin?op=me`, { headers })).admin).toBe(true);
+    expect((await getJson(`${apiUrl}/api/admin?op=me`, { headers: { 'x-ror-netid': MEMBER.netId, 'x-ror-key': MEMBER.key } })).admin).toBe(false);
+    process.env.ROR_ADMIN_NETIDS = '';
+    expect((await getJson(`${apiUrl}/api/admin?op=me`, { headers })).admin).toBe(false);
   });
 
-  it('answers only students who signed up, and only as the browser that did', async () => {
+  it('uses the verified account on multiple devices and rejects impersonation', async () => {
+    const victim = verifiedHeaders('vic1234');
+    const post = (body: Record<string, unknown>, credentials = victim) => fetch(`${apiUrl}/api/board`, { method: 'POST', headers: credentials, body: JSON.stringify(body) });
+    expect((await post({ op: 'profile', netId: 'vic1234', name: 'Vic Tim', major: 'Economics', classOf: 2027 })).status).toBe(200);
+    expect((await post({ op: 'profile', netId: 'vic1234', name: 'Mallory', major: 'Economics', classOf: 2027 }, headers)).status).toBe(403);
+    const laptop = verifiedHeaders('vic1234');
+    expect((await post({ op: 'profile', netId: 'vic1234', name: 'Vic Tim', major: 'Economics', classOf: 2028 }, laptop)).status).toBe(200);
+    const profile = await getJson(`${apiUrl}/api/board?op=auth_me`, { headers: laptop });
+    expect(profile.profile.classOf).toBe(2028);
+    expect((await post({ op: 'delete_profile', netId: 'vic1234' }, headers)).status).toBe(403);
+    expect((await post({ op: 'delete_profile', netId: 'vic1234' }, laptop)).status).toBe(200);
+    expect((await post({ op: 'profile', netId: 'vic1234', name: 'Vic Tim', major: 'Economics', classOf: 2028 }, victim)).status).toBe(200);
+  });
+
+  it('requires a verified session rather than claimed identity headers', async () => {
     const question = JSON.stringify({ question: 'calculus professor', stream: false });
     const anonymous = await fetch(`${apiUrl}/api/ask`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: question });
     expect(anonymous.status).toBe(401);
     expect(((await anonymous.json()) as { error: string }).error).toBe('signup_required');
-    const impostor = await fetch(`${apiUrl}/api/ask`, { method: 'POST', headers: { ...headers, 'x-ror-key': 'someone-elses-key' }, body: question });
-    expect(impostor.status).toBe(403);
+    const impostor = await fetch(`${apiUrl}/api/ask`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ror-netid': MEMBER.netId, 'x-ror-key': MEMBER.key }, body: question });
+    expect(impostor.status).toBe(401);
     expect((await fetch(`${apiUrl}/api/ask`, { method: 'POST', headers, body: question })).status).toBe(200);
   });
 
@@ -370,9 +401,10 @@ describe('api', () => {
     const { question } = await post({ op: 'ask', key: MEMBER.key, text: 'Which dining hall is open late on Fridays?' });
     const own = await post({ op: 'answer', netId: MEMBER.netId, key: MEMBER.key, questionId: question.id, text: 'D2, I think' });
     expect(own.error).toBe('own_question');
-    await post({ op: 'profile', netId: 'hlp1234', key: 'helper-key-1', name: 'Helen Helper', major: 'Physics', classOf: 2027 });
-    expect((await post({ op: 'answer', netId: 'hlp1234', key: 'helper-key-1', questionId: question.id, text: 'D2 until midnight' })).answer).toBeTruthy();
-    expect((await post({ op: 'answer', netId: 'hlp1234', key: 'helper-key-1', questionId: question.id, text: 'Also the Marketplace' })).error).toBe('already_answered');
+    const helperPost = (body: Record<string, unknown>) => getJson(`${apiUrl}/api/board`, { method: 'POST', headers: verifiedHeaders('hlp1234'), body: JSON.stringify(body) });
+    await helperPost({ op: 'profile', netId: 'hlp1234', key: 'helper-key-1', name: 'Helen Helper', major: 'Physics', classOf: 2027 });
+    expect((await helperPost({ op: 'answer', netId: 'hlp1234', key: 'helper-key-1', questionId: question.id, text: 'D2 until midnight' })).answer).toBeTruthy();
+    expect((await helperPost({ op: 'answer', netId: 'hlp1234', key: 'helper-key-1', questionId: question.id, text: 'Also the Marketplace' })).error).toBe('already_answered');
     const feed = await getJson(`${apiUrl}/api/board?op=feed`, { headers });
     const entry = feed.questions.find((item: { id: string }) => item.id === question.id);
     expect(entry).toMatchObject({ mine: true, answers: [expect.objectContaining({ text: 'D2 until midnight' })] });
@@ -380,7 +412,8 @@ describe('api', () => {
   });
 
   it('screens what students post', async () => {
-    const post = (body: Record<string, unknown>) => fetch(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
+    const sellerHeaders = verifiedHeaders('sel1234');
+    const post = (body: Record<string, unknown>) => fetch(`${apiUrl}/api/board`, { method: 'POST', headers: sellerHeaders, body: JSON.stringify(body) });
     await post({ op: 'profile', netId: 'sel1234', key: 'seller-key-1', name: 'Sam Seller', major: 'Economics', classOf: 2027 });
     const blocked = await post({ op: 'listing', netId: 'sel1234', key: 'seller-key-1', kind: 'sell', title: 'Selling vapes', body: 'elf bars, dm me', price: 40, contactKind: 'instagram', contact: '@sam' });
     expect(blocked.status).toBe(422);

@@ -76,7 +76,7 @@ const STOPS: Stop[] = [
 ];
 
 /**
- * The first thing a new visitor sees: a short animated ride through each section, then the sign-up form, which
+ * The first thing a new visitor sees: a short animated ride through each section, then email verification and account details, which
  * everyone fills in before using the site. Someone who has seen the tour but has no details (they removed them, or
  * the server lost them) goes straight to the form.
  */
@@ -100,6 +100,7 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (index >= last || (event.target as HTMLElement | null)?.closest('input, select, textarea')) return;
+      if (event.target instanceof HTMLElement && event.target.closest('input, textarea, select')) return;
       if (event.key === 'ArrowRight') go(index + 1);
       else if (event.key === 'ArrowLeft') go(index - 1);
     };
@@ -126,7 +127,7 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
   const stop = STOPS[index];
   const line = stop?.line ?? 'central';
   return createPortal(
-    <div className="welcome" data-line={line === 'central' ? 'ask' : line} role="dialog" aria-modal="true" aria-label={stop ? stop.title : 'Sign up'}>
+    <div className="welcome" data-line={line === 'central' ? 'ask' : line} role="dialog" aria-modal="true" aria-label={stop ? stop.title : 'Log in'}>
       <div className="welcome-glow" aria-hidden="true" />
       <div
         ref={cardRef}
@@ -167,8 +168,8 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
                 <i className="welcome-ring" />
                 Last stop
               </span>
-              <h2>Sign up to get on board</h2>
-              <p>{reason || 'Everyone here is an NYUAD student. Your details route questions to people who can answer them and keep the board real. Your NetID is never shown to anyone.'}</p>
+              <h2>Log in to nyuad.life</h2>
+              <p>{reason || 'Verify your NYU email to access your account from any device. New here? The same form creates your account.'}</p>
               <ProfileForm onDone={onDone} submitLabel="Get started" />
             </div>
           )}
@@ -182,7 +183,7 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
               </button>
               <Progress index={index} total={last} onPick={go} />
               <button type="button" className="btn primary welcome-next" onClick={() => go(index + 1)}>
-                {index === last - 1 ? 'Sign up' : index === 0 ? 'Start the tour' : 'Next'} <IconArrow className="go" />
+                {index === last - 1 ? 'Log in' : index === 0 ? 'Start the tour' : 'Next'} <IconArrow className="go" />
               </button>
             </>
           ) : (
@@ -193,9 +194,9 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
             )
           )}
         </div>
-        {index < last && index > 0 && (
+        {index < last && (
           <button type="button" className="welcome-skip" onClick={() => go(last)}>
-            Skip to sign up
+            Log in or create an account
           </button>
         )}
       </div>

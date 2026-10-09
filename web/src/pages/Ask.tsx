@@ -457,7 +457,7 @@ interface HomeData {
 }
 
 function useHomeData(): HomeData {
-  const { boardProblem } = useApp();
+  const { boardProblem, setAskPrefill } = useApp();
   const [data, setData] = useState<HomeData>({ notices: null, rides: null, listings: 0, markets: [], answered: null, open: null });
   useEffect(() => {
     const set = (patch: Partial<HomeData>) => setData((current) => ({ ...current, ...patch }));
@@ -502,28 +502,37 @@ function useHomeData(): HomeData {
 }
 
 function Home({ composer, answersOff }: { composer: ReactNode; answersOff: boolean }) {
-  const { boardProblem } = useApp();
+  const { boardProblem, setAskPrefill } = useApp();
   const data = useHomeData();
-  const rootRef = useRef<HTMLDivElement>(null);
   const now = useNow();
   const upcoming = (data.notices ?? []).filter((entry) => entry.kind === 'event' && entry.startsAt && Date.parse(entry.startsAt) > now.getTime() - 3 * 3_600_000).slice(0, 3);
   const offline = boardProblem ? <p className="stops-note">Unavailable right now.</p> : null;
 
   return (
-    <div className="home" ref={rootRef}>
+    <div className="home">
       <section className="central">
         <div className="central-sign">
-          <h1>Central</h1>
+          <h1>What do you need to know?</h1>
           <span lang="ar" dir="rtl">
-            المركز
+            اسأل
           </span>
         </div>
+        <p className="ask-intro">Find answers in official NYUAD pages, course information and student experiences.</p>
         <div className="central-ask">
           {composer}
           {answersOff && <p className="central-note">Answers are paused right now.</p>}
           <ChatGPTLine />
+          <div className="ask-suggestions" aria-label="Try a question">
+            {['How does course registration work?', 'Where can I find academic deadlines?', 'What are the pool hours?'].map((question) => <button type="button" key={question} onClick={() => setAskPrefill({ question, autoSend: false })}>{question}<IconArrow /></button>)}
+          </div>
         </div>
       </section>
+      <div className="campus-links" aria-label="Official campus links">
+        <span>Campus essentials</span>
+        <a href="https://students.nyuad.nyu.edu/" target="_blank" rel="noopener noreferrer">Student portal <IconArrow /></a>
+        <a href="https://nyuad.nyu.edu/en/academics/undergraduate/academic-calendar.html" target="_blank" rel="noopener noreferrer">Academic calendar <IconArrow /></a>
+        <a href="https://albert.nyu.edu/" target="_blank" rel="noopener noreferrer">Albert <IconArrow /></a>
+      </div>
 
       <div className="line-cards">
         <LineCard line="notices" title="Events" ar="الفعاليات" href="/events">
@@ -621,7 +630,6 @@ function Home({ composer, answersOff }: { composer: ReactNode; answersOff: boole
         </LineCard>
       </div>
 
-      <HomeLines root={rootRef} deps={[data, answersOff]} />
     </div>
   );
 }
@@ -668,80 +676,6 @@ function LineCard({ line, title, ar, href, children }: { line: string; title: st
       </a>
       <div className="stations in-plate">{children}</div>
     </section>
-  );
-}
-
-const LINE_ORDER = ['notices', 'market', 'questions', 'guide'];
-
-/**
- * The four lines leaving Central, drawn as one bundle: out of the right end of the ask box, down the right of the
- * board, back along its foot, and each one peeling off into its card. The line for the rightmost card rides on the
- * outside of every bend, so no two lines ever cross. Measured from the page; only drawn while the cards sit in a row.
- */
-function HomeLines({ root, deps }: { root: React.RefObject<HTMLDivElement | null>; deps: unknown[] }) {
-  const [paths, setPaths] = useState<Array<{ line: string; d: string }>>([]);
-
-  useLayoutEffect(() => {
-    const element = root.current;
-    if (!element) return;
-    const measure = () => {
-      if (!window.matchMedia('(min-width: 1100px)').matches) return setPaths([]);
-      const box = element.getBoundingClientRect();
-      const rect = (selector: string) => element.querySelector(selector)?.getBoundingClientRect();
-      const board = rect('.central');
-      const composer = rect('.central .composer');
-      if (!board || !composer) return;
-      const gap = 11;
-      const big = 30;
-      const hubY = composer.top + composer.height / 2 - box.top;
-      const hubX = composer.right - box.left;
-      const downX = board.right - box.left - 64;
-      const footY = board.bottom - box.top - 44;
-      const next: Array<{ line: string; d: string }> = [];
-      LINE_ORDER.forEach((line, i) => {
-        const ring = rect(`[data-ring="${line}"]`);
-        if (!ring) return;
-        const offset = (i - 1.5) * gap;
-        const r = big + offset;
-        const y0 = hubY - offset;
-        const x1 = downX + offset;
-        const y2 = footY + offset;
-        const rx = ring.left + ring.width / 2 - box.left;
-        const ry = ring.top + ring.height / 2 - box.top;
-        const turn = 18;
-        const d = [
-          `M ${hubX} ${y0}`,
-          `H ${downX - big}`,
-          `A ${r} ${r} 0 0 1 ${x1} ${hubY + big}`,
-          `V ${footY - big}`,
-          `A ${r} ${r} 0 0 1 ${downX - big} ${y2}`,
-          `H ${rx + turn}`,
-          `A ${turn} ${turn} 0 0 0 ${rx} ${y2 + turn}`,
-          `V ${ry}`,
-        ].join(' ');
-        next.push({ line, d });
-      });
-      setPaths(next);
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    element.querySelectorAll('.central, .line-card').forEach((node) => observer.observe(node));
-    void document.fonts?.ready.then(measure);
-    return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-
-  if (paths.length === 0) return null;
-  return (
-    <svg className="home-lines" aria-hidden="true">
-      {paths.map((path, index) => (
-        <path key={path.line} className="hl draw" data-line={path.line} d={path.d} pathLength={1} style={{ animationDelay: `${0.2 + index * 0.12}s` }} />
-      ))}
-      {paths.map((path, index) => (
-        <path key={`t-${path.line}`} className="hl-train" d={path.d} pathLength={1} style={{ '--dur': `${7 + index * 1.7}s`, '--delay': `${1.4 + index * 1.1}s` } as React.CSSProperties} />
-      ))}
-    </svg>
   );
 }
 

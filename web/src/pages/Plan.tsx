@@ -219,7 +219,7 @@ export function PlanPage() {
   const unread = candidates.filter((name) => !profRatings.has(name)).length;
 
   return (
-    <div className="page">
+    <div className="page plan-page">
       <Sign title="Plan" ar="الجدول">
         {terms && terms.length > 0 && (
           <select className="input sign-select" value={term} onChange={(event) => update({ term: event.target.value })} aria-label="Term">
@@ -234,9 +234,10 @@ export function PlanPage() {
       {error && <div className="alert error">{error}</div>}
       <div className="plan">
         <div className="plan-side">
-          <div className="plan-intro"><h2>Build your week</h2><p>Tell us your courses and preferences, or add them below.</p></div>
-          <div className="plan-ask">
+          <div className="plan-intro"><h2>Your next semester, planned.</h2><p>Add courses to compare sections and find a week that fits. Use the planner to describe what you want.</p></div>
+          <div className="plan-ask"><label htmlFor="plan-request">Describe your ideal schedule</label>
             <textarea
+              id="plan-request"
               className="input"
               rows={3}
               value={text}
