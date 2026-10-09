@@ -62,6 +62,9 @@ export async function sendLoginCode(store: BoardStore, netId: string): Promise<v
   if (!response.ok) {
     const error = await response.json().catch(() => ({})) as { name?: string; message?: string };
     console.error('Resend rejected login email:', response.status, error.name ?? '', (error.message ?? '').replace(/\S+@\S+/g, '[email]').slice(0, 400));
+    if (response.status === 401 || response.status === 403) {
+      throw new ApiError(503, 'Email login is unavailable while the site’s email setup is being fixed.', 'auth_unavailable');
+    }
     throw new ApiError(503, 'Could not send your code. Wait a minute and try again.', 'email_failed');
   }
 }

@@ -406,6 +406,17 @@ it('emails a code to the canonical NYU address and stores only its digest', asyn
 });
 
 
+it('reports rejected email configuration without telling students to retry an unsent code', async () => {
+  vi.stubEnv('SESSION_SECRET', 'test-email-secret-at-least-thirty-two-characters');
+  vi.stubEnv('RESEND_API_KEY', 'resend-test-key');
+  vi.stubEnv('RESEND_FROM', 'nyuad.life <login@nyuad.life>');
+  vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ name: 'validation_error', message: 'The nyuad.life domain is not verified.' }), { status: 403 }));
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await expect(sendLoginCode(new MemoryBoardStore(), 'abc1234')).rejects.toMatchObject({ status: 503, code: 'auth_unavailable', message: 'Email login is unavailable while the site’s email setup is being fixed.' });
+  } finally { log.mockRestore(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+});
+
 it('batches large question feeds to keep database request URLs within proxy limits', async () => {
   const requests: string[] = [];
   vi.stubGlobal('fetch', async (input: string) => { requests.push(String(input)); return new Response('[]', { status: 200 }); });

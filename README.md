@@ -219,6 +219,9 @@ Unanswered board questions enter the first feed page even when older and get pri
 Accounts use a six-digit code sent to `netid@nyu.edu` through Resend. Set `RESEND_API_KEY`,
 `RESEND_FROM` (a sender on a domain verified in Resend), and `SESSION_SECRET` (32+ random characters,
 for example `openssl rand -base64 32`). Run `supabase/schema.sql` again before deploying the email login upgrade.
+Add Resend’s DKIM and SPF/MX records at the domain’s authoritative DNS provider and wait for Resend to show
+the sending domain as verified. `nyuad.life` uses Spaceship nameservers; adding these records in Vercel DNS
+does not publish them. An unverified sender makes Resend reject login codes with HTTP 403.
 The same form handles signup and returning users. Codes expire after ten minutes, allow five attempts, and work
 once. Requests are limited to five per email per hour and one per minute in the database. Verified sessions use
 30-day encrypted HttpOnly cookies. Phones and laptops share account ownership; the first email verification

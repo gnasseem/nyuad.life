@@ -11,6 +11,7 @@ import { buildIndex } from '../lib/indexer.ts';
 import { indexDir, postsFile } from '../lib/store.ts';
 
 loadDotEnv();
+if (process.env.RESET_EXISTING_ACCOUNTS === '1') await import('./reset-accounts.ts');
 const dir = indexDir();
 const onHostedBuild = process.env.VERCEL === '1' || Boolean(process.env.CI) || process.argv.includes('--force');
 if (existsSync(path.join(dir, 'meta.json'))) {
