@@ -59,8 +59,8 @@ describe('validation', () => {
     const event = validateAnnouncement({ title: 'Jazz night', body: 'Bring friends', kind: 'event', startsAt: '2026-10-03T18:00:00Z', location: 'Arts Center', link: 'https://example.com' }, now);
     expect(event.startsAt).toBe('2026-10-03T18:00:00.000Z');
     expect(event.expiresAt).toBe('2026-10-04T18:00:00.000Z');
-    const notice = validateAnnouncement({ title: 'Library hours change', kind: 'notice' }, now);
-    expect(notice.expiresAt).toBe('2026-10-13T12:00:00.000Z');
+    expect(() => validateAnnouncement({ title: 'Library hours change', kind: 'notice' }, now)).toThrow();
+    expect(() => validateAnnouncement({ title: 'Jazz night', body: 'Bring friends', kind: 'event' }, now)).toThrow();
     expect(() => validateAnnouncement({ title: 'x', kind: 'event' }, now)).toThrow();
     expect(() => validateAnnouncement({ title: 'Old thing', kind: 'event', startsAt: '2020-01-01' }, now)).toThrow();
     expect(() => validateAnnouncement({ title: 'Bad link', kind: 'notice', link: 'ftp://x' }, now)).toThrow();
@@ -71,6 +71,16 @@ describe('validation', () => {
     expect(tags.topics).toContain('courses');
     expect(tags.summary).toBe('Has anyone taken CS-UH 1001 with a good professor? Which section?');
     expect(tags.majors).toEqual([]);
+  });
+  it('rejects incomplete events, non-events and invented places before moderation', () => {
+    const event = { title: 'Film club screening', body: 'Film Society is screening a movie, followed by a discussion.', kind: 'event', location: 'Arts Center', startsAt: '2026-10-03T18:00:00Z' };
+    for (const patch of [{ startsAt: '' }, { location: '' }, { location: 'Hogwarts' }, { body: 'test 123' }, { kind: 'opportunity' }, { startsAt: '2026-02-30T18:00:00Z' }, { startsAt: '2028-10-03T18:00:00Z' }, { title: 'Cleaners needed' }]) {
+      expect(() => validateAnnouncement({ ...event, ...patch }, now)).toThrow();
+    }
+    expect(validateAnnouncement({ ...event, location: 'C2 012' }, now).location).toBe('C2 012');
+    expect(validateAnnouncement({ ...event, location: 'Zoom', link: 'https://zoom.us/j/123' }, now).kind).toBe('event');
+    expect(() => validateQuestionText('test test test test test')).toThrow();
+    expect(() => validateQuestionText('!!!!!!!!!!!!!!!!!!!!')).toThrow();
   });
 });
 
@@ -324,6 +334,13 @@ describe('Falcon and Campus Dirham offers, and the leaderboard', () => {
 });
 
 describe('the market', () => {
+  it('rejects coerced amounts, missing sale prices, fractional seats and fake routes', async () => {
+    const { validateListing, validateOffer } = await import('./board.ts');
+    const contact = { contactKind: 'whatsapp', contact: '+971 50 123 4567' };
+    for (const amount of [true, 500.5, '1e3']) expect(() => validateOffer({ side: 'sell', amount, rate: 0.85, ...contact }, now)).toThrow();
+    for (const price of [undefined, true, '150.999', -1, 0]) expect(() => validateListing({ kind: 'sell', title: 'Desk lamp', price, ...contact }, now)).toThrow();
+    for (const patch of [{ seats: 2.5 }, { destination: 'Campus' }, { place: 'Mars' }]) expect(() => validateListing({ kind: 'ride', place: 'Campus', destination: 'Dubai Mall', happensAt: '2026-10-02T17:00:00Z', ...contact, ...patch }, now)).toThrow();
+  });
   it('validates listings and gives each kind its expiry', async () => {
     const { validateListing } = await import('./board.ts');
     const contact = { contactKind: 'whatsapp', contact: '+971 50 123 4567' };

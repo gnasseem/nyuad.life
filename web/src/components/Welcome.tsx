@@ -51,10 +51,10 @@ const STOPS: Stop[] = [
   },
   {
     line: 'notices',
-    kicker: 'Notices',
+    kicker: 'Events',
     title: 'Never miss what is on',
-    text: 'Events, deadlines and opportunities from clubs and students, day by day.',
-    points: ['Add anything to your calendar in one tap', 'Every notice is checked, so the board stays real'],
+    text: 'Campus gatherings from clubs and students, day by day.',
+    points: ['Add anything to your calendar in one tap', 'Event details are screened before posting'],
     scene: <NoticesScene />,
   },
   {

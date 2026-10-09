@@ -112,6 +112,7 @@ export function validateNetId(value: unknown): string {
 export function validateProfile(body: Record<string, unknown>): Pick<Profile, 'netId' | 'name' | 'major' | 'classOf'> {
   const netId = validateNetId(body.netId);
   const name = collapseWhitespace(String(body.name ?? '')).slice(0, 60);
+  meaningful(name, 'name');
   if (name.length < 2) throw new ApiError(400, 'Enter your name.', 'bad_name');
   const major = collapseWhitespace(String(body.major ?? '')).slice(0, 60);
   if (!major) throw new ApiError(400, 'Choose a major.', 'bad_major');
@@ -119,6 +120,31 @@ export function validateProfile(body: Record<string, unknown>): Pick<Profile, 'n
   const thisYear = new Date().getUTCFullYear();
   if (!Number.isInteger(classOf) || classOf < thisYear - 15 || classOf > thisYear + 6) throw new ApiError(400, 'Choose a class year.', 'bad_class_of');
   return { netId, name, major, classOf };
+}
+
+/** Reject placeholders and repeated filler while accepting names and text in any script. */
+function meaningful(text: string, label: string): void {
+  const plain = text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  if (!/\p{L}/u.test(plain) || /^(?:test(?:ing)?(?: \d+)?|asdf\w*|qwerty\w*|lorem ipsum|n a|tbd|unknown|whatever|somewhere|blah(?: blah)*)$/.test(plain) || /^(.)\1{5,}$/.test(plain.replace(/ /g, '')) || /^(\S+)(?: \1){3,}$/.test(plain)) {
+    throw new ApiError(400, `Enter a real ${label}, with enough detail for another student.`, 'bad_content');
+  }
+}
+
+function placeText(value: unknown, label: string, required = false): string {
+  const text = collapseWhitespace(String(value ?? ''));
+  if (!text && !required) return '';
+  if (text.length < 2 || text.length > 80) throw new ApiError(400, `Enter a ${label} between 2 and 80 characters.`, 'bad_location');
+  meaningful(text, label);
+  if (/^(?:(?:on|the|planet) )?(?:mars|jupiter|hogwarts|narnia|atlantis|moon|hell|heaven)$/i.test(text)) throw new ApiError(400, 'Use a real campus or UAE location, or name the online platform.', 'bad_location');
+  return text;
+}
+
+/** Parse money without silently coercing booleans, blanks or rounding invalid precision. */
+function amountNumber(value: unknown): number {
+  if (typeof value !== 'number' && typeof value !== 'string') return NaN;
+  if (typeof value === 'string' && !/^\d+(?:\.\d{1,2})?$/.test(value.trim())) return NaN;
+  const number = Number(value);
+  return Number.isFinite(number) && Math.abs(number * 100 - Math.round(number * 100)) < 1e-7 ? number : NaN;
 }
 
 export function validateQuestionText(value: unknown): string {
@@ -129,6 +155,7 @@ export function validateQuestionText(value: unknown): string {
     .trim();
   if (text.length < QUESTION_MIN) throw new ApiError(400, 'The question is too short.', 'question_too_short');
   if (text.length > QUESTION_MAX) throw new ApiError(400, `Keep questions under ${QUESTION_MAX} characters.`, 'question_too_long');
+  meaningful(text, 'question');
   return text;
 }
 
@@ -138,6 +165,7 @@ export function validateAnswerText(value: unknown): string {
     .trim();
   if (text.length < ANSWER_MIN) throw new ApiError(400, 'The answer is too short.', 'answer_too_short');
   if (text.length > ANSWER_MAX) throw new ApiError(400, `Keep answers under ${ANSWER_MAX} characters.`, 'answer_too_long');
+  meaningful(text, 'answer');
   return text;
 }
 
@@ -308,31 +336,31 @@ export interface Announcement {
   createdAt: string;
 }
 
-const ANNOUNCEMENT_DAYS = 14;
-
 export function validateAnnouncement(body: Record<string, unknown>, now = new Date()): Omit<Announcement, 'id' | 'createdAt' | 'posterKey' | 'posterNetId' | 'posterName'> {
-  const title = collapseWhitespace(String(body.title ?? '')).slice(0, 120);
-  if (title.length < 4) throw new ApiError(400, 'Enter a title.', 'bad_title');
-  const text = String(body.body ?? '')
-    .replace(/\r\n?/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-  if (text.length > 1500) throw new ApiError(400, 'Keep the details under 1,500 characters.', 'body_too_long');
-  const kind = String(body.kind ?? 'notice') as AnnouncementKind;
-  if (!ANNOUNCEMENT_KINDS.includes(kind)) throw new ApiError(400, 'Choose a kind.', 'bad_kind');
-  let startsAt: string | undefined;
-  if (body.startsAt) {
-    const parsed = Date.parse(String(body.startsAt));
-    if (Number.isNaN(parsed)) throw new ApiError(400, 'The date is invalid.', 'bad_date');
-    // A dated notice stays up for a day after it starts; one that would vanish within the hour is not worth posting.
-    if (parsed + 86_400_000 < now.getTime() + 3_600_000) throw new ApiError(400, 'The date is in the past.', 'past_date');
-    startsAt = new Date(parsed).toISOString();
-  }
-  const location = collapseWhitespace(String(body.location ?? '')).slice(0, 80);
+  const title = collapseWhitespace(String(body.title ?? ''));
+  if (title.length < 4 || title.length > 120) throw new ApiError(400, 'Enter an event title between 4 and 120 characters.', 'bad_title');
+  meaningful(title, 'event title');
+  const text = String(body.body ?? '').replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (text.length < 12 || text.length > 1500) throw new ApiError(400, 'Describe the event in 12 to 1,500 characters: what is happening and who is hosting.', 'bad_details');
+  meaningful(text, 'event description');
+  if (body.kind !== undefined && body.kind !== 'event') throw new ApiError(400, 'This board is for events. Use Market for items and services, or Questions for help.', 'bad_kind');
+  if (/\b(?:cleaners? (?:needed|wanted)|(?:hiring|looking for|need(?:ed)?) (?:a |an )?(?:cleaner|maid|housekeeper)|tutor(?:ing)? (?:available|needed|wanted))\b/i.test(`${title} ${text}`)) throw new ApiError(400, 'This is a service request, not an event. Use Market instead.', 'bad_kind');
+  const rawDate = String(body.startsAt ?? '');
+  const parsed = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(rawDate) ? Date.parse(rawDate) : NaN;
+  if (!Number.isFinite(parsed)) throw new ApiError(400, 'Set the event date and time.', 'bad_date');
+  if (parsed < now.getTime()) throw new ApiError(400, 'Choose an upcoming event time.', 'past_date');
+  if (parsed > now.getTime() + 366 * 86_400_000) throw new ApiError(400, 'Events can be posted up to a year ahead.', 'far_date');
+  if (new Date(`${rawDate.slice(0, 10)}T00:00:00Z`).toISOString().slice(0, 10) !== rawDate.slice(0, 10)) throw new ApiError(400, 'Choose a real calendar date.', 'bad_date');
+  const startsAt = new Date(parsed).toISOString();
+  const location = placeText(body.location, 'location', true);
   const link = String(body.link ?? '').trim();
-  if (link && !/^https?:\/\/[^\s]{3,300}$/i.test(link)) throw new ApiError(400, 'Links must start with http:// or https://.', 'bad_link');
-  const expiresAt = new Date((startsAt ? Date.parse(startsAt) : now.getTime()) + (startsAt ? 1 : ANNOUNCEMENT_DAYS) * 86_400_000).toISOString();
-  return { title, body: text, kind, startsAt, location, link, expiresAt };
+  if (link) {
+    let url: URL;
+    try { url = new URL(link); } catch { throw new ApiError(400, 'Enter a complete http:// or https:// link.', 'bad_link'); }
+    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname.includes('.') || url.username || url.password || link.length > 300) throw new ApiError(400, 'Enter a complete http:// or https:// link.', 'bad_link');
+  }
+  const expiresAt = new Date(parsed + 86_400_000).toISOString();
+  return { title, body: text, kind: 'event', startsAt, location, link, expiresAt };
 }
 
 /**
@@ -448,9 +476,9 @@ export function validateOffer(body: Record<string, unknown>, now = new Date()): 
   const unit = CURRENCY_LABELS[currency];
   const side = String(body.side ?? '') as OfferSide;
   if (side !== 'sell' && side !== 'buy') throw new ApiError(400, 'Choose sell or buy.', 'bad_side');
-  const amount = Math.round(Number(body.amount));
-  if (!Number.isFinite(amount) || amount < OFFER_MIN || amount > OFFER_MAX) throw new ApiError(400, `Amount must be between ${OFFER_MIN} and ${OFFER_MAX.toLocaleString()} ${unit}.`, 'bad_amount');
-  const rate = Math.round(Number(body.rate) * 100) / 100;
+  const amount = amountNumber(body.amount);
+  if (!Number.isInteger(amount) || amount < OFFER_MIN || amount > OFFER_MAX) throw new ApiError(400, `Amount must be between ${OFFER_MIN} and ${OFFER_MAX.toLocaleString()} ${unit}.`, 'bad_amount');
+  const rate = amountNumber(body.rate);
   if (!Number.isFinite(rate) || rate < 0.1 || rate > 2) throw new ApiError(400, `The rate must be between 0.10 and 2.00 AED per ${currency === 'falcon' ? 'Falcon' : 'Campus Dirham'}.`, 'bad_rate');
   const { contactKind, contact } = validateContact(body);
   const note = collapseWhitespace(String(body.note ?? '')).slice(0, 200);
@@ -466,6 +494,8 @@ export function validateContact(body: Record<string, unknown>): { contactKind: C
   if (contact.length < 3) throw new ApiError(400, 'Enter your contact details.', 'bad_contact');
   if (contactKind === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact)) throw new ApiError(400, 'Enter a valid email address.', 'bad_contact');
   if ((contactKind === 'whatsapp' || contactKind === 'phone') && !/^\+?[\d\s()-]{7,20}$/.test(contact)) throw new ApiError(400, 'Use a phone number with the country code, like +971 50 123 4567.', 'bad_contact');
+  if ((contactKind === 'whatsapp' || contactKind === 'phone') && /^(\d)\1+$/.test(contact.replace(/\D/g, ''))) throw new ApiError(400, 'Enter a real phone number.', 'bad_contact');
+  if (contactKind === 'instagram' && !/^@?[a-z0-9._]{1,30}$/i.test(contact)) throw new ApiError(400, 'Enter an Instagram username, like @sara.', 'bad_contact');
   return { contactKind, contact };
 }
 
@@ -537,23 +567,26 @@ const PRICE_MAX = 100_000;
 export function validateListing(body: Record<string, unknown>, now = new Date()): Omit<Listing, 'id' | 'createdAt' | 'posterKey' | 'posterNetId' | 'posterName' | 'status'> {
   const kind = String(body.kind ?? '') as ListingKind;
   if (!LISTING_KINDS.includes(kind)) throw new ApiError(400, 'Choose what kind of post this is.', 'bad_kind');
-  const place = collapseWhitespace(String(body.place ?? '')).slice(0, 80);
-  const destination = kind === 'ride' ? collapseWhitespace(String(body.destination ?? '')).slice(0, 80) : '';
+  const place = placeText(body.place, 'pickup or meeting place');
+  const destination = kind === 'ride' ? placeText(body.destination, 'destination', true) : '';
   let title = collapseWhitespace(String(body.title ?? '')).slice(0, 100);
   if (kind === 'ride') {
+    if (place.toLowerCase() === destination.toLowerCase()) throw new ApiError(400, 'Departure and destination must be different places.', 'bad_route');
     if (place.length < 2 || destination.length < 2) throw new ApiError(400, 'Say where the ride leaves from and where it goes.', 'bad_route');
     title = `${place} to ${destination}`;
   } else if (title.length < 3) throw new ApiError(400, 'Enter a title.', 'bad_title');
+  meaningful(title, 'item title');
   const text = String(body.body ?? '')
     .replace(/\r\n?/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+  if (text) meaningful(text, 'item description');
   if (text.length > 1000) throw new ApiError(400, 'Keep the details under 1,000 characters.', 'body_too_long');
 
   let price: number | null = null;
   if (kind === 'free') price = 0;
   else if ((kind === 'sell' || kind === 'want') && body.price !== undefined && body.price !== null && String(body.price).trim() !== '') {
-    price = Math.round(Number(body.price) * 100) / 100;
+    price = amountNumber(body.price);
     if (!Number.isFinite(price) || price < 0 || price > PRICE_MAX) throw new ApiError(400, `The price must be between 0 and ${PRICE_MAX.toLocaleString()} AED.`, 'bad_price');
   }
 
@@ -572,10 +605,12 @@ export function validateListing(body: Record<string, unknown>, now = new Date())
 
   let seats: number | null = null;
   if (kind === 'ride' && body.seats !== undefined && body.seats !== null && String(body.seats).trim() !== '') {
-    seats = Math.round(Number(body.seats));
-    if (!Number.isFinite(seats) || seats < 1 || seats > 12) throw new ApiError(400, 'Seats must be between 1 and 12.', 'bad_seats');
+    seats = amountNumber(body.seats);
+    if (!Number.isInteger(seats) || seats < 1 || seats > 12) throw new ApiError(400, 'Seats must be between 1 and 12.', 'bad_seats');
   }
 
+  if (kind === 'sell' && (price === null || price <= 0)) throw new ApiError(400, 'Set a positive asking price in AED, or choose Free.', 'bad_price');
+  if ((kind === 'lost' || kind === 'found') && !place) throw new ApiError(400, 'Say where the item was lost or found.', 'bad_location');
   const { contactKind, contact } = validateContact(body);
   const expiresAt = kind === 'ride' ? new Date(Date.parse(happensAt!) + RIDE_GRACE_MS).toISOString() : new Date(now.getTime() + LISTING_DAYS[kind] * 86_400_000).toISOString();
   return { kind, title, body: text, price, place, destination, happensAt, seats, contactKind, contact, expiresAt };

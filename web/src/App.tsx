@@ -27,14 +27,14 @@ const NAV: Array<{ route: Route; label: string; line: Line; icon: typeof IconAsk
   { route: { name: 'ask' }, label: 'Ask', line: 'ask', icon: IconAsk, matches: ['ask'] },
   { route: { name: 'plan' }, label: 'Plan', line: 'plan', icon: IconCalendar, matches: ['plan'] },
   { route: { name: 'questions' }, label: 'Questions', line: 'questions', icon: IconQuestions, matches: ['questions', 'question'] },
-  { route: { name: 'announcements' }, label: 'Notices', line: 'notices', icon: IconMegaphone, matches: ['announcements'] },
+  { route: { name: 'announcements' }, label: 'Events', line: 'notices', icon: IconMegaphone, matches: ['announcements'] },
   { route: { name: 'market', tab: 'items' }, label: 'Market', line: 'market', icon: IconBag, matches: ['market'] },
   { route: { name: 'courses' }, label: 'Reviews', line: 'guide', icon: IconBook, matches: ['courses', 'professors', 'threads', 'post'] },
 ];
 
 /** The button names what it switches to. */
 const THEME_LABEL: Record<Theme, string> = { light: 'Switch to dark mode', dark: 'Switch to light mode' };
-const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Notices', market: 'Market', courses: 'Reviews', professors: 'Professors', threads: 'Threads', post: 'Thread', plan: 'Plan', settings: 'Settings' };
+const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Events', market: 'Market', courses: 'Reviews', professors: 'Professors', threads: 'Threads', post: 'Thread', plan: 'Plan', settings: 'Settings' };
 const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: '' };
 
 function useConversations(): Conversation[] {
@@ -375,7 +375,7 @@ function LineNav({ activeIndex, hrefOf, helpCount }: { activeIndex: number; href
         style={{ transform: `translateX(${plate?.x ?? 0}px)`, width: plate?.w ?? 0, opacity: plate ? 1 : 0, transition: ready ? undefined : 'none' }}
         aria-hidden="true"
       >
-        <i key={activeIndex} className="shine" />
+
       </span>
       {NAV.map((item, index) => (
         <a key={item.label} href={hrefOf(item.route)} className="line-tab" data-line={item.line} aria-current={index === activeIndex ? 'page' : undefined} onClick={onLinkClick}>

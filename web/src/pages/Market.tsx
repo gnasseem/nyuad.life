@@ -506,10 +506,12 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
 
   const ready =
     contact.trim().length >= 3 &&
+    (kind !== 'sell' || (Number(price) > 0 && /^\d+(?:\.\d{1,2})?$/.test(price))) &&
+    (!['lost', 'found'].includes(kind) || place.trim().length >= 2) &&
     (kind === 'ride' ? place.trim().length >= 2 && destination.trim().length >= 2 && Boolean(when) : title.trim().length >= 3);
 
   const submit = async () => {
-    if (!profile || !ready) return;
+    if (!profile || !ready || busy) return;
     setBusy(true);
     setError('');
     try {
@@ -588,9 +590,9 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
           <div className="form-grid">
             {kind === 'sell' || kind === 'want' ? (
               <div className="field">
-                <label htmlFor="ls-price">{kind === 'want' ? 'Budget' : 'Price'}</label>
+                <label htmlFor="ls-price">{kind === 'want' ? 'Budget (optional)' : 'Asking price · AED'}</label>
                 <div className="input-group">
-                  <input id="ls-price" className="input" inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value.replace(/[^\d.]/g, ''))} placeholder="150" />
+                  <input id="ls-price" className="input" required={kind === 'sell'} inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value.replace(/[^\d.]/g, ''))} placeholder="150" />
                   <span className="suffix">AED</span>
                 </div>
               </div>

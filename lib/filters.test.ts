@@ -65,6 +65,27 @@ describe('isNoiseComment', () => {
 });
 
 describe('cleanPost and cleanPosts', () => {
+  it('drops short unanswered requests but keeps experience and useful replies', () => {
+    const result = cleanPosts([
+      post({ id: 'empty-request', text: 'Does anyone know when the pool opens?', comments: [{ author: 'A', date: '', text: 'bump' }] }),
+      post({ id: 'answered', text: 'Does anyone know when the pool opens?', comments: [{ author: 'B', date: '', text: 'The posted operational hours start at 8am.' }] }),
+      post({ id: 'experience', text: 'I tried the pool yesterday, and the lifeguard confirmed the opening hours.' }),
+      post({ id: 'detailed', text: 'How can we improve the pool schedule? ' + 'The current times clash with my classes and the team practices. '.repeat(5) }),
+    ]);
+    expect(result.posts.map((entry) => entry.id)).toEqual(['answered', 'experience', 'detailed']);
+    expect(result.dropped.unanswered).toBe(1);
+  });
+  it('drops filler and exact duplicates without merging different student experiences', () => {
+    const result = cleanPosts([
+      post({ id: 'one', text: 'Which calculus professor explains proofs well?' }),
+      post({ id: 'two', text: 'Which calculus professor explains proofs well?' }),
+      post({ id: 'three', text: 'Which calculus professor explains proofs well?', comments: [{ author: 'A', date: '', text: 'Dania explains every proof step by step.' }] }),
+      post({ id: 'filler', text: 'bump bump' }),
+      post({ id: 'ride', text: 'Anyone driving to Dubai tonight?' }),
+    ]);
+    expect(result.posts.map((entry) => entry.id)).toEqual(['one', 'three']);
+    expect(result.dropped).toMatchObject({ duplicate: 1, noise: 1, listing: 1 });
+  });
   const archive: SourcePost[] = [
     post({ id: '1', text: 'Best calculus professor?', commentCount: 4, comments: [{ author: 'Casey Sample', date: '', text: 'Dania' }, { author: 'Ben', date: '', text: 'bump' }, { author: 'Cy', date: '', text: 'Casey Sample' }, { author: 'Di', date: '', text: '🙏' }] }),
     post({ id: '2', text: 'Selling 500 falcons', comments: [{ author: 'E', date: '', text: 'pmed' }] }),
@@ -85,7 +106,7 @@ describe('cleanPost and cleanPosts', () => {
     const result = cleanPosts(archive);
     expect(result.posts.map((entry) => entry.id)).toEqual(['1']);
     expect(result.kept).toEqual([0]);
-    expect(result.dropped).toEqual({ empty: 0, ad: 1, falcons: 1, listing: 0 });
+    expect(result.dropped).toEqual({ empty: 0, ad: 1, falcons: 1, listing: 0, noise: 0, duplicate: 0, unanswered: 0 });
     expect(result.commentsDropped).toBe(3);
   });
 });

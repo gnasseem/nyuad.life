@@ -5,13 +5,13 @@
  */
 import type { SourceComment, SourcePost } from './types.ts';
 
-type DropReason = 'empty' | 'ad' | 'falcons' | 'listing';
+type DropReason = 'empty' | 'ad' | 'falcons' | 'listing' | 'noise' | 'duplicate' | 'unanswered';
 
 /**
  * Bump whenever a rule below changes what is kept. An index built with the current version is loaded as it is; an
  * older one is cleaned again on load, which costs about a second on every cold start until it is rebuilt.
  */
-export const FILTERS_VERSION = 2;
+export const FILTERS_VERSION = 4;
 
 const FALCON = /\bfalcons?\b/i;
 /** Campus Dirhams: meal-plan money, traded like Falcons ("selling 360 campus dirhams at 50%"). */
@@ -40,6 +40,8 @@ export function classifyPost(post: SourcePost): DropReason | null {
     if (!genuineQuestion) return 'falcons';
   }
   if (LISTING_START.test(text) || LISTING_ANY.test(text)) return 'listing';
+  if (/\b(?:lost my|found (?:a|an|some)|ride (?:to|from)|anyone (?:driving|going) to|cleaners? (?:needed|wanted)|looking for (?:a )?(?:cleaner|maid))\b/i.test(text) && !/\b(?:how|where|policy|rules|usually|service|recommend)\b/i.test(text)) return 'listing';
+  if (isNoiseComment({ text }) && post.comments.every((comment) => isNoiseComment(comment))) return 'noise';
   return null;
 }
 
@@ -160,10 +162,11 @@ interface CleanResult<T extends SourcePost> {
 /** Applies both filters to a whole archive in one pass. */
 export function cleanPosts<T extends SourcePost>(posts: T[]): CleanResult<T> {
   const names = collectNames(posts);
-  const dropped: Record<DropReason, number> = { empty: 0, ad: 0, falcons: 0, listing: 0 };
+  const dropped: Record<DropReason, number> = { empty: 0, ad: 0, falcons: 0, listing: 0, noise: 0, duplicate: 0, unanswered: 0 };
   const kept: number[] = [];
   const out: T[] = [];
   let commentsDropped = 0;
+  const fingerprints = new Set<string>();
   posts.forEach((post, index) => {
     const reason = classifyPost(post);
     if (reason) {
@@ -171,6 +174,21 @@ export function cleanPosts<T extends SourcePost>(posts: T[]): CleanResult<T> {
       return;
     }
     const cleaned = cleanPost(post, names);
+    // A short unanswered request adds no evidence. Keep detailed posts and first-hand experience even without replies.
+    const body = cleaned.text.trim().replace(/^(?:hi|hey|hello)[\s,!.-]+/i, '');
+    const request = /^(?:anyone\b|does anyone\b|can (?:anyone|someone)\b|has anyone\b|is there\b|where (?:can|do|is|are)\b|who (?:can|is|are)\b|what(?:'s| is| are)\b|how (?:do|can)\b|any (?:recommendations|tips)\b)/i;
+    const experience = /\b(?:I took|I tried|my experience|here is|here are|I found|I recommend|I paid|I've tried|I have used)\b/i;
+    if (!cleaned.comments.length && body.length <= 240 && request.test(body) && !experience.test(body)) {
+      dropped.unanswered++;
+      commentsDropped += post.comments.length;
+      return;
+    }
+    const fingerprint = [cleaned.text, ...cleaned.comments.map((comment) => comment.text)].map((text) => text.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim()).join('\n');
+    if (fingerprint.length >= 30 && fingerprints.has(fingerprint)) {
+      dropped.duplicate++;
+      return;
+    }
+    fingerprints.add(fingerprint);
     commentsDropped += post.comments.length - cleaned.comments.length;
     kept.push(index);
     out.push(cleaned);

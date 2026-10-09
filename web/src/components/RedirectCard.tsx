@@ -5,7 +5,7 @@ import { onLinkClick } from '../router';
 /** Where to take a request the archive should not answer: a page on this site, or the group. */
 export function RedirectCard({ redirect }: { redirect: Redirect }) {
   const internal = redirect.link.url.startsWith('/');
-  const line = redirect.link.url.startsWith('/market') ? 'market' : redirect.link.url.startsWith('/notices') ? 'notices' : redirect.link.url.startsWith('/questions') ? 'questions' : 'guide';
+  const line = redirect.link.url.startsWith('/market') ? 'market' : (redirect.link.url.startsWith('/events') || redirect.link.url.startsWith('/notices')) ? 'notices' : redirect.link.url.startsWith('/questions') ? 'questions' : 'guide';
   return (
     <div className="redirect" data-line={line}>
       <h3>{redirect.title}</h3>

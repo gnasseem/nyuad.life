@@ -211,7 +211,7 @@ export class MemoryBoardStore implements BoardStore {
     return created;
   }
   async listAnnouncements(now: Date): Promise<Announcement[]> {
-    return sortAnnouncements([...this.announcements.values()].filter((entry) => Date.parse(entry.expiresAt) > now.getTime()));
+    return sortAnnouncements([...this.announcements.values()].filter((entry) => entry.kind === 'event' && Boolean(entry.startsAt) && Date.parse(entry.expiresAt) > now.getTime()));
   }
   async deleteAnnouncement(id: string, posterKey: string): Promise<boolean> {
     const entry = this.announcements.get(id);
@@ -586,7 +586,7 @@ export class SupabaseBoardStore implements BoardStore {
     return announcementFrom(rows[0]!);
   }
   async listAnnouncements(now: Date): Promise<Announcement[]> {
-    return sortAnnouncements((await this.select('board_announcements', `expires_at=gt.${enc(now.toISOString())}&order=created_at.desc&limit=200`)).map(announcementFrom));
+    return sortAnnouncements((await this.select('board_announcements', `kind=eq.event&starts_at=not.is.null&expires_at=gt.${enc(now.toISOString())}&order=starts_at.asc&limit=200`)).map(announcementFrom));
   }
   async deleteAnnouncement(id: string, posterKey: string): Promise<boolean> {
     if (!UUID.test(id)) return false;

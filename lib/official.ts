@@ -53,6 +53,7 @@ export interface OfficialDoc {
   /** Credits, for course entries. */
   credits?: number;
   fetchedAt: string;
+  sections?: Array<{ title: string; text: string }>;
 }
 
 export function officialId(url: string): string {
@@ -79,7 +80,7 @@ export function classifySection(url: string, title = ''): OfficialSection {
     ['careers', /career|internship|cdc\b|employment|job/],
     ['research', /research|capstone|lab|fellowship|grant/],
     ['policies', /polic|conduct|academic-integrity|regulation|handbook/],
-    ['campus', /campus-life|student-life|clubs?|sig\b|athletics|arts-center|community|events/],
+    ['campus', /campus-life|student-life|clubs?|sig\b|athletics|sports-facilities|arts-center|community|events/],
     ['academics', /academic|registrar|registration|advising|curriculum|degree/],
   ];
   for (const [section, pattern] of rules) if (pattern.test(haystack)) return section;
@@ -137,7 +138,13 @@ export function writeOfficialJsonl(file: string, docs: OfficialDoc[]): void {
 }
 
 function chunkOfficial(docs: OfficialDoc[], options: { model: string; dimensions: number }): Chunk[] {
-  return docs.flatMap((doc) => chunkDocument(doc.id, `${doc.title} (${SECTION_LABELS[doc.section]}, official NYUAD page)`, doc.text, options));
+  return docs.flatMap((doc) => {
+    const header = `${doc.title} (${SECTION_LABELS[doc.section]}, official NYUAD page)`;
+    const chunks = doc.sections?.length
+      ? doc.sections.flatMap((section) => chunkDocument(doc.id, `${header} · ${section.title}`, section.text, options))
+      : chunkDocument(doc.id, header, doc.text, options);
+    return chunks.map((chunk, i) => ({ ...chunk, id: `${doc.id}#${i + 1}`, n: i + 1 }));
+  });
 }
 
 /* ---------- The loaded corpus ---------- */
@@ -232,11 +239,11 @@ interface OfficialHit {
 }
 
 /** Hybrid search over official pages, grouped to one best chunk per page. `vector` is reused when the caller embedded the query already. */
-export async function retrieveOfficial(corpus: OfficialCorpus, query: string, options: { k?: number; vector?: Float32Array; embedder?: Embedder | null; section?: OfficialSection } = {}): Promise<{ hits: OfficialHit[]; terms: string[] }> {
+export async function retrieveOfficial(corpus: OfficialCorpus, query: string, options: { k?: number; vector?: Float32Array; embedder?: Embedder | null; section?: OfficialSection; filter?: (doc: OfficialDoc) => boolean } = {}): Promise<{ hits: OfficialHit[]; terms: string[] }> {
   const terms = tokenize(query);
   const k = options.k ?? 8;
   if (corpus.chunks.length === 0) return { hits: [], terms };
-  const depth = Math.max(60, k * 6);
+  const depth = Math.max(200, k * 12);
   const lexical = bm25Query(corpus.bm25, terms, depth);
   let dense: Array<{ row: number; score: number }> = [];
   if (corpus.vectors.count > 0 && corpus.meta.model !== 'none') {
@@ -251,7 +258,7 @@ export async function retrieveOfficial(corpus: OfficialCorpus, query: string, op
         }
       }
     }
-    if (vector) dense = denseQuery(corpus.vectors, vector, depth);
+    if (vector && vector.length === corpus.vectors.dims) dense = denseQuery(corpus.vectors, vector, depth);
   }
   const perChunk = new Map<number, number>();
   lexical.forEach(({ row }, rank) => perChunk.set(row, (perChunk.get(row) ?? 0) + 1 / (60 + rank + 1)));
@@ -260,6 +267,7 @@ export async function retrieveOfficial(corpus: OfficialCorpus, query: string, op
   for (const [chunk, score] of perChunk) {
     const doc = corpus.chunkDoc[chunk]!;
     if (options.section && corpus.docs[doc]!.section !== options.section) continue;
+    if (options.filter && !options.filter(corpus.docs[doc]!)) continue;
     const current = perDoc.get(doc);
     if (!current || score > current.score) perDoc.set(doc, { doc, chunk, score });
   }
@@ -278,7 +286,7 @@ export function officialCards(corpus: OfficialCorpus, hits: OfficialHit[], terms
       url: doc.url,
       author: 'NYU Abu Dhabi',
       date: doc.fetchedAt.slice(0, 10),
-      text: truncate(doc.text, 600),
+      text: truncate(passage, 600),
       commentCount: 0,
       reactions: 0,
       topics: [doc.section],
@@ -292,7 +300,7 @@ export function officialCards(corpus: OfficialCorpus, hits: OfficialHit[], terms
 /** How an official page is rendered inside the model's sources block. */
 export function officialSourceBlock(corpus: OfficialCorpus, card: SourceCard, chunkText?: string): string {
   const doc = corpus.docs[corpus.docPosition.get(card.postId)!]!;
-  const body = chunkText ? collapseWhitespace(chunkText.split('\n').slice(1).join(' ')) : collapseWhitespace(doc.text);
+  const body = chunkText ? collapseWhitespace(chunkText) : collapseWhitespace(doc.text);
   return [`[${card.n}] Official NYUAD page (${SECTION_LABELS[doc.section]}): ${doc.title} · ${doc.url} · fetched ${card.date}`, truncate(body, 3000)].join('\n');
 }
 

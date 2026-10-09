@@ -7,7 +7,7 @@ other students wrote here.
 Everyone signs up once (name, NetID, major and year) after a short animated tour of the site; the API refuses answers,
 archive browsing, plan reading and contacts to anyone who has not.
 
-- **Ask.** Hybrid keyword and vector search over the archive and the official pages, reranked by Voyage's cross-encoder
+- **Ask.** Original questions, model rewrites and campus aliases searched together with keyword and vector retrieval over the filtered archive and official pages, reranked by Voyage's cross-encoder
   and written up by Gemini, with backup models when Gemini is overloaded or spent, or on the student's own ChatGPT plan
   when they sign in with ChatGPT. Past conversations are listed down the left, as in a chat app. A question about a course or a professor gets the Albert schedule first (course codes
   in any spelling, titles the way students say them, "calc", "intro to cs", or a subject for "classes about machine
@@ -19,8 +19,7 @@ archive browsing, plan reading and contacts to anyone who has not.
   newest first, that anyone can answer in place, filtered to the ones for your major and year, the unanswered ones or
   your own; the + button asks a new one. Nobody can answer their own question or answer one twice. Answered questions
   are cited by Ask.
-- **Notices.** Events, deadlines and opportunities posted by students, by day, with a calendar file for dated ones.
-  Dated notices drop off the day after, undated ones after two weeks.
+- **Events.** Scheduled campus gatherings with required dates, locations and host details, browsed by day with calendar downloads. Events drop off one day after starting. Service requests and general notices are rejected.
 - **Market.** What the group is mostly used for besides questions: things for sale (up for three weeks), wanted (two)
   or free (one), offers to buy or sell Falcons and Campus Dirhams (two separate balances, each with its own order book;
   five days), shared rides by day (gone three hours after they leave) and lost and found (three weeks). Contact details
@@ -236,8 +235,8 @@ Everything students write is screened by rules in `lib/moderation.ts`, which add
   services, spam, trolling, made-up posts (an event that cannot be real, a place that does not exist on campus or in the
   UAE), posts pretending to come from a university office, posts in the wrong place, and attacks on a person. It is
   given the date, the post's kind, time and place, and how students name campus buildings. When models are set up but
-  none answers, the post is held back with "try again in a minute" (`ROR_REVIEW_FAIL_OPEN=1` lets it through instead).
-- **Notices** cannot carry phone numbers, and no post can use a link shortener (bit.ly and the like); a notice's link
+  none answers, the post is held back with "try again in a minute". Production always requires a working reviewer; `ROR_REVIEW_FAIL_OPEN=1` applies only in local development.
+- **Events** cannot carry phone numbers, and no post can use a link shortener (bit.ly and the like); an event's link
   shows its domain.
 - **Questions to Ask** about where to get drugs, finding a person's room or WhatsApp, buying academic work, or telling
   the bot to ignore its instructions get a short reply instead of an answer, with no model call. Asking about rules

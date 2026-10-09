@@ -29,6 +29,7 @@ export function parseRoute(pathname: string): Route {
   switch (parts[0]) {
     case 'questions':
       return parts[1] ? { name: 'question', id: parts[1] } : { name: 'questions' };
+    case 'events':
     case 'announcements':
     case 'notices':
       return { name: 'announcements' };
@@ -68,7 +69,7 @@ export function routePath(route: Route): string {
     case 'question':
       return `/questions/${encodeURIComponent(route.id)}`;
     case 'announcements':
-      return '/notices';
+      return '/events';
     case 'post':
       return `/post/${encodeURIComponent(route.id)}`;
     case 'settings':

@@ -151,6 +151,16 @@ describe("the small model's review", () => {
     expect(await reviewPost({ gemini: null, backups: [] }, 'question', 'Where is the gym?')).toBeNull();
   });
 
+  it('requires a working reviewer in production, including when fail-open is set', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('ROR_REVIEW_FAIL_OPEN', '1');
+    try {
+      expect((await reviewPost({ gemini: null, backups: [] }, 'notice', 'Film club screening'))?.reason).toBe('unreviewed');
+      answering('maybe');
+      expect((await reviewPost({ gemini, backups: [] }, 'notice', 'Film club screening'))?.reason).toBe('unreviewed');
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('refuses made-up notices and posts pretending to be an office, and a verdict it does not know', async () => {
     const verdicts: string[] = ['fake', 'impersonation', 'maybe'];
     vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ verdict: verdicts.shift() }) }] }, finishReason: 'STOP' }] }), { status: 200 }));

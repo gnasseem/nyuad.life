@@ -63,6 +63,28 @@ export function titleOf(html: string): string {
     .trim();
 }
 
+/** Keep service headings attached to their own hours and instructions. */
+export function sectionsOf(html: string): Array<{ title: string; text: string }> {
+  const titles: string[] = [];
+  let parent = '';
+  const marked = mainHtml(html).replace(/<h([23])\b[^>]*>([\s\S]*?)<\/h\1>/gi, (_, level: string, raw: string) => {
+    const title = textOf(raw);
+    if (level === '2') parent = title;
+    titles.push(level === '3' && parent ? `${parent} · ${title}` : title);
+    return `\nNYUAD_SECTION_${titles.length - 1}\n`;
+  });
+  const blocks = textOf(marked).split(/NYUAD_SECTION_(\d+)/);
+  const sections: Array<{ title: string; text: string }> = [];
+  for (let i = 1; i < blocks.length; i += 2) {
+    const title = titles[Number(blocks[i])];
+    const text = blocks[i + 1]?.trim();
+    if (title && text && text.length >= 40) sections.push({ title, text });
+  }
+  const intro = blocks[0]?.trim();
+  if (sections.length && intro && intro.length >= 40) sections.unshift({ title: titleOf(html), text: intro });
+  return sections;
+}
+
 export function breadcrumbsOf(html: string): string[] {
   const block = /<(?:nav|ol|ul|div)\b[^>]*\b(?:class|id|aria-label)=["'][^"']*breadcrumb[^"']*["'][^>]*>([\s\S]*?)<\/(?:nav|ol|ul|div)>/i.exec(html);
   if (!block?.[1]) return [];

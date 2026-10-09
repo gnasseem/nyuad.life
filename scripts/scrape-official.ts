@@ -12,12 +12,18 @@
  * Then `npm run index:official` embeds the result into data/official-index.
  */
 import { loadDotEnv } from '../lib/env.ts';
-import { breadcrumbsOf, coursesOf, linksOf, mainHtml, textOf, titleOf } from '../lib/html.ts';
+import { breadcrumbsOf, coursesOf, linksOf, mainHtml, sectionsOf, textOf, titleOf } from '../lib/html.ts';
 import { classifySection, officialFile, officialId, readOfficialJsonl, writeOfficialJsonl, type OfficialDoc } from '../lib/official.ts';
 
 loadDotEnv();
 
 const DEFAULT_SEEDS = [
+  'https://nyuad.nyu.edu/en/facility-rentals/sports-facilities.html',
+  'https://nyuad.nyu.edu/en/campus-life/sports-athletics-and-fitness.html',
+  'https://nyuad.nyu.edu/en/campus-life/sports-athletics-and-fitness/athletics-facilities.html',
+  'https://nyuad.nyu.edu/en/campus-life/student-life/health-and-wellness.html',
+  'https://nyuad.nyu.edu/en/library.html',
+  'https://nyuad.nyu.edu/en/campus-life/housing-and-dining.html',
   'https://nyuad.nyu.edu/en/academics.html',
   'https://nyuad.nyu.edu/en/academics/undergraduate.html',
   'https://nyuad.nyu.edu/en/academics/undergraduate/majors-and-minors.html',
@@ -40,7 +46,7 @@ const DEFAULT_SEEDS = [
 
 /** Path prefixes worth crawling per host; anything else on the host is skipped. */
 const ALLOWED: Record<string, RegExp[]> = {
-  'nyuad.nyu.edu': [/^\/en\/(?:academics|campus-life|admissions|about\/(?:campus|visit|facts))/],
+  'nyuad.nyu.edu': [/^\/en\/(?:academics|campus-life|library|admissions|about\/(?:campus|visit|facts))/, /^\/en\/facility-rentals\/sports-facilities\.html$/],
   'students.nyuad.nyu.edu': [/^\//],
   'bulletins.nyu.edu': [/^\/undergraduate\/abu-dhabi\//, /^\/courses\/[a-z]{2,7}_uh\//i],
 };
@@ -54,7 +60,7 @@ const value = (name: string) => values(name)[0];
 const max = Number(value('max')) || 4000;
 const delay = Number(value('delay')) || 400;
 const hosts = new Set(values('host'));
-const seeds = [...DEFAULT_SEEDS, ...values('seed')].filter((url) => hosts.size === 0 || hosts.has(new URL(url).host));
+const seeds = [...(flag('seed-only') ? [] : DEFAULT_SEEDS), ...values('seed')].filter((url) => hosts.size === 0 || hosts.has(new URL(url).host));
 const file = value('out') ?? officialFile();
 
 function allowed(url: URL): boolean {
@@ -70,6 +76,8 @@ async function fetchPage(url: string): Promise<string | null> {
     try {
       const response = await fetch(url, { headers: { 'user-agent': 'nyuad.life crawler (+https://nyuad.life; student project; contact via the site)', accept: 'text/html' }, redirect: 'follow', signal: AbortSignal.timeout(25_000) });
       if (response.status === 404 || response.status === 410) return null;
+      const target = new URL(response.url);
+      if (target.host !== new URL(url).host || /\/(?:login|signin|sso|auth)(?:\/|$)/i.test(target.pathname)) return null;
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       if (!(response.headers.get('content-type') ?? '').includes('html')) return null;
       return await response.text();
@@ -110,7 +118,7 @@ async function main(): Promise<void> {
     }
   };
   seeds.forEach(enqueue);
-  for (const host of new Set(seeds.map((url) => new URL(url).host))) {
+  for (const host of flag('seed-only') ? [] : new Set(seeds.map((url) => new URL(url).host))) {
     const fromSitemap = await sitemapUrls(host);
     if (fromSitemap.length) console.log(`[official] ${host}: ${fromSitemap.length} URLs in the sitemap.`);
     fromSitemap.forEach(enqueue);
@@ -137,7 +145,7 @@ async function main(): Promise<void> {
     const html = await fetchPage(url);
     fetched++;
     if (html) {
-      linksOf(html, url).forEach(enqueue);
+      if (!flag('seed-only')) linksOf(html, url).forEach(enqueue);
       const title = titleOf(html);
       // Bulletin listings (CourseLeaf "courseblock"s) and any page that reads as a course list become one document per course.
       const looksLikeCourses = /courseblock/.test(html) || /bulletins\.nyu\.edu|\/courses?(?:\/|\.|$)/i.test(url);
@@ -161,8 +169,8 @@ async function main(): Promise<void> {
         }
       }
       const text = textOf(mainHtml(html));
-      if (title && text.length >= 200) {
-        const doc: OfficialDoc = { id: officialId(url), url, title, section: classifySection(url, title), breadcrumbs: breadcrumbsOf(html), text: text.slice(0, 60_000), fetchedAt };
+      if (title && text.length >= 200 && !/sign in to your account|enter your netid|access denied|enable javascript and cookies to continue/i.test(text)) {
+        const doc: OfficialDoc = { id: officialId(url), url, title, section: classifySection(url, title), breadcrumbs: breadcrumbsOf(html), text: text.slice(0, 60_000), sections: sectionsOf(html), fetchedAt };
         docs.set(url, doc);
         kept++;
       }

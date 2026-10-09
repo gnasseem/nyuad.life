@@ -10,7 +10,7 @@ export function formatWhen(iso: string): string {
   const value = new Date(iso);
   if (Number.isNaN(value.getTime())) return '';
   const day = value.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-  const time = value.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const time = value.toLocaleTimeString('en-GB', { timeZone: 'Asia/Dubai', hour: '2-digit', minute: '2-digit' });
   return time === '00:00' ? day : `${day}, ${time}`;
 }
 
@@ -72,14 +72,9 @@ export function initials(name: string): string {
     .join('');
 }
 
-function startOfDay(date: Date): Date {
-  const copy = new Date(date);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
-}
-
 function dayDiff(when: Date, now: Date): number {
-  return Math.round((startOfDay(when).getTime() - startOfDay(now).getTime()) / 86_400_000);
+  const day = (date: Date) => Date.parse(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Dubai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date));
+  return Math.round((day(when) - day(now)) / 86_400_000);
 }
 
 export interface DayGroup<T> {
@@ -99,8 +94,8 @@ export function groupByDay<T>(items: T[], when: (item: T) => Date, now: Date): A
     const key = diff < 0 ? 'earlier' : diff === 0 ? 'today' : diff === 1 ? 'tomorrow' : diff < 7 ? `day-${diff}` : diff < 14 ? 'next-week' : 'later';
     let group = groups.find((candidate) => candidate.key === key);
     if (!group) {
-      const label = diff < 0 ? 'Earlier' : diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : diff < 7 ? date.toLocaleDateString('en-GB', { weekday: 'long' }) : diff < 14 ? 'Next week' : 'Later';
-      const sub = diff >= 0 && diff < 7 ? date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : undefined;
+      const label = diff < 0 ? 'Earlier' : diff === 0 ? 'Today' : diff === 1 ? 'Tomorrow' : diff < 7 ? date.toLocaleDateString('en-GB', { timeZone: 'Asia/Dubai', weekday: 'long' }) : diff < 14 ? 'Next week' : 'Later';
+      const sub = diff >= 0 && diff < 7 ? date.toLocaleDateString('en-GB', { timeZone: 'Asia/Dubai', day: 'numeric', month: 'short' }) : undefined;
       group = { key, label, sub, items: [] };
       groups.push(group);
     }
@@ -118,9 +113,9 @@ export function startsIn(when: Date, now: Date, liveFor = 180): { text: string; 
   return hours < 24 ? { text: `In ${hours} h`, live: false } : null;
 }
 
-/** "18:30" in the reader's time zone. */
+/** Campus times are always shown in Abu Dhabi. */
 export function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'Asia/Dubai', hour: '2-digit', minute: '2-digit' });
 }
 
 export function formatPrice(aed: number): string {

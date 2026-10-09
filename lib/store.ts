@@ -106,16 +106,21 @@ async function load(): Promise<Archive> {
 function clean(posts: IndexedPost[], chunks: Chunk[], vectors: VectorTable): [IndexedPost[], Chunk[], VectorTable] {
   const result = cleanPosts(posts);
   if (result.posts.length === posts.length && result.commentsDropped === 0) return [posts, chunks, vectors];
+  const originals = new Map(posts.map((post) => [post.id, post]));
+  const changed = new Set(result.posts.filter((post) => post.comments.length !== originals.get(post.id)!.comments.length).map((post) => post.id));
   const keptIds = new Set(result.posts.map((post) => post.id));
   const rows: number[] = [];
   const keptChunks: Chunk[] = [];
   chunks.forEach((chunk, row) => {
-    if (!keptIds.has(chunk.postId)) return;
+    if (!keptIds.has(chunk.postId) || changed.has(chunk.postId)) return;
     rows.push(row);
     keptChunks.push(chunk);
   });
-  const keptVectors = vectors.count === chunks.length && vectors.count > 0 ? selectRows(vectors, rows) : vectors.count === 0 ? vectors : emptyTable(vectors.dims);
-  return [result.posts, keptChunks, keptVectors];
+  // Changed passages use keyword retrieval until their embeddings are rebuilt.
+  const rebuilt = chunkPosts(result.posts.filter((post) => changed.has(post.id)), { model: 'none', dimensions: 0 });
+  const allChunks = [...keptChunks, ...rebuilt];
+  const keptVectors = rebuilt.length ? emptyTable(vectors.dims) : vectors.count === chunks.length && vectors.count > 0 ? selectRows(vectors, rows) : emptyTable(vectors.dims);
+  return [result.posts, allChunks, keptVectors];
 }
 
 /** The archive without the phone numbers and personal emails people left in posts and comments. */

@@ -506,7 +506,7 @@ function Home({ composer, answersOff }: { composer: ReactNode; answersOff: boole
   const data = useHomeData();
   const rootRef = useRef<HTMLDivElement>(null);
   const now = useNow();
-  const upcoming = (data.notices ?? []).filter((entry) => !entry.startsAt || Date.parse(entry.startsAt) > now.getTime() - 3 * 3_600_000).slice(0, 3);
+  const upcoming = (data.notices ?? []).filter((entry) => entry.kind === 'event' && entry.startsAt && Date.parse(entry.startsAt) > now.getTime() - 3 * 3_600_000).slice(0, 3);
   const offline = boardProblem ? <p className="stops-note">Unavailable right now.</p> : null;
 
   return (
@@ -526,20 +526,20 @@ function Home({ composer, answersOff }: { composer: ReactNode; answersOff: boole
       </section>
 
       <div className="line-cards">
-        <LineCard line="notices" title="Notices" ar="الإعلانات" href="/notices">
+        <LineCard line="notices" title="Events" ar="الفعاليات" href="/events">
           {offline ??
             (data.notices === null ? (
               <Loading />
             ) : upcoming.length === 0 ? (
               <p className="stops-note">
                 Nothing coming up.{' '}
-                <a href="/notices" onClick={onLinkClick}>
-                  Post an event or deadline
+                <a href="/events" onClick={onLinkClick}>
+                  Post an event
                 </a>
               </p>
             ) : (
               upcoming.map((entry) => (
-                <a key={entry.id} className="stn" href="/notices" onClick={onLinkClick}>
+                <a key={entry.id} className="stn" href="/events" onClick={onLinkClick}>
                   <span className="when">{noticeWhen(entry, now)}</span>
                   <span className="what">{entry.title}</span>
                   {entry.location && <span className="where">{entry.location}</span>}
@@ -639,19 +639,19 @@ function noticeWhen(entry: Announcement, now: Date): string {
   const when = new Date(entry.startsAt);
   const soon = startsIn(when, now);
   if (soon?.live) return 'Now';
-  const allDay = when.getHours() === 0 && when.getMinutes() === 0;
-  return allDay ? dayName(when, now) : `${dayName(when, now)} ${formatTime(entry.startsAt)}`;
+  return `${dayName(when, now)} ${formatTime(entry.startsAt)}`;
 }
 
 function rideWhen(iso: string, now: Date): string {
   const when = new Date(iso);
-  return when.toDateString() === now.toDateString() ? formatTime(iso) : `${dayName(when, now)} ${formatTime(iso)}`;
+  return dayName(when, now) === 'Today' ? formatTime(iso) : `${dayName(when, now)} ${formatTime(iso)}`;
 }
 
 function dayName(when: Date, now: Date): string {
-  if (when.toDateString() === now.toDateString()) return 'Today';
-  if (when.toDateString() === new Date(now.getTime() + 86_400_000).toDateString()) return 'Tomorrow';
-  return when.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  const key = (date: Date) => date.toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
+  if (key(when) === key(now)) return 'Today';
+  if (key(when) === key(new Date(now.getTime() + 86_400_000))) return 'Tomorrow';
+  return when.toLocaleDateString('en-GB', { timeZone: 'Asia/Dubai', weekday: 'short', day: 'numeric', month: 'short' });
 }
 
 /** One line's card under Central: its ring, where the line from Central comes in, and the next stops on it. */

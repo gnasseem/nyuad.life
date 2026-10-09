@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, type Announcement, type AnnouncementKind } from '../api';
+import { useCallback, useEffect, useState } from 'react';
+import { api, type Announcement } from '../api';
 import { EmptyState } from '../components/EmptyState';
 import { Modal } from '../components/Modal';
 import { Sign } from '../components/Sign';
@@ -10,31 +10,21 @@ import { IconCalendar, IconExternal, IconMegaphone, IconPlus } from '../icons';
 import { useNow } from '../motion';
 import { askerKey, loadAnnounced, saveAnnounced } from '../store';
 
-const KINDS: Array<{ id: AnnouncementKind; label: string }> = [
-  { id: 'event', label: 'Event' },
-  { id: 'deadline', label: 'Deadline' },
-  { id: 'opportunity', label: 'Opportunity' },
-  { id: 'club', label: 'Club' },
-  { id: 'notice', label: 'General' },
-];
-
-/** A one-event calendar file for a dated notice; an hour long unless it is a whole-day deadline. */
+/** A timed one-hour calendar entry; UTC stamps preserve Abu Dhabi times on every device. */
 function calendarFile(entry: Announcement): string {
   const start = new Date(entry.startsAt!);
-  const allDay = start.getHours() === 0 && start.getMinutes() === 0;
   const stamp = (date: Date) => date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-  const day = (date: Date) => `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
   const escape = (text: string) => text.replace(/[\\;,]/g, (match) => `\\${match}`).replace(/\n/g, '\\n');
-  const end = new Date(start.getTime() + (allDay ? 86_400_000 : 3_600_000));
+  const end = new Date(start.getTime() + 3_600_000);
   return [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//nyuad.life//notices//EN',
+    'PRODID:-//nyuad.life//events//EN',
     'BEGIN:VEVENT',
     `UID:${entry.id}@nyuad.life`,
     `DTSTAMP:${stamp(new Date())}`,
-    allDay ? `DTSTART;VALUE=DATE:${day(start)}` : `DTSTART:${stamp(start)}`,
-    allDay ? `DTEND;VALUE=DATE:${day(end)}` : `DTEND:${stamp(end)}`,
+    `DTSTART:${stamp(start)}`,
+    `DTEND:${stamp(end)}`,
     `SUMMARY:${escape(entry.title)}`,
     entry.location ? `LOCATION:${escape(entry.location)}` : '',
     entry.body || entry.link ? `DESCRIPTION:${escape([entry.body, entry.link].filter(Boolean).join('\n\n'))}` : '',
@@ -54,187 +44,77 @@ function addToCalendar(entry: Announcement): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function dayKey(diff: number): string {
-  return diff <= 0 ? 'today' : diff === 1 ? 'tomorrow' : `day-${diff}`;
-}
-
-function startOfDay(date: Date): Date {
-  const copy = new Date(date);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
+function dateKey(date: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Dubai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
 export function AnnouncementsPage() {
   const { boardProblem, profile, requestProfile, toast } = useApp();
   const [items, setItems] = useState<Announcement[] | null>(null);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<AnnouncementKind | ''>('');
+  const [selected, setSelected] = useState('');
   const [composing, setComposing] = useState(false);
   const [mine, setMine] = useState<string[]>(loadAnnounced);
   const now = useNow();
-
   const load = useCallback(() => {
     if (boardProblem) return;
-    api.board
-      .announcements()
-      .then((result) => {
-        setItems(result.announcements);
-        setError('');
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load notices.'));
+    api.board.announcements().then((result) => {
+      setItems(result.announcements.filter((entry) => entry.kind === 'event' && entry.startsAt).sort((a, b) => Date.parse(a.startsAt!) - Date.parse(b.startsAt!)));
+      setError('');
+    }).catch((err) => setError(err instanceof Error ? err.message : 'Could not load events.'));
   }, [boardProblem]);
-
   useEffect(load, [load]);
   useEffect(() => onAdminRemoved(load), [load]);
-
   const startPosting = async () => {
     if (!profile && !(await requestProfile())) return;
     setComposing(true);
   };
-
   const remove = async (id: string) => {
-    if (!window.confirm('Remove this notice?')) return;
+    if (!window.confirm('Remove this event?')) return;
     try {
       await api.board.unannounce({ id, key: askerKey() });
       toast('Removed');
       load();
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not remove the notice.');
-    }
+    } catch (err) { toast(err instanceof Error ? err.message : 'Could not remove the event.'); }
   };
-
-  const counts = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const entry of items ?? []) map.set(entry.kind, (map.get(entry.kind) ?? 0) + 1);
-    return map;
-  }, [items]);
-  const shown = (items ?? []).filter((entry) => !filter || entry.kind === filter);
-  const dated = groupByDay(
-    shown.filter((entry) => entry.startsAt),
-    (entry) => new Date(entry.startsAt!),
-    now,
-  );
-  const undated = shown.filter((entry) => !entry.startsAt);
-
-  // The coming seven days as stops on a line; a day with notices on it is a filled stop that jumps to its group.
-  const week = useMemo(() => {
-    const today = startOfDay(now);
-    return Array.from({ length: 7 }, (_, diff) => {
-      const date = new Date(today.getTime() + diff * 86_400_000);
-      const count = shown.filter((entry) => entry.startsAt && startOfDay(new Date(entry.startsAt)).getTime() === date.getTime()).length;
-      return { diff, date, count };
-    });
-  }, [shown, now]);
-
-  const jump = (diff: number) => document.getElementById(`agenda-${dayKey(diff)}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
+  const shown = (items ?? []).filter((entry) => !selected || dateKey(new Date(entry.startsAt!)) === selected);
+  const dated = groupByDay(shown, (entry) => new Date(entry.startsAt!), now);
+  const week = Array.from({ length: 7 }, (_, diff) => {
+    const date = new Date(now.getTime() + diff * 86_400_000);
+    const key = dateKey(date);
+    return { date, key, diff, count: (items ?? []).filter((entry) => dateKey(new Date(entry.startsAt!)) === key).length };
+  });
   return (
-    <div className="page">
-      <Sign title="Notices" ar="الإعلانات">
-        {!boardProblem && (
-          <button type="button" className="btn primary" onClick={() => void startPosting()}>
-            <IconPlus /> Post a notice
-          </button>
-        )}
+    <div className="page events-page">
+      <Sign title="Events" ar="الفعاليات">
+        {!boardProblem && <button type="button" className="btn primary" onClick={() => void startPosting()}><IconPlus /> Post an event</button>}
       </Sign>
+      <div className="events-intro"><p>Find your next campus gathering.</p><span>All times in Abu Dhabi</span></div>
       {boardProblem && <div className="alert">{boardProblem}</div>}
-      {error && <div className="alert error">{error}</div>}
-      {!boardProblem && items && items.length > 0 && (
-        <div className="week" role="group" aria-label="This week">
-          {week.map(({ diff, date, count }) => (
-            <button key={diff} type="button" className={`day-btn${count ? ' has' : ''}${diff === 0 ? ' today' : ''}`} onClick={() => jump(diff)} disabled={!count} aria-label={`${date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}, ${count} notices`}>
-              <span className="dn">{diff === 0 ? 'Today' : date.toLocaleDateString('en-GB', { weekday: 'short' })}</span>
-              <span className="ds" />
-              <span className="dd">{date.getDate()}</span>
-            </button>
-          ))}
+      {error && <div className="alert error">{error} <button type="button" className="link-btn" onClick={load}>Try again</button></div>}
+      {!boardProblem && items && <>
+        <div className="week" role="group" aria-label="Events this week">
+          {week.map(({ date, key, diff, count }) => <button key={key} type="button" className={`day-btn${count ? ' has' : ''}${diff === 0 ? ' today' : ''}${selected === key ? ' selected' : ''}`} onClick={() => setSelected(selected === key ? '' : key)} aria-pressed={selected === key} aria-label={`${date.toLocaleDateString('en-GB', { timeZone: 'Asia/Dubai', weekday: 'long', day: 'numeric', month: 'long' })}, ${count} events`}>
+            <span className="dn">{diff === 0 ? 'Today' : date.toLocaleDateString('en-GB', { timeZone: 'Asia/Dubai', weekday: 'short' })}</span>
+            <span className="dd">{date.toLocaleDateString('en-GB', { timeZone: 'Asia/Dubai', day: 'numeric' })}</span>
+            <span className="day-count">{count ? `${count} event${count === 1 ? '' : 's'}` : '—'}</span>
+          </button>)}
         </div>
-      )}
-      {items && items.length > 0 && (
-        <div className="chips scroll-x kinds-mobile" role="radiogroup" aria-label="Kind">
-          <button type="button" role="radio" aria-checked={!filter} className={`chip${filter ? '' : ' on'}`} onClick={() => setFilter('')}>
-            All
-          </button>
-          {KINDS.filter((kind) => counts.has(kind.id)).map((kind) => (
-            <button key={kind.id} type="button" role="radio" aria-checked={filter === kind.id} className={`chip${filter === kind.id ? ' on' : ''}`} onClick={() => setFilter(filter === kind.id ? '' : kind.id)}>
-              <span className="glyph" data-kind={kind.id} style={{ width: 10, height: 10, color: filter === kind.id ? 'currentColor' : undefined }} /> {kind.label}
-            </button>
-          ))}
-        </div>
-      )}
-      {!boardProblem && !items && !error && (
-        <div className="stack" aria-busy="true">
-          <div className="skeleton" style={{ height: 110 }} />
-          <div className="skeleton" style={{ height: 90 }} />
-          <div className="skeleton" style={{ height: 90 }} />
-        </div>
-      )}
-      {items && items.length === 0 && !error && (
-        <EmptyState icon={<IconMegaphone />} title="Nothing yet">
-          <button type="button" className="btn primary" onClick={() => void startPosting()}>
-            Post a notice
-          </button>
-        </EmptyState>
-      )}
-      {items && items.length > 0 && (
-        <div className="split">
-          <div className="agenda">
-            {dated.map((group) => (
-              <section key={group.key} id={`agenda-${group.key}`} className="agenda-day">
-                <div className="agenda-head">
-                  <h2>{group.label}</h2>
-                  {group.sub && <span>{group.sub}</span>}
-                </div>
-                <div className="agenda-items">
-                  {group.items.map((entry) => (
-                    <Item key={entry.id} entry={entry} now={now} mine={mine.includes(entry.id)} onRemove={() => void remove(entry.id)} />
-                  ))}
-                </div>
-              </section>
-            ))}
-            {undated.length > 0 && (
-              <section className="agenda-day" id="agenda-open">
-                <div className="agenda-head">
-                  <h2>Any time</h2>
-                </div>
-                <div className="agenda-items">
-                  {undated.map((entry) => (
-                    <Item key={entry.id} entry={entry} now={now} mine={mine.includes(entry.id)} onRemove={() => void remove(entry.id)} />
-                  ))}
-                </div>
-              </section>
-            )}
-            {shown.length === 0 && <div className="empty">No {KINDS.find((kind) => kind.id === filter)?.label.toLowerCase()} notices right now.</div>}
-          </div>
-          <aside className="rail">
-            <div className="rail-block rail-kinds">
-              <h2>Show</h2>
-              <div className="kind-filter" role="radiogroup" aria-label="Kind">
-                <button type="button" role="radio" aria-checked={!filter} className={filter ? undefined : 'on'} onClick={() => setFilter('')}>
-                  <span className="glyph" data-kind="event" style={{ color: 'var(--ink-3)' }} /> All
-                </button>
-                {KINDS.filter((kind) => counts.has(kind.id)).map((kind) => (
-                  <button key={kind.id} type="button" role="radio" aria-checked={filter === kind.id} className={filter === kind.id ? 'on' : undefined} onClick={() => setFilter(filter === kind.id ? '' : kind.id)}>
-                    <span className="glyph" data-kind={kind.id} /> {kind.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </aside>
-        </div>
-      )}
-      <Modal open={composing} onClose={() => setComposing(false)} title="New notice" width={560}>
-        <Compose
-          onDone={(announcement) => {
-            const next = [...mine, announcement.id];
-            setMine(next);
-            saveAnnounced(next);
-            setComposing(false);
-            load();
-            toast('Posted');
-          }}
-          onCancel={() => setComposing(false)}
-        />
+        <div className="events-heading"><h2>{selected ? 'On this day' : 'Upcoming events'}</h2>{selected && <button type="button" className="link-btn" onClick={() => setSelected('')}>Show all events</button>}<span className="faint">{shown.length} event{shown.length === 1 ? '' : 's'}</span></div>
+      </>}
+      {!boardProblem && !items && !error && <div className="stack" aria-busy="true"><div className="skeleton" style={{ height: 100 }} /><div className="skeleton" style={{ height: 140 }} /></div>}
+      {!boardProblem && items && !shown.length && !error && <EmptyState icon={<IconMegaphone />} title={selected ? 'No events on this day' : 'The calendar is open'}>
+        {selected ? <button type="button" className="btn" onClick={() => setSelected('')}>See upcoming events</button> : <button type="button" className="btn primary" onClick={() => void startPosting()}>Post the first event</button>}
+      </EmptyState>}
+      <div className="agenda">{dated.map((group) => <section key={group.key} className="agenda-day">
+        <div className="agenda-head"><h2>{group.label}</h2>{group.sub && <span>{group.sub}</span>}</div>
+        <div className="agenda-items">{group.items.map((entry) => <Item key={entry.id} entry={entry} now={now} mine={mine.includes(entry.id)} onRemove={() => void remove(entry.id)} />)}</div>
+      </section>)}</div>
+      <Modal open={composing} onClose={() => setComposing(false)} title="New event" width={560}>
+        <Compose onDone={(announcement) => {
+          const next = [...mine, announcement.id];
+          setMine(next); saveAnnounced(next); setComposing(false); setSelected(''); load(); toast('Event posted');
+        }} onCancel={() => setComposing(false)} />
       </Modal>
     </div>
   );
@@ -254,15 +134,12 @@ function Item({ entry, now, mine, onRemove }: { entry: Announcement; now: Date; 
   const when = entry.startsAt ? new Date(entry.startsAt) : null;
   const long = entry.body.length > 220 || entry.body.split('\n').length > 3;
   const soon = when ? startsIn(when, now) : null;
-  const hasTime = when ? when.getHours() !== 0 || when.getMinutes() !== 0 : false;
+
   return (
     <article className={`ann${when ? '' : ' undated'}`}>
-      <span className="glyph-stop" aria-hidden="true">
-        <span className="glyph" data-kind={entry.kind} />
-      </span>
       {when && (
         <div className="when">
-          <b>{hasTime ? when.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : 'All day'}</b>
+          <b>{when.toLocaleTimeString('en-GB', { timeZone: 'Asia/Dubai', hour: '2-digit', minute: '2-digit' })}</b>
         </div>
       )}
       <div className="ann-title">
@@ -311,7 +188,6 @@ function Compose({ onDone, onCancel }: { onDone(announcement: Announcement): voi
   const { profile } = useApp();
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
-  const [kind, setKind] = useState<AnnouncementKind>('event');
   const [startsAt, setStartsAt] = useState('');
   const [location, setLocation] = useState('');
   const [link, setLink] = useState('');
@@ -319,7 +195,7 @@ function Compose({ onDone, onCancel }: { onDone(announcement: Announcement): voi
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
-    if (!profile) return;
+    if (!profile || busy) return;
     setBusy(true);
     setError('');
     try {
@@ -328,8 +204,8 @@ function Compose({ onDone, onCancel }: { onDone(announcement: Announcement): voi
         key: askerKey(),
         title: title.trim(),
         body: body.trim(),
-        kind,
-        startsAt: startsAt ? new Date(startsAt).toISOString() : undefined,
+        kind: 'event',
+        startsAt: startsAt ? new Date(`${startsAt}+04:00`).toISOString() : undefined,
         location: location.trim() || undefined,
         link: link.trim() || undefined,
       });
@@ -343,28 +219,19 @@ function Compose({ onDone, onCancel }: { onDone(announcement: Announcement): voi
 
   return (
     <div className="stack" style={{ gap: 14 }}>
-      <div className="field">
-        <label>Kind</label>
-        <div className="chips" role="radiogroup" aria-label="Kind">
-          {KINDS.map((entry) => (
-            <button key={entry.id} type="button" role="radio" aria-checked={kind === entry.id} className={`chip${kind === entry.id ? ' on' : ''}`} onClick={() => setKind(entry.id)}>
-              <span className="glyph" data-kind={entry.id} style={{ width: 10, height: 10, color: kind === entry.id ? 'currentColor' : undefined }} /> {entry.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <p className="muted">Share a real gathering, with a host, a time and a place. Items and service requests belong in Market.</p>
       <div className="field">
         <label htmlFor="an-title">Title</label>
         <input id="an-title" className="input" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={120} />
       </div>
       <div className="form-grid">
         <div className="field">
-          <label htmlFor="an-when">When</label>
-          <input id="an-when" className="input" type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} />
+          <label htmlFor="an-when">When · Abu Dhabi time</label>
+          <input id="an-when" className="input" type="datetime-local" required value={startsAt} onChange={(event) => setStartsAt(event.target.value)} />
         </div>
         <div className="field">
           <label htmlFor="an-where">Location</label>
-          <input id="an-where" className="input" value={location} onChange={(event) => setLocation(event.target.value)} maxLength={80} placeholder="e.g. Arts Center" />
+          <input id="an-where" className="input" value={location} onChange={(event) => setLocation(event.target.value)} required maxLength={80} placeholder="e.g. Arts Center, Black Box · or Zoom" />
         </div>
       </div>
       <div className="field">
@@ -373,7 +240,7 @@ function Compose({ onDone, onCancel }: { onDone(announcement: Announcement): voi
       </div>
       <div className="field">
         <label htmlFor="an-body">Details</label>
-        <textarea id="an-body" className="input" value={body} onChange={(event) => setBody(event.target.value)} rows={4} maxLength={1500} />
+        <textarea id="an-body" className="input" value={body} onChange={(event) => setBody(event.target.value)} rows={4} minLength={12} maxLength={1500} placeholder="What is happening, who is hosting, and how can students join?" />
       </div>
       {error && <div className="alert error">{error}</div>}
       <div className="modal-actions" style={{ marginTop: 4 }}>
@@ -381,7 +248,7 @@ function Compose({ onDone, onCancel }: { onDone(announcement: Announcement): voi
           Cancel
         </button>
         <span className="spacer" />
-        <button type="button" className="btn primary" onClick={() => void submit()} disabled={busy || title.trim().length < 4}>
+        <button type="button" className="btn primary" onClick={() => void submit()} disabled={busy || title.trim().length < 4 || body.trim().length < 12 || !startsAt || location.trim().length < 2}>
           {busy ? 'Posting' : 'Post'}
         </button>
       </div>

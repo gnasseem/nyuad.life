@@ -164,7 +164,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       allow('offer', draft.note);
       const open = (await store.listOffersByPoster(posterKey)).filter((offer) => offer.status === 'open' && offer.currency === draft.currency && Date.parse(offer.expiresAt) > Date.now());
       if (open.length >= 3) throw new ApiError(400, `You already have three open ${CURRENCY_LABELS[draft.currency]} offers.`, 'too_many_offers');
-      await review('offer', draft.note);
+      await review('offer', `Currency: ${draft.currency}`, `Side: ${draft.side}`, `Amount: ${draft.amount}`, `Rate: ${draft.rate} AED per unit`, `Note: ${draft.note}`);
       const offer = await store.createOffer({ ...draft, posterKey, posterNetId: profile.netId, posterName: profile.name, status: 'open' });
       sendJson(res, 200, { offer: publicOffer(offer) });
       return;

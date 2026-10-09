@@ -50,8 +50,8 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
   let posts: IndexedPost[] = sortNewestFirst(cleaned.posts.map(enrichPost));
   if (options.limit) posts = posts.slice(0, options.limit);
   const chunks = chunkPosts(posts, { model, dimensions });
-  const { ad, falcons, listing } = cleaned.dropped;
-  log(`Read ${raw.length} posts; kept ${posts.length} (dropped ${ad} ads, ${falcons} Falcon trades, ${listing} listings and ${cleaned.commentsDropped} noise comments) and made ${chunks.length} chunks.`);
+  const { ad, falcons, listing, noise, duplicate, unanswered } = cleaned.dropped;
+  log(`Read ${raw.length} posts; kept ${posts.length} (dropped ${ad} ads, ${falcons} Falcon trades, ${listing} listings, ${noise} filler posts, ${duplicate} duplicates, ${unanswered} unanswered requests and ${cleaned.commentsDropped} noise comments) and made ${chunks.length} chunks.`);
 
   mkdirSync(options.outDir, { recursive: true });
   let table = emptyTable(dimensions);

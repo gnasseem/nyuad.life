@@ -234,7 +234,7 @@ export function PlanPage() {
       {error && <div className="alert error">{error}</div>}
       <div className="plan">
         <div className="plan-side">
-          <p className="plan-step">Describe a plan</p>
+          <div className="plan-intro"><h2>Build your week</h2><p>Tell us your courses and preferences, or add them below.</p></div>
           <div className="plan-ask">
             <textarea
               className="input"
@@ -280,7 +280,7 @@ export function PlanPage() {
                 ))}
               </div>
             )}
-            <p className="plan-step">Or add a course directly</p>
+            <p className="plan-step">Search by course name or code</p>
             <CoursePicker rows={rows?.courses ?? null} taken={new Set(saved.wants.flatMap((want) => want.codes))} onPick={addCode} />
             {saved.wants.length > 0 && <Load low={credits.low} high={credits.high} />}
           </div>
@@ -382,7 +382,7 @@ export function PlanPage() {
 
         <div className="plan-main" ref={mainRef}>
           {!rows && !error && <div className="skeleton" style={{ height: 420 }} />}
-          {rows && saved.wants.length === 0 && <WeekGrid option={null} daysOff={saved.rules.daysOff} empty="Your week shows up here. Add a course, or say what you need." />}
+          {rows && saved.wants.length === 0 && <WeekGrid option={null} daysOff={saved.rules.daysOff} empty="Add your courses to see a week that fits." />}
           {result && result.problems.length > 0 && (
             <>
               <div className="alert warn plan-problems" role="status">

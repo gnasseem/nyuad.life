@@ -5,7 +5,7 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { breadcrumbsOf, coursesOf, linksOf, mainHtml, textOf, titleOf } from './html.ts';
+import { breadcrumbsOf, coursesOf, linksOf, mainHtml, sectionsOf, textOf, titleOf } from './html.ts';
 import { buildOfficialIndex, classifySection, loadOfficial, officialCards, readOfficialJsonl, resetOfficial, retrieveOfficial } from './official.ts';
 
 const PAGE = (title: string, body: string, links: string[] = []) => `<!doctype html><html><head><title>${title} | NYU Abu Dhabi</title><script>var x=1</script></head><body>
@@ -13,6 +13,14 @@ const PAGE = (title: string, body: string, links: string[] = []) => `<!doctype h
 <div class="breadcrumb"><a href="/">Home</a> <span>›</span> <a href="/en/academics.html">Academics</a> <span>›</span> <span>${title}</span></div>
 <main><h1>${title}</h1>${body}<p>${links.map((href) => `<a href="${href}">${href}</a>`).join(' ')}</p></main>
 <footer><p>© NYU Abu Dhabi · <a href="/en/privacy.html">Privacy</a></p></footer></body></html>`;
+
+it('keeps pool and gym hours in separate passages with their parent heading', () => {
+  const sections = sectionsOf(PAGE('Sports', '<h2>Indoor facilities</h2><h3>Gym</h3><p>Cardio equipment and weights for campus workouts.</p><h4>Hours</h4><p>Monday-Friday 8am-10pm</p><h3>Indoor Pool</h3><p>A fifty-meter swimming pool with eight lanes.</p><h4>Hours</h4><p>Monday-Friday 8am-2pm and 3-9pm</p>'));
+  const pool = sections.find((section) => section.title.includes('Indoor Pool'))!;
+  expect(pool.title).toBe('Indoor facilities · Indoor Pool');
+  expect(pool.text).toContain('8am-2pm and 3-9pm');
+  expect(pool.text).not.toContain('8am-10pm');
+});
 
 const SITE: Record<string, string> = {
   '/en/academics.html': PAGE('Academics', '<p>NYU Abu Dhabi offers 27 majors across arts, humanities, science, social science and engineering. Students complete the Core Curriculum, a major and a capstone project. Advising begins in the first semester and continues every year.</p>', ['/en/academics/undergraduate/majors-and-minors.html', '/en/academics/global-education/study-away.html', 'https://bulletins.example.test/undergraduate/abu-dhabi/courses/']),
