@@ -59,5 +59,9 @@ export async function sendLoginCode(store: BoardStore, netId: string): Promise<v
   try {
     response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json', 'idempotency-key': `login-${netId}-${digest}` }, body: JSON.stringify({ from, to: [`${netId}@nyu.edu`], subject: 'Your nyuad.life login code', text: `Your nyuad.life verification code is ${code}. It expires in 10 minutes. If you did not request it, ignore this email.` }), signal: AbortSignal.timeout(12_000) });
   } catch { throw new ApiError(503, 'Could not send your code. Wait a minute and try again.', 'email_failed'); }
-  if (!response.ok) throw new ApiError(503, 'Could not send your code. Wait a minute and try again.', 'email_failed');
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({})) as { name?: string; message?: string };
+    console.error('Resend rejected login email:', response.status, error.name ?? '', (error.message ?? '').replace(/\S+@\S+/g, '[email]').slice(0, 400));
+    throw new ApiError(503, 'Could not send your code. Wait a minute and try again.', 'email_failed');
+  }
 }

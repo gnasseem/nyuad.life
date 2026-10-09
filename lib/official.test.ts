@@ -81,6 +81,9 @@ describe('html extraction', () => {
     expect(linksOf(SITE['/en/academics.html']!, 'https://nyuad.example/en/academics.html')).toContain('https://nyuad.example/en/academics/undergraduate/majors-and-minors.html');
     expect(textOf('<ul><li>One</li><li>Two &amp; three</li></ul>')).toBe('- One\n- Two & three');
   });
+  it('ignores unresolved portal template links', () => {
+    expect(linksOf('<a href="/announcements/{{ id }}">Draft</a><a href="/%7B%7B">Empty</a><a href="mf163@nyu.edu">Contact</a><a href="/announcements/36544">Loaded</a>', 'https://students.nyuad.nyu.edu/')).toEqual(['https://students.nyuad.nyu.edu/announcements/36544']);
+  });
   it('parses bulletin course blocks', () => {
     const courses = coursesOf(BULLETIN);
     expect(courses.map((course) => course.code)).toEqual(['CS-UH 1001', 'CS-UH 1050', 'ECON-UH 1010']);

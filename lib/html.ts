@@ -100,7 +100,7 @@ export function linksOf(html: string, base: string): string[] {
   const out = new Set<string>();
   for (const match of html.matchAll(/<a\b[^>]*\bhref=["']([^"'#]+)(?:#[^"']*)?["']/gi)) {
     const href = decodeEntities(match[1]!).trim();
-    if (!href || /^(?:javascript|mailto|tel|data):/i.test(href)) continue;
+    if (!href || /^(?:javascript|mailto|tel|data):/i.test(href) || /^[^/\s]+@[^/\s]+$/.test(href) || /[{}]|%7[bd]/i.test(href)) continue;
     try {
       const url = new URL(href, base);
       if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;

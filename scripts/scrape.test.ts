@@ -107,7 +107,7 @@ describe.skipIf(!executable)('scraper against a fake Facebook', () => {
     const third = await runScraper(['--stop-after-known', '8']);
     expect(third.code, third.output).toBe(0);
     expect(third.output).toMatch(/known posts in a row; the feed is up to date/);
-    expect(third.output).toMatch(/0 changed in this run/);
+    expect(third.output).toMatch(/this run added 0 posts and 0 comments/);
   }, 240_000);
 });
 
