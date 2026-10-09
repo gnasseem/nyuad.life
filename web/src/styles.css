@@ -1251,8 +1251,8 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
   .appbar { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding: 0 8px 0 6px; }
   .lines { display: none; }
   .brand-name { font-size: 17px; }
-  .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: grid; grid-template-columns: repeat(6, 1fr); height: calc(var(--tab) + env(safe-area-inset-bottom)); padding: 4px 4px env(safe-area-inset-bottom); background: color-mix(in srgb, var(--ground) 90%, transparent); -webkit-backdrop-filter: saturate(1.4) blur(16px); backdrop-filter: saturate(1.4) blur(16px); border-top: 1px solid var(--rule); }
-  .tabbar a { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--ink-3); font: 650 10.5px/1 var(--text); transition: color 0.2s; }
+  .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: grid; grid-template-columns: repeat(6, 1fr); height: calc(var(--tab) + env(safe-area-inset-bottom)); padding: 4px max(4px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(4px, env(safe-area-inset-left)); background: color-mix(in srgb, var(--ground) 90%, transparent); -webkit-backdrop-filter: saturate(1.4) blur(16px); backdrop-filter: saturate(1.4) blur(16px); border-top: 1px solid var(--rule); }
+  .tabbar a { min-width: 0; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--ink-3); font: 650 10.5px/1 var(--text); transition: color 0.2s; }
   .tabbar a::before { content: ''; position: absolute; top: -1px; left: 50%; width: 26px; height: 4px; border-radius: 0 0 3px 3px; background: var(--line); transform: translateX(-50%) scaleX(0); transition: transform 0.35s var(--ease); }
   .tabbar a[data-line='ask']::before { background: var(--ink); }
   .tabbar a[aria-current='page'] { color: var(--ink); }
@@ -1401,11 +1401,11 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
   .chip:not(.on):hover { border-color: var(--rule); color: var(--ink-2); }
 }
 
-/* Tap targets of at least 40px on phones. Last, so it wins over the component rules above. */
+/* Tap targets of at least 44px on phones. Last, so it wins over the component rules above. */
 @media (max-width: 900px) {
-  .btn, .chip, .input, .segmented button, .icon-btn, .send, .row, .me-btn { min-height: 40px; }
-  .btn.sm { min-height: 40px; }
-  .tabs button { min-height: 42px; padding-top: 10px; }
+  .btn, .chip, .input, .segmented button, .icon-btn, .send, .row, .me-btn { min-height: 44px; }
+  .btn.sm { min-height: 44px; }
+  .tabs button { min-height: 44px; padding-top: 10px; }
   .admin-remove { min-height: 36px; }
   .admin-remove.compact { width: 36px; }
   .segmented button { height: 36px; }
@@ -1430,12 +1430,12 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
 .central .composer:focus-within { border-color: #ffc21a; box-shadow: 0 0 0 3px rgba(255,194,26,.25); }
 .central .composer textarea { min-height: 64px; font-size: 17px; }
 .ask-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
-.ask-suggestions button { display: flex; align-items: center; gap: 8px; border: 1px solid #434d75; border-radius: 8px; padding: 10px 12px; background: transparent; color: #f0f2fa; font-size: 13px; text-align: left; }
+.ask-suggestions button { min-height: 44px; display: flex; align-items: center; gap: 8px; border: 1px solid #434d75; border-radius: 8px; padding: 10px 12px; background: transparent; color: #f0f2fa; font-size: 13px; text-align: left; }
 .ask-suggestions button:hover { background: #1a2653; border-color: #8790b9; }
 .ask-suggestions svg, .campus-links svg { width: 14px; height: 14px; flex-shrink: 0; }
 .campus-links { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 22px 0; margin-bottom: 10px; border-bottom: 1px solid var(--rule); font-size: 13px; }
 .campus-links > span { color: var(--ink-2); }
-.campus-links a { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; padding: 5px 0; }
+.campus-links a { min-height: 44px; display: inline-flex; align-items: center; gap: 7px; font-weight: 600; padding: 5px 0; }
 .campus-links a:hover { color: var(--cobalt-ink); text-decoration: underline; text-underline-offset: 4px; }
 .line-cards { gap: 18px; }
 .line-card { box-shadow: none; border: 1px solid var(--rule); border-radius: 12px; }
@@ -1462,12 +1462,16 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
   .plan { grid-template-columns: minmax(0, 1fr); }
   .plan-side { border-right: 0; padding: 0; }
 }
-@media (max-width: 700px) {
+@media (max-width: 900px) {
   .appbar { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
-  .bar-start { gap: 8px; }
-  .home { padding: 24px 16px 88px; }
-  .central { padding: 22px 20px; border-radius: 12px; }
-  .central-sign h1 { font-size: 28px; }
+  .bar-start { gap: 4px; }
+  .brand { padding-inline: 0; gap: 8px; }
+  .brand-mark { width: 24px; height: 24px; }
+  .icon-btn, .me-btn { min-width: 44px; }
+  .bar-tools { gap: 0; }
+  .home { padding: 20px max(16px, env(safe-area-inset-left)) calc(var(--tab) + 24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-right)); }
+  .central { padding: 22px 18px; border-radius: 12px; }
+  .central-sign h1 { font-size: clamp(26px, 7vw, 32px); }
   .central-sign span { display: none; }
   .ask-intro { font-size: 14px; margin-bottom: 20px; }
   .central .composer { padding: 8px 8px 8px 14px; }

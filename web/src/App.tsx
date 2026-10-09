@@ -110,8 +110,8 @@ export function App() {
   useEffect(() => {
     void api.auth.me().then((result) => {
       if (result.profile) { saveAccountKey(result.key); setProfileState(result.profile); saveProfile(result.profile); }
-      else setResignup(true);
-    }).catch(() => setResignup(true));
+      else if (profile) setResignup(true);
+    }).catch(() => { if (profile) setResignup(true); });
   }, []);
 
   useEffect(() => {

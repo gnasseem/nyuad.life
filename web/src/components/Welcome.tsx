@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import type { Profile } from '../api';
 import { IconArrow, IconBack } from '../icons';
 import { ProfileForm } from './ProfileForm';
+import { Wordmark } from './Logo';
 import '../welcome.css';
 
 type Line = 'ask' | 'plan' | 'questions' | 'notices' | 'market' | 'guide';
@@ -20,7 +21,7 @@ const STOPS: Stop[] = [
   {
     line: 'central',
     kicker: 'Welcome',
-    title: 'Everything NYUAD students know, in one place',
+    title: 'Life at NYUAD, in one place',
     text: 'nyuad.life is built on thousands of threads from the Room of Requirement, the official NYUAD pages, the class schedule, and students like you.',
     points: ['Six lines, one map. Here is a quick ride through each.'],
     scene: <MapScene />,
@@ -30,7 +31,7 @@ const STOPS: Stop[] = [
     kicker: 'Ask',
     title: 'Ask anything, get an answer with sources',
     text: 'Courses, professors, housing, visas, the best shawarma near campus.',
-    points: ['Every answer cites the threads and pages it comes from', 'Follow-ups keep the context, and your chats stay in the list on the left'],
+    points: ['Every answer cites the threads and pages it comes from', 'Ask follow-ups and return to saved conversations anytime'],
     scene: <AskScene />,
   },
   {
@@ -67,7 +68,7 @@ const STOPS: Stop[] = [
   },
   {
     line: 'guide',
-    kicker: 'Courses',
+    kicker: 'Reviews',
     title: 'Know a course before you take it',
     text: 'Every course in Albert, searchable by code, title or professor.',
     points: ['Ratings written from what students actually said', 'Difficulty, workload, what they loved and what to watch out for'],
@@ -82,9 +83,10 @@ const STOPS: Stop[] = [
  */
 export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; reason?: string; onToured(): void; onDone(profile: Profile): void }) {
   const last = STOPS.length;
+  const [canReturnToTour] = useState(tour);
   const [index, setIndex] = useState(tour ? 0 : last);
   const [direction, setDirection] = useState<1 | -1>(1);
-  const touch = useRef<number | null>(null);
+  const touch = useRef<{ x: number; y: number } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const go = useCallback(
@@ -99,10 +101,22 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Tab') {
+        const controls = Array.from(cardRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href]') ?? []);
+        const first = controls[0];
+        const final = controls[controls.length - 1];
+        if (event.shiftKey && (document.activeElement === first || document.activeElement?.tagName === 'H2')) {
+          event.preventDefault();
+          final?.focus();
+        } else if (!event.shiftKey && document.activeElement === final) {
+          event.preventDefault();
+          first?.focus();
+        }
+        return;
+      }
       if (index >= last || (event.target as HTMLElement | null)?.closest('input, select, textarea')) return;
-      if (event.target instanceof HTMLElement && event.target.closest('input, textarea, select')) return;
-      if (event.key === 'ArrowRight') go(index + 1);
-      else if (event.key === 'ArrowLeft') go(index - 1);
+      if (event.key === 'ArrowRight') { event.preventDefault(); go(index + 1); }
+      else if (event.key === 'ArrowLeft') { event.preventDefault(); go(index - 1); }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -110,6 +124,7 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
 
   // The page behind stays put and out of reach while this is open.
   useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
     const app = document.querySelector<HTMLElement>('.app');
     app?.setAttribute('inert', '');
     const { overflow } = document.body.style;
@@ -117,45 +132,51 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
     return () => {
       app?.removeAttribute('inert');
       document.body.style.overflow = overflow;
+      previousFocus?.focus({ preventScroll: true });
     };
   }, []);
 
   useEffect(() => {
-    cardRef.current?.querySelector<HTMLElement>(index === last ? '[data-autofocus]' : '.welcome-next')?.focus({ preventScroll: true });
+    cardRef.current?.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
   }, [index, last]);
 
   const stop = STOPS[index];
   const line = stop?.line ?? 'central';
   return createPortal(
-    <div className="welcome" data-line={line === 'central' ? 'ask' : line} role="dialog" aria-modal="true" aria-label={stop ? stop.title : 'Log in'}>
-      <div className="welcome-glow" aria-hidden="true" />
+    <div className="welcome" data-line={line === 'central' ? 'ask' : line} role="dialog" aria-modal="true" aria-labelledby="welcome-title">
       <div
         ref={cardRef}
-        className="welcome-card"
-        onPointerDown={(event) => (touch.current = event.pointerType === 'touch' ? event.clientX : null)}
-        onPointerUp={(event) => {
-          if (touch.current === null || index >= last) return;
-          const dx = event.clientX - touch.current;
-          if (Math.abs(dx) > 50) go(index + (dx < 0 ? 1 : -1));
-          touch.current = null;
+        className={`welcome-card${stop ? '' : ' is-signup'}`}
+        onPointerDown={(event) => {
+          touch.current = event.pointerType === 'touch' && !(event.target as HTMLElement).closest('button, input, select, textarea') ? { x: event.clientX, y: event.clientY } : null;
         }}
+        onPointerUp={(event) => {
+          const start = touch.current;
+          touch.current = null;
+          if (!start || index >= last) return;
+          const dx = event.clientX - start.x;
+          const dy = event.clientY - start.y;
+          if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) go(index + (dx < 0 ? 1 : -1));
+        }}
+        onPointerCancel={() => { touch.current = null; }}
       >
-        <div key={index} className={`welcome-page ${direction > 0 ? 'from-right' : 'from-left'}`}>
+        <div className="welcome-head">
+          <div className="welcome-brand"><Wordmark /></div>
+          {stop && <button type="button" className="welcome-skip" onClick={() => go(last)}>Skip tour <IconArrow /></button>}
+        </div>
+        <div key={index} className={`welcome-page${stop ? '' : ' is-signup'} ${direction > 0 ? 'from-right' : 'from-left'}`}>
           {stop ? (
             <>
-              <div className="welcome-scene" aria-hidden="true">
-                {stop.scene}
+              <div className="welcome-visual">
+                <div className="welcome-scene" aria-hidden="true">{stop.scene}</div>
+                <span className="welcome-preview">{index === 0 ? 'Six lines. One campus.' : 'Illustrative preview'}</span>
               </div>
               <div className="welcome-copy">
-                <span className="welcome-kicker">
-                  <i className="welcome-ring" />
-                  {stop.kicker}
-                </span>
-                <h2>{stop.title}</h2>
+                <h2 id="welcome-title" tabIndex={-1}>{stop.title}</h2>
                 <p>{stop.text}</p>
                 <ul>
-                  {stop.points.map((point, i) => (
-                    <li key={point} style={{ '--i': i } as CSSProperties}>
+                  {stop.points.map((point) => (
+                    <li key={point}>
                       {point}
                     </li>
                   ))}
@@ -164,12 +185,8 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
             </>
           ) : (
             <div className="welcome-signup">
-              <span className="welcome-kicker">
-                <i className="welcome-ring" />
-                Last stop
-              </span>
-              <h2>Log in to nyuad.life</h2>
-              <p>{reason || 'Verify your NYU email to access your account from any device. New here? The same form creates your account.'}</p>
+              <h2 id="welcome-title" tabIndex={-1}>Log in to nyuad.life</h2>
+              <p>{reason || 'Use your NYU email to log in or create an account.'}</p>
               <ProfileForm onDone={onDone} submitLabel="Get started" />
             </div>
           )}
@@ -178,27 +195,25 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
         <div className="welcome-foot">
           {index < last ? (
             <>
-              <button type="button" className="btn ghost sm" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Back">
-                <IconBack />
-              </button>
+              <div className="welcome-position"><span>{stop?.kicker}</span><span>{index + 1} of {last}</span></div>
               <Progress index={index} total={last} onPick={go} />
-              <button type="button" className="btn primary welcome-next" onClick={() => go(index + 1)}>
-                {index === last - 1 ? 'Log in' : index === 0 ? 'Start the tour' : 'Next'} <IconArrow className="go" />
-              </button>
+              <div className="welcome-actions">
+                <button type="button" className="btn ghost welcome-back" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Back">
+                  <IconBack />
+                </button>
+                <button type="button" className="btn primary welcome-next" onClick={() => go(index + 1)}>
+                  {index === last - 1 ? 'Log in' : index === 0 ? 'Start the tour' : 'Next'} <IconArrow className="go" />
+                </button>
+              </div>
             </>
           ) : (
-            tour && (
+            canReturnToTour && (
               <button type="button" className="btn ghost sm" onClick={() => go(last - 1)}>
                 <IconBack /> Back to the tour
               </button>
             )
           )}
         </div>
-        {index < last && (
-          <button type="button" className="welcome-skip" onClick={() => go(last)}>
-            Log in or create an account
-          </button>
-        )}
       </div>
     </div>,
     document.body,
@@ -208,11 +223,11 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
 /** The tour as a line with a stop per page; the train sits at the page you are on. */
 function Progress({ index, total, onPick }: { index: number; total: number; onPick(index: number): void }) {
   return (
-    <div className="welcome-progress" role="tablist" aria-label="Tour">
-      <span className="welcome-track" />
-      <span className="welcome-train" style={{ left: `calc(${(index / (total - 1)) * 100}% - 9px)` }} />
+    <div className="welcome-progress" role="group" aria-label="Tour">
+      <span className="welcome-track" aria-hidden="true" />
+      <span className="welcome-train" aria-hidden="true" style={{ left: `calc(${(index / (total - 1)) * 100}% - 5px)` }} />
       {STOPS.map((stop, i) => (
-        <button key={stop.kicker} type="button" role="tab" aria-selected={i === index} aria-label={stop.kicker} className={`welcome-dot${i <= index ? ' done' : ''}`} data-line={stop.line === 'central' ? 'ask' : stop.line} style={{ left: `${(i / (total - 1)) * 100}%` }} onClick={() => onPick(i)} />
+        <button key={stop.kicker} type="button" aria-current={i === index ? 'step' : undefined} aria-label={`${stop.kicker}, step ${i + 1} of ${total}`} className={`welcome-dot${i <= index ? ' done' : ''}`} data-line={stop.line === 'central' ? 'ask' : stop.line} style={{ left: `${(i / (total - 1)) * 100}%` }} onClick={() => onPick(i)} />
       ))}
     </div>
   );
