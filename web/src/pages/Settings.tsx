@@ -308,7 +308,6 @@ function AdminSection() {
                   <div key={result.name} className={`model-check${result.ok ? ' ok' : ''}`}>
                     <span className="dot" />
                     <b>{result.name}</b>
-                    {result.paid && <span className="tag">paid</span>}
                     <span className="ms">{(result.ms / 1000).toFixed(1)}s</span>
                     {result.error && <span className="why">{result.error}</span>}
                   </div>

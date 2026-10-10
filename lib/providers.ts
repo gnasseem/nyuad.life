@@ -8,13 +8,12 @@
  *   ZAI_API_KEY                  z.ai: GLM Flash models free, one request at a time.
  *   OPENROUTER_API_KEY           openrouter.ai, models ending in ":free": 50 requests a day in all (1,000 after $10).
  *   MISTRAL_API_KEY              console.mistral.ai "Experiment" plan.
- *   AI_GATEWAY_API_KEY           Vercel AI Gateway: a monthly free credit.
- *   DEEPSEEK_API_KEY             platform.deepseek.com, paid but cheap: about $0.002 an answer. Last, as the safety net.
+ *   AI_GATEWAY_API_KEY           Vercel AI Gateway: a monthly free credit, never charged unless credit is bought.
  *
  * Any key variable may hold several keys separated by commas (GEMINI_API_KEY too, in lib/gemini.ts): each key is
  * a separate free quota, tried in turn.
  * `<PROVIDER>_MODELS` overrides a provider's answer models and `<PROVIDER>_LITE_MODELS` its models for small calls.
- * `ROR_MODEL_ORDER` (default below) sets which goes first; put `deepseek` first to answer on the paid model.
+ * `ROR_MODEL_ORDER` (default below) sets which goes first.
  */
 import { discoverGeminiModels, geminiConfig, geminiKeys, generateJson, generateText, keyTag, type GeminiConfig, type Message } from './gemini.ts';
 
@@ -36,8 +35,6 @@ export interface Provider {
    */
   maxPromptChars: number;
   maxOutputTokens: number;
-  /** Charged per token rather than free, so it is shown as such. */
-  paid?: boolean;
 }
 
 interface Preset {
@@ -50,7 +47,6 @@ interface Preset {
   liteModels: string[];
   maxPromptChars: number;
   maxOutputTokens: number;
-  paid?: boolean;
   /** Whether GET /models lists what the key can use; when it does, names it does not list are dropped. */
   listsModels: boolean;
   /** When the provider lists none of the default models (they were renamed), the listed ones to use instead. */
@@ -84,12 +80,9 @@ const PRESETS: Preset[] = [
   { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['nvidia/nemotron-3-super-120b-a12b:free', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'google/gemma-4-31b-it:free'], liteModels: ['google/gemma-4-26b-a4b-it:free', 'nvidia/nemotron-3-super-120b-a12b:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: true, fallbackPattern: /:free$/, extra: (model) => (/gpt-oss|nemotron|inkling/.test(model) ? { reasoning: { effort: 'low', exclude: true } } : {}) },
   { id: 'mistral', label: 'Mistral', key: 'MISTRAL_API_KEY', baseUrl: 'https://api.mistral.ai/v1', models: ['mistral-medium-latest', 'mistral-small-latest'], liteModels: ['mistral-small-latest'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: true, fallbackPattern: /^mistral-(medium|small)/i },
   { id: 'gateway', label: 'Vercel AI Gateway', key: 'AI_GATEWAY_API_KEY', baseUrl: 'https://ai-gateway.vercel.sh/v1', models: ['openai/gpt-oss-120b', 'google/gemma-4-31b-it'], liteModels: ['openai/gpt-oss-20b'], maxPromptChars: 80_000, maxOutputTokens: 2_000, listsModels: false, extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}) },
-  // DeepSeek V4.1 Flash: about $0.15 per million tokens in and $0.60 out off-peak (double at peak), so an answer costs
-  // about a fifth of a cent. "deepseek-chat" was retired in July 2026.
-  { id: 'deepseek', label: 'DeepSeek', key: 'DEEPSEEK_API_KEY', baseUrl: 'https://api.deepseek.com', models: ['deepseek-flash', 'deepseek-v4-flash'], liteModels: ['deepseek-flash', 'deepseek-v4-flash'], maxPromptChars: 80_000, maxOutputTokens: 2_000, paid: true, listsModels: true, fallbackPattern: /flash|chat/i },
 ];
 
-export const DEFAULT_ORDER = ['gemini', 'groq', 'cloudflare', 'zai', 'openrouter', 'mistral', 'gateway', 'deepseek'];
+export const DEFAULT_ORDER = ['gemini', 'groq', 'cloudflare', 'zai', 'openrouter', 'mistral', 'gateway'];
 const ALL_IDS = ['gemini', ...PRESETS.map((preset) => preset.id)];
 
 function list(value: string | undefined, fallback: string[]): string[] {
@@ -194,7 +187,6 @@ export function providersFromEnv(env: NodeJS.ProcessEnv = process.env): Provider
       liteModels,
       maxPromptChars: preset.maxPromptChars,
       maxOutputTokens: preset.maxOutputTokens,
-      ...(preset.paid ? { paid: true } : {}),
     }));
   }).sort((a, b) => order.indexOf(a.family) - order.indexOf(b.family));
 }
@@ -509,7 +501,6 @@ export interface ModelCheck {
   ok: boolean;
   ms: number;
   error?: string;
-  paid?: boolean;
 }
 
 /**
@@ -518,7 +509,7 @@ export interface ModelCheck {
  */
 export async function checkModels(gemini: GeminiConfig | null, backups: Provider[]): Promise<ModelCheck[]> {
   const ask: Message[] = [{ role: 'user', text: 'Reply with the word OK.' }];
-  const jobs: Array<{ name: string; paid?: boolean; run(signal: AbortSignal): Promise<unknown> }> = [];
+  const jobs: Array<{ name: string; run(signal: AbortSignal): Promise<unknown> }> = [];
   if (gemini) {
     for (const key of geminiKeys(gemini)) {
       for (const model of new Set([gemini.chatModel, ...gemini.chatFallbacks, ...gemini.liteModels])) {
@@ -528,18 +519,17 @@ export async function checkModels(gemini: GeminiConfig | null, backups: Provider
   }
   for (const provider of backups) {
     for (const model of new Set([...provider.models, ...provider.liteModels])) {
-      jobs.push({ name: `${provider.id}:${model}`, paid: provider.paid, run: (signal) => post(provider, model, { system: 'Be brief.', messages: ask, maxOutputTokens: 64, signal }, false).then((response) => response.json()) });
+      jobs.push({ name: `${provider.id}:${model}`, run: (signal) => post(provider, model, { system: 'Be brief.', messages: ask, maxOutputTokens: 64, signal }, false).then((response) => response.json()) });
     }
   }
   return Promise.all(
     jobs.map(async (job): Promise<ModelCheck> => {
       const started = Date.now();
-      const paid = job.paid ? { paid: true } : {};
       try {
         await job.run(AbortSignal.timeout(15_000));
-        return { name: job.name, ok: true, ms: Date.now() - started, ...paid };
+        return { name: job.name, ok: true, ms: Date.now() - started };
       } catch (error) {
-        return { name: job.name, ok: false, ms: Date.now() - started, error: String((error as Error).message ?? error).slice(0, 240), ...paid };
+        return { name: job.name, ok: false, ms: Date.now() - started, error: String((error as Error).message ?? error).slice(0, 240) };
       }
     }),
   );

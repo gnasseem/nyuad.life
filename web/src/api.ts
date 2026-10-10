@@ -156,7 +156,6 @@ export interface ModelCheck {
   ok: boolean;
   ms: number;
   error?: string;
-  paid?: boolean;
 }
 
 export type AnnouncementKind = 'event' | 'deadline' | 'opportunity' | 'club' | 'notice';

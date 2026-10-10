@@ -54,7 +54,6 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
    | --- | --- |
    | `GEMINI_API_KEY` | Answers for students not signed in with ChatGPT, question tagging, course summaries. Several keys from different Google projects, separated by commas, multiply the free quota. |
    | `GROQ_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY` | Free backup models for answers when Gemini is overloaded or out of quota (below). Any or all; each variable takes several keys separated by commas. |
-   | `DEEPSEEK_API_KEY` | Optional paid safety net, about $0.002 an answer: used only when every free model is down (below). |
    | `ROR_ADMIN_NETIDS` | Comma-separated verified administrator NetIDs, for example `gnn9245`. |
    | `RESEND_API_KEY`, `RESEND_FROM`, `SESSION_SECRET` | NYU email login: a verified Resend sender and a 32+ character session secret. |
    | `OPENAI_CLIENT_ID`, `SESSION_SECRET`, `ROR_SITE_URL` | Sign in with ChatGPT: answers on each student's own plan (below). |
@@ -83,7 +82,6 @@ Free model tiers can be overloaded (503) or rate-limited (429). Ask moves down a
    cost), Z.ai (GLM 4.7 Flash), OpenRouter's free models, Mistral and Vercel AI Gateway, for each key that is set.
    Groq's free tier caps tokens per minute, so its prompts are shortened to fit; a prompt still too long for a
    provider skips it.
-3. DeepSeek, when `DEEPSEEK_API_KEY` is set: paid, but only reached when every free model has failed.
 
 Every key variable takes several keys separated by commas, with no spaces needed (`GEMINI_API_KEY=AIza…1,AIza…2`,
 `GROQ_API_KEY=gsk_a,gsk_b`): free tiers are counted per Google project or per account, so each key is another quota,
@@ -96,23 +94,6 @@ Model names go stale fast (Google shut 2.5 Flash to new keys, Groq retired its L
 instance asks Gemini and each provider which models its key can actually use (`GET /models`, cached for six hours),
 and drops the ones it cannot. A model that answers "no free tier"
 (`limit: 0`) or "out of today's quota" is skipped for hours rather than tried on every question.
-
-### What a paid model would cost
-
-One answer sends about 9,600 tokens and gets about 800 back. Approximate monthly cost with no free tier at all
-(October 2026 prices; DeepSeek doubles at its peak hours, 05:00 to 08:00 and 10:00 to 14:00 in Abu Dhabi):
-
-| Model | $ per million in / out | 1,000 questions | 5,000 | 20,000 |
-| --- | --- | --- | --- | --- |
-| Groq `openai/gpt-oss-20b` | 0.075 / 0.30 | $1 | $5 | $19 |
-| DeepSeek V4.1 Flash (`deepseek-flash`) | 0.15 / 0.60 | $2 to $4 | $10 to $19 | $38 to $77 |
-| Groq `openai/gpt-oss-120b`, Mistral Small 4 | 0.15 / 0.60 | $2 | $10 | $38 |
-| Gemini 3.1 Flash-Lite (paid tier) | 0.25 / 1.50 | $4 | $18 | $72 |
-| Gemini 3.8 Flash (paid tier) | 0.75 / 3.75 | $10 | $51 | $204 |
-
-Moderation and the other small calls add well under a dollar a month. With the free tiers in front and a paid model
-only as the safety net, expect a few dollars a month. To answer everything on DeepSeek instead (fastest, most
-predictable), set `ROR_MODEL_ORDER=deepseek,gemini`.
 
 A model that failed rests for a while (a minute when overloaded, an hour when its day's quota is spent, hours when it
 no longer exists), and one that has not started writing within 25 seconds is skipped while there is time for the next.
@@ -127,6 +108,7 @@ it stands (`answers.chain`).
 | OpenRouter | `:free` models, 50 requests a day without paying (1,000 a day only after a $10 top-up) | [openrouter.ai/keys](https://openrouter.ai/keys) |
 | Cloudflare | 10,000 neurons a day, about 90 answers on Gemma 4 | [dash.cloudflare.com](https://dash.cloudflare.com) → AI → Workers AI |
 | Z.ai | GLM Flash models free, one request at a time | [z.ai](https://z.ai) |
+| Vercel AI Gateway | $5 of credit every 30 days, never charged unless you buy credit | [vercel.com](https://vercel.com) → AI Gateway → API keys |
 
 Opening questions are also cached for six hours (`lib/answer-cache.ts`): the same question asked again, in any case or
 punctuation, is answered from the cache with no model call. Registration-week questions are asked many times a day, so
@@ -134,7 +116,7 @@ this saves much of the quota. The cache lives in memory and in the board's `guid
 up, so every serverless instance shares it; expired entries are removed.
 
 Settings: `ROR_MODEL_ORDER=groq,gemini` puts a backup first (the default is
-`gemini,groq,cloudflare,zai,openrouter,mistral,gateway,deepseek`); `ROR_MODEL_DISCOVERY=0` turns the model listing off; `<PROVIDER>_MODELS` and `<PROVIDER>_LITE_MODELS` (for
+`gemini,groq,cloudflare,zai,openrouter,mistral,gateway`); `ROR_MODEL_DISCOVERY=0` turns the model listing off; `<PROVIDER>_MODELS` and `<PROVIDER>_LITE_MODELS` (for
 example `GROQ_MODELS`) replace a provider's model lists; `ROR_ANSWER_CACHE=0` turns the cache off. Gemini's own lists
 are `GEMINI_CHAT_MODEL`, `GEMINI_CHAT_FALLBACK_MODELS`, `GEMINI_LITE_MODEL` and `GEMINI_LITE_FALLBACK_MODELS`.
 
