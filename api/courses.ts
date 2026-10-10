@@ -411,7 +411,10 @@ async function savedProf(name: string): Promise<SavedProf | undefined> {
 }
 
 function publicProf(entry: SavedProf | null): Omit<ProfRating, 'model' | 'createdAt'> | null {
-  return !entry || 'none' in entry ? null : { score: entry.score, basis: entry.basis, verdict: entry.verdict, confidence: entry.confidence, sources: entry.sources };
+  if (!entry || 'none' in entry) return null;
+  // Ratings written before excerpts left out who said what still carry "- Name (date):" in front of each comment.
+  const sources = entry.sources.map((source) => ({ ...source, excerpt: collapseWhitespace(source.excerpt.replace(/(?:^|\s)- [^:()\n]{1,60}?(?: \([^)]{1,30}\))?: /g, ' … ')).replace(/^… /, '') }));
+  return { score: entry.score, basis: entry.basis, verdict: entry.verdict, confidence: entry.confidence, sources };
 }
 
 /**
