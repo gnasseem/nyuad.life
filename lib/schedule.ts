@@ -26,6 +26,7 @@ export interface SolverSection {
   section: string;
   component: string;
   topic: string;
+  session?: string;
   status: 'open' | 'waitlist' | 'closed' | 'cancelled';
   instructors: string[];
   meetings: SolverMeeting[];
@@ -47,6 +48,14 @@ export interface Want {
   codes: string[];
   /** What the student called a slot with several courses ("an Arts Core"), for messages. */
   label?: string;
+  sessions?: Array<'71' | '72'>;
+}
+
+/** Albert's 71/A71 and 72/A72 sessions are the first and second seven-week halves. */
+export function sessionHalf(session = ''): '71' | '72' | '' {
+  if (/^(?:A?71|First 7 weeks)$/i.test(session.trim())) return '71';
+  if (/^(?:A?72|Second 7 weeks)$/i.test(session.trim())) return '72';
+  return '';
 }
 
 export interface Rules {
@@ -334,7 +343,7 @@ function busiest(list: Block[], days?: Set<string>): number {
  * recitation or lab numbered like the lectures (001 with REC1, 003 with LAB3) goes with its own lecture. With none,
  * the reason, judged on the sections Albert lists.
  */
-export function waysToTake(course: SolverCourse, want: string, rules: Rules): { ways: Choice[]; why: string | null } {
+export function waysToTake(course: SolverCourse, want: string, rules: Rules, sessions: Want['sessions'] = []): { ways: Choice[]; why: string | null } {
   const live = course.sections.filter((section) => section.status !== 'cancelled');
   if (live.length === 0) return { ways: [], why: course.sections.length ? 'is cancelled this term' : 'has no sections this term' };
   const byComponent = new Map<string, SolverSection[]>();
@@ -342,7 +351,8 @@ export function waysToTake(course: SolverCourse, want: string, rules: Rules): { 
   const components = [...byComponent.keys()].sort((a, b) => rank(a) - rank(b));
   const fitting = new Map<string, SolverSection[]>();
   for (const component of components) {
-    const all = byComponent.get(component)!;
+    const all = byComponent.get(component)!.filter((section) => component !== components[0] || !sessions.length || sessions.some((half) => half === sessionHalf(section.session)));
+    if (!all.length) return { ways: [], why: sessions.length === 2 ? 'has no seven-week section (71 or 72)' : `has no session ${sessions[0]} section` };
     const kept = all.filter((section) => blocker(section, rules) === null);
     if (kept.length === 0) {
       const counts = new Map<Blocker, SolverSection[]>();
@@ -457,7 +467,7 @@ function domain(catalog: Map<string, SolverCourse>, want: Want, rules: Rules, qu
       reasons.push(`${code} is not offered this term`);
       continue;
     }
-    const result = waysToTake(course, want.id, rules);
+    const result = waysToTake(course, want.id, rules, want.sessions);
     ways.push(...result.ways);
     if (result.why) reasons.push(`${code} ${result.why}`);
   }

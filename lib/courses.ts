@@ -5,6 +5,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { sessionHalf } from './schedule.ts';
 import { dataRoot } from './store.ts';
 import { collapseWhitespace, tokenize, truncate } from './text.ts';
 
@@ -161,8 +162,8 @@ export function seatStatus(status: string): { status: SeatStatus; waitlist?: num
 
 /** AD is the whole term; A71 and A72 are its first and second seven weeks. */
 function sessionLabel(section: Section): string {
-  if (section.session === 'A71') return 'First 7 weeks';
-  if (section.session === 'A72') return 'Second 7 weeks';
+  if (sessionHalf(section.session) === '71') return 'First 7 weeks';
+  if (sessionHalf(section.session) === '72') return 'Second 7 weeks';
   if (section.session === 'AD' || !section.session) return '';
   return section.startDate && section.endDate ? `${section.startDate.slice(5)} to ${section.endDate.slice(5)}` : '';
 }

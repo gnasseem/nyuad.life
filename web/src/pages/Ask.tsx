@@ -310,7 +310,7 @@ export function AskPage({ resumeId }: Props) {
     <div className="conv">
       <div className="conv-main">
         <div className="conv-head">
-          <span className="conv-title">Ask / conversation</span>
+          <span className="conv-title">Ask</span>
           <button
             type="button"
             className="btn ghost sm"
@@ -511,7 +511,6 @@ function Home({ composer, answersOff }: { composer: ReactNode; answersOff: boole
   return (
     <div className="home">
       <section className="central">
-        <div className="terminal-bar"><span className="terminal-lights" aria-hidden="true"><i /><i /><i /></span><span>nyuad.life / ask</span></div>
         <div className="central-sign">
           <h1>What do you need to know?</h1>
           <span lang="ar" dir="rtl">

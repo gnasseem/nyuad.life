@@ -19,6 +19,19 @@ const want = (id: string, ...codes: string[]) => ({ id, codes });
 const numbers = (result: ReturnType<typeof solve>, option = 0) => result.options[option]!.choices.map((choice) => choice.sections.map((s) => s.classNumber).join('+'));
 
 describe('ways to take a course', () => {
+  it('keeps only the requested seven-week halves, including 71 and 72 aliases', () => {
+    const course: SolverCourse = { code: 'X-UH 1000', title: 'X', credits: '2', sections: [
+      section('1', 'Seminar', ['Mon'], '10:00', '11:00', { session: '71' }),
+      section('2', 'Seminar', ['Tue'], '10:00', '11:00', { session: 'A72' }),
+      section('3', 'Seminar', ['Wed'], '10:00', '11:00', { session: 'AD' }),
+    ] };
+    expect(waysToTake(course, 'x', DEFAULT_RULES, ['71', '72']).ways.map((way) => way.sections[0]!.classNumber)).toEqual(['1', '2']);
+    expect(waysToTake(course, 'x', DEFAULT_RULES, ['72']).ways.map((way) => way.sections[0]!.classNumber)).toEqual(['2']);
+    expect(waysToTake(course, 'x', DEFAULT_RULES).ways).toHaveLength(3);
+    const result = solve(catalogOf(course), [{ id: 'x', codes: [course.code], sessions: ['71', '72'] }], DEFAULT_RULES);
+    expect(result.options.every((option) => option.choices[0]!.sections[0]!.classNumber !== '3')).toBe(true);
+  });
+
   it('pairs a lecture with its own recitation when Albert numbers them alike', () => {
     const calc: SolverCourse = {
       code: 'MATH-UH 1012',

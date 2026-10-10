@@ -1050,12 +1050,6 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
   .plan { grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 22px; }
 }
 .plan-side { display: grid; gap: 22px; grid-template-columns: minmax(0, 1fr); padding: 24px; border: 1px solid var(--rule); border-radius: 16px; background: var(--plate); }
-.plan-ask { display: grid; gap: 8px; padding: 10px 10px 10px 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--plate-2); transition: border-color 0.2s, box-shadow 0.2s; }
-.plan-ask:focus-within { border-color: var(--line); box-shadow: 0 0 0 3px var(--line-soft); }
-.plan-ask textarea { min-height: 76px; padding: 4px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; resize: none; font-size: 16px; line-height: 1.5; }
-.plan-ask textarea:focus { outline: none; box-shadow: none; }
-.plan-ask .btn { justify-self: end; }
-.plan-notes { display: grid; gap: 4px; margin: -12px 0 0; padding: 10px 14px 10px 30px; border-radius: var(--r); background: var(--amber-soft); color: var(--amber-ink); font-size: 14px; }
 .plan-block { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); }
 .plan-block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .plan-block-head h2 { font: 680 17px/1.2 var(--sign); }
@@ -1408,13 +1402,9 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
 .ask-suggestions svg { width: 14px; height: 14px; flex-shrink: 0; }
 .line-cards { gap: 18px; }
 .line-card { box-shadow: none; border: 1px solid var(--rule); border-radius: 12px; }
-.plan-page { max-width: 1440px; }
+.plan-page { max-width: 1240px; }
 .plan { grid-template-columns: minmax(0, 360px) minmax(0, 1fr); gap: 32px; }
 .plan-side { padding: 0 28px 0 0; background: none; border: 0; border-right: 1px solid var(--rule); border-radius: 0; gap: 28px; }
-.plan-ask { padding: 14px; background: var(--plate); border: 1px solid var(--rule-2); border-radius: 12px; }
-.plan-ask label { font-size: 13px; font-weight: 650; }
-.plan-ask textarea { min-height: 86px; }
-.plan-ask .btn { margin-top: 4px; }
 .auth-form { gap: 18px; }
 .auth-form > .btn { min-height: 44px; }
 .otp-input { letter-spacing: .3em; font-size: 24px; font-variant-numeric: tabular-nums; }
@@ -1445,10 +1435,6 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
 [hidden] { display: none !important; }
 .history-toggle { gap: 7px; padding-inline: 10px; height: 44px; color: var(--ink); font-size: 13px; }
 .history-toggle[aria-expanded='true'] { background: var(--plate-3); }
-.terminal-bar { display: flex; align-items: center; gap: 14px; padding-bottom: 16px; margin-bottom: 22px; border-bottom: 1px solid #313e58; color: #b3bbda; font: 12px/1.4 var(--mono); }
-.terminal-lights { display: flex; gap: 6px; }
-.terminal-lights i { width: 7px; height: 7px; border-radius: 50%; background: #8790b9; }
-.terminal-lights i:last-child { background: #75dfa8; }
 .central .composer { background: #121b30; border-color: #434d75; border-radius: 8px; color: #f0f2fa; }
 .central .composer::before { content: '>'; align-self: flex-start; margin-top: 12px; color: #75dfa8; font: 18px/1 var(--mono); }
 .central .composer textarea { color: #f0f2fa; caret-color: #75dfa8; }
@@ -1481,15 +1467,6 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
 @keyframes answer-enter { from { transform: translateY(5px); } }
 .composer-wrap { margin-top: auto; }
 .plan-side { gap: 18px; }
-.plan-side > .segmented { display: flex; width: 100%; }
-.plan-side > .segmented button { flex: 1; min-height: 44px; padding-inline: 8px; }
-.plan-ask { padding: 12px 14px; }
-.plan-ask summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; font-size: 14px; font-weight: 650; list-style: none; }
-.plan-ask summary::-webkit-details-marker { display: none; }
-.plan-ask summary svg { width: 16px; height: 16px; transform: rotate(90deg); transition: transform 0.2s; }
-.plan-ask[open] summary svg { transform: rotate(-90deg); }
-.plan-ask[open] label { display: block; margin-top: 16px; }
-.plan-ask textarea { min-height: 70px; margin-top: 8px; }
 .plan-preferences { border: 0; overflow: visible; }
 .plan-preferences .rules { padding: 0; grid-template-columns: minmax(0, 1fr); }
 .rule-group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
@@ -1499,7 +1476,6 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
 @media (max-width: 900px) {
   .appbar { padding-top: env(safe-area-inset-top); }
   .home { padding-top: 16px; }
-  .terminal-bar { margin-bottom: 18px; padding-bottom: 12px; }
   .central { padding: 18px 16px; }
   .ask-intro { font-size: 15px; line-height: 1.55; }
   .central .composer textarea { min-height: 64px; }
@@ -1520,8 +1496,6 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
   .process-steps > span { font-size: 10px; }
   .plan-side { gap: 14px; }
   .plan { gap: 24px; }
-  .plan-page .sign-actions { width: 100%; }
-  .plan-page .sign-select { width: 100%; min-height: 44px; }
 }
 @media (max-width: 360px) {
   .brand-mark { display: none; }
@@ -1531,4 +1505,101 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
 }
 @media (prefers-reduced-motion: reduce) {
   .turn, .cursor, .process-cursor { animation: none; }
+}
+
+/* Ask stays quiet around the conversation; the prompt carries the terminal detail. */
+.central { max-width: 780px; margin: 0 auto; padding: 32px 0 40px; background: none; color: var(--ink); border-radius: 0; }
+.central-sign { justify-content: center; margin-bottom: 16px; }
+.central-sign h1 { color: var(--ink); text-align: center; font-size: clamp(30px, 4vw, 44px); max-width: 22ch; }
+.central-sign > span { display: none; }
+.ask-intro { margin: 0 auto 24px; color: var(--ink-2); text-align: center; max-width: 48ch; }
+.central .composer { background: var(--plate); border-color: var(--rule-2); color: var(--ink); padding: 14px 14px 14px 18px; border-radius: 14px; }
+.central .composer::before { color: var(--green-ink); margin-top: 10px; }
+.central .composer textarea { color: var(--ink); min-height: 52px; caret-color: var(--green-ink); }
+.central .composer textarea::placeholder { color: var(--ink-3); }
+.central .composer:focus-within { border-color: var(--green-ink); }
+.central .send { background: var(--ink); color: var(--plate); }
+.central .send:disabled { background: var(--plate-3); color: var(--ink-3); }
+.central-note { color: var(--ink-2); }
+.ask-suggestions { justify-content: center; gap: 6px 16px; margin-top: 16px; }
+.ask-suggestions button { border: 0; border-radius: 6px; color: var(--ink-2); padding: 8px 0; background: none; }
+.ask-suggestions button:hover { background: none; color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
+.conv { grid-template-columns: minmax(0, 740px); }
+.conv-title { font: 650 16px/1.4 var(--text); color: var(--ink); }
+.conv-head { border-bottom: 1px solid var(--rule); padding-bottom: 12px; margin-bottom: 28px; }
+.thread { gap: 28px; }
+.turn.user { align-self: flex-end; max-width: 90%; padding: 12px 16px; background: var(--plate-3); border-radius: 14px 14px 4px 14px; font: 500 16px/1.55 var(--text); letter-spacing: 0; }
+.turn.user::before { display: none; }
+.turn.model { padding: 0 4px; border: 0; border-radius: 0; background: none; }
+.turn.model.pending { min-height: 88px; padding-top: 8px; }
+.ask-process { gap: 14px; max-width: 380px; }
+.composer-wrap .composer { box-shadow: none; border-color: var(--rule-2); border-radius: 14px; }
+.history-panel { padding: 18px 14px 14px; background: var(--plate-2); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.hp-title { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 12px; }
+.hp-title h2 { font: 650 17px/1.4 var(--text); }
+.hp-head { padding: 0 0 12px; }
+.hp-new { justify-content: center; min-height: 44px; border: 1px solid var(--rule); border-radius: 8px; background: var(--plate); box-shadow: none; }
+.hp-new:hover { background: var(--plate-3); border-color: var(--rule-2); box-shadow: none; }
+.hp-search { margin: 0 0 16px; }
+.hp-search .input { min-height: 44px; background: transparent; }
+.hp-label { text-transform: none; letter-spacing: 0; font: 600 12px/1.5 var(--text); padding: 10px 10px 6px; }
+.hist-item a { padding: 12px 10px; gap: 4px; }
+.hist-item a b { font-weight: 600; }
+.hist-item.active { background: var(--plate-3); }
+.hist-item.active::before { display: none; }
+.hist-preview { color: var(--ink-3); font-size: 12px; line-height: 1.5; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.hist-item button { width: 44px; height: 44px; }
+.hp-empty { display: grid; justify-items: center; gap: 8px; padding: 48px 10px; text-align: center; }
+.hp-empty > svg { width: 24px; height: 24px; margin-bottom: 8px; color: var(--ink-3); }
+.hp-empty p { color: var(--ink-2); font-size: 14px; }
+.hp-empty > span { font-size: 12px; }
+.plan-term { display: flex; align-items: center; gap: 12px; margin: -4px 0 22px; }
+.plan-term label { color: var(--ink-2); font-size: 13px; }
+.plan-term .input { width: auto; min-height: 44px; }
+@media (max-width: 900px) {
+  .central { padding: 20px 0 24px; }
+  .central-sign h1 { font-size: clamp(28px, 7.5vw, 36px); }
+  .ask-intro { font-size: 15px; margin-bottom: 20px; }
+  .central .composer textarea { min-height: 64px; }
+  .ask-suggestions { display: flex; }
+  .ask-suggestions button { font-size: 12px; }
+  .conv-title { font-size: 16px; }
+  .conv-head { margin-bottom: 24px; }
+  .turn.user { font-size: 16px; }
+  .turn.model { padding: 0; }
+  .history-panel { width: min(340px, 90vw); }
+}
+
+.plan-side { padding: 18px; border: 1px solid var(--rule); border-radius: 14px; background: var(--plate); gap: 20px; }
+.plan-chat { display: grid; gap: 14px; min-width: 0; }
+.plan-chat-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.plan-chat-head h2 { font: 650 16px/1.4 var(--text); }
+.plan-chat-head .link-btn { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 12px; }
+.plan-chat-head svg { width: 13px; height: 13px; }
+.plan-chat-log { display: flex; flex-direction: column; align-items: flex-start; gap: 16px; min-height: 180px; max-height: 280px; overflow-y: auto; padding: 6px 2px; scrollbar-gutter: stable; }
+.plan-chat-empty { display: grid; gap: 8px; padding-top: 12px; }
+.plan-chat-empty > p { font-size: 21px; font-weight: 650; line-height: 1.3; letter-spacing: -0.02em; }
+.plan-chat-empty > span { color: var(--ink-2); font-size: 14px; line-height: 1.6; }
+.plan-chat-empty button { display: inline-flex; justify-self: start; align-items: center; gap: 10px; min-height: 44px; margin-top: 8px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--plate-2); font-size: 13px; }
+.plan-chat-empty button:hover { border-color: var(--line-ink); }
+.plan-chat-empty button svg { width: 14px; height: 14px; }
+.plan-message { max-width: 100%; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; white-space: pre-wrap; }
+.plan-message.user { align-self: flex-end; padding: 9px 12px; max-width: 92%; background: var(--plate-3); border-radius: 10px 10px 3px 10px; }
+.plan-thinking { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
+.plan-composer { padding: 10px 10px 10px 12px; gap: 8px; border-radius: 10px; border-color: var(--rule-2); box-shadow: none; background: var(--plate-2); }
+.plan-composer textarea { font-size: 15px; line-height: 1.5; min-height: 48px; max-height: 160px; resize: vertical; }
+.plan-composer .send { width: 36px; height: 36px; border-radius: 8px; }
+.plan-controls { display: grid; gap: 16px; border: 0; padding: 18px 0 0; margin: 0; min-width: 0; border-top: 1px solid var(--rule); }
+.plan-controls:disabled { opacity: 0.65; }
+.plan-preferences .rules { gap: 0; }
+.plan-week, .plan-professors { border-top: 1px solid var(--rule); padding-top: 12px; }
+.plan-week > summary, .plan-professors > summary { grid-column: 1 / -1; min-height: 44px; cursor: pointer; color: var(--ink); font-size: 14px; font-weight: 600; }
+.plan-week[open], .plan-professors[open] { padding-bottom: 14px; }
+.plan-week[open] > summary, .plan-professors[open] > summary { margin-bottom: 10px; }
+.plan-main { scroll-margin-top: calc(var(--bar) + 20px); }
+@media (max-width: 900px) {
+  .plan-side { padding: 16px; }
+  .plan-chat-log { min-height: 160px; max-height: 240px; }
+  .plan-composer textarea { font-size: 16px; }
+  .plan-composer .send { width: 44px; height: 44px; }
 }

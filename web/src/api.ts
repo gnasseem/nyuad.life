@@ -489,8 +489,8 @@ export const api = {
     models: () => request<{ geminiKeyProblem: string | null; results: ModelCheck[] }>('/api/admin?op=models'),
   },
   plan: {
-    read: (body: { term: string; text: string; current: { wants: Array<{ label: string; codes: string[] }>; rules: Rules }; major?: string; year?: string }) =>
-      post<{ wants: Array<{ label: string; codes: string[] }>; rules: Rules; missing: string[] }>('/api/plan', body),
+    read: (body: { term: string; text: string; history?: Array<{ role: 'user' | 'assistant'; text: string }>; current: { wants: Array<{ label: string; codes: string[]; sessions?: Array<'71' | '72'> }>; rules: Rules }; major?: string; year?: string }) =>
+      post<{ wants: Array<{ label: string; codes: string[]; sessions?: Array<'71' | '72'> }>; rules: Rules; missing: string[]; reply?: string }>('/api/plan', body),
   },
   courses: {
     terms: () => cached('terms', () => request<{ terms: Term[]; current: string; scraped: string }>('/api/courses')),

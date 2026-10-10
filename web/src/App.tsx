@@ -63,7 +63,7 @@ export function App() {
   const [admin, setAdmin] = useState(false);
   // On a wide screen the conversation list stays open unless folded away; on a phone it opens on demand.
   const wide = () => window.matchMedia('(min-width: 1100px)').matches;
-  const [panelOpen, setPanelOpen] = useState(() => wide() && !loadSidebarClosed());
+  const [panelOpen, setPanelOpen] = useState(() => wide() && loadConversations().length > 0 && !loadSidebarClosed());
   const [onboarded, setOnboarded] = useState(loadOnboarded);
   /** Set when the server no longer knows this browser's details: the sign-up form comes back, with why. */
   const [resignup, setResignup] = useState(false);
@@ -138,7 +138,7 @@ export function App() {
   // Crossing from a phone-sized window to a wide one (or back) puts the list where that size expects it.
   useEffect(() => {
     const query = window.matchMedia('(min-width: 1100px)');
-    const onChange = () => setPanelOpen(query.matches && !loadSidebarClosed());
+    const onChange = () => setPanelOpen(query.matches && loadConversations().length > 0 && !loadSidebarClosed());
     query.addEventListener('change', onChange);
     return () => query.removeEventListener('change', onChange);
   }, []);

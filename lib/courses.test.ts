@@ -50,6 +50,15 @@ describe('seat status', () => {
 });
 
 describe('course rows', () => {
+  it('labels both raw and prefixed seven-week session codes', () => {
+    for (const session of ['71', 'A71', '72', 'A72']) {
+      const row = offering('Fall 2026', 'X-UH 1000', 'Seven-week course', ['Lee, Ana']);
+      row.sections[0]!.session = session;
+      const list = courseRows(buildCatalog([row]), 'Fall 2026');
+      expect(list[0]!.sections[0]!.session).toBe(session.endsWith('71') ? 'First 7 weeks' : 'Second 7 weeks');
+    }
+  });
+
   it('lists one term with display names and core flags', () => {
     const list = courseRows(catalog, 'Fall 2026');
     expect(list.map((row) => row.code)).toEqual(['CCEA-UH 1001X', 'CS-UH 1001', 'ENGR-UH 4010', 'MATH-UH 1012', 'MATH-UH 1021', 'PHYS-UH 4010']);

@@ -126,7 +126,7 @@ beforeAll(async () => {
       } else if (schema?.properties?.basis) {
         text = JSON.stringify({ score: 4.26, difficulty: 3, workload: null, verdict: 'Hard but fair [1].', pros: ['Dania explains clearly [1][4]', ''], cons: [], tips: [], basis: 1, confidence: 'high', evidence: [1] });
       } else if (schema?.properties?.daysOff) {
-        text = JSON.stringify({ wants: [{ label: 'Calculus', codes: ['MATH-UH 1012Q'] }, { label: 'an Arts Core', codes: ['CADT-UH 9999'] }], missing: [], earliest: '9:00', latest: null, daysOff: ['Fri', 'Sat'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Prof. Dania'], avoid: ['Nobody Here'] });
+        text = JSON.stringify({ reply: 'I added Calculus and kept your time preferences.', wants: [{ label: 'Calculus', codes: ['MATH-UH 1012Q'] }, { label: 'an Arts Core', codes: ['CADT-UH 9999'] }], missing: [], earliest: '9:00', latest: null, daysOff: ['Fri', 'Sat'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Prof. Dania'], avoid: ['Nobody Here'] });
       } else if (schema?.properties?.verdict) {
         text = JSON.stringify({ verdict: 'ok' });
       } else if (schema?.properties?.majors) {
@@ -468,16 +468,19 @@ describe('api', () => {
 
   it('reads a plan request into codes the term has and rules the planner can use', async () => {
     const post = (body: Record<string, unknown>) => fetch(`${apiUrl}/api/plan`, { method: 'POST', headers, body: JSON.stringify(body) });
-    const response = await post({ term: 'Fall 2026', text: 'calc with Dania, an arts core, nothing before 9, fridays off, 3 classes a day at most, no back to back', current: { wants: [{ label: 'Calculus', codes: ['MATH-UH 1012'] }] } });
+    const response = await post({ term: 'Fall 2026', text: 'calc with Dania, an arts core, nothing before 9, fridays off, 3 classes a day at most, no back to back', history: [{ role: 'user', text: 'A seven-week course can be 71 or 72' }], current: { wants: [{ label: 'Calculus', codes: ['MATH-UH 1012'], sessions: ['71', '72'] }] } });
     expect(response.status).toBe(200);
-    const plan = (await response.json()) as { wants: unknown; missing: unknown; rules: unknown };
+    const plan = (await response.json()) as { wants: unknown; missing: unknown; rules: unknown; reply: string };
     // The Q-suffixed code finds this term's course; a code the term does not have is dropped and said to be missing.
-    expect(plan.wants).toEqual([{ label: '', codes: ['MATH-UH 1012'] }]);
+    expect(plan.wants).toEqual([{ label: '', codes: ['MATH-UH 1012'], sessions: [] }]);
+    expect(plan.reply).toBe('I added Calculus and kept your time preferences.');
     expect(plan.missing).toEqual(['an Arts Core', 'Nobody Here is not teaching this term']);
     expect(plan.rules).toEqual({ earliest: '09:00', latest: '', daysOff: ['Fri'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Rana Dania'], avoid: [] });
     const call = geminiCalls.at(-1)!;
     expect(call.prompt).toContain('MATH-UH 1012 · Calculus');
-    expect(call.prompt).toContain('Current plan:\n- Calculus: MATH-UH 1012');
+    expect(call.prompt).toContain('Current plan:\n- Calculus: MATH-UH 1012 (sessions 71, 72)');
+    expect(call.prompt).toContain('A seven-week course can be 71 or 72');
+    expect(call.body.systemInstruction.parts[0].text).toContain('71/A71 and 72/A72 are both seven-week sessions');
     expect((await post({ term: 'Fall 1999', text: 'calc' })).status).toBe(404);
     expect((await post({ term: 'Fall 2026', text: ' ' })).status).toBe(400);
   });

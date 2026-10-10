@@ -3,7 +3,7 @@
  * contact last used. The conversation open on Ask is per tab, in sessionStorage.
  */
 import type { Rules, Want } from '../../lib/schedule.ts';
-import { normalizeRules } from '../../lib/schedule.ts';
+import { normalizeRules, sessionHalf } from '../../lib/schedule.ts';
 import type { ChatTurn, Confidence, ContactKind, Profile, Redirect, SourceCard } from './api';
 
 export interface Message {
@@ -252,9 +252,12 @@ export function saveSidebarClosed(closed: boolean): void {
 }
 
 /** The schedule being built on Plan: its term, the courses wanted and the rules. */
+export interface PlanMessage { role: 'user' | 'assistant'; text: string }
+
 export interface SavedPlan {
   term: string;
   wants: Array<Want & { label: string }>;
+  chat?: PlanMessage[];
   rules: Rules;
 }
 
@@ -262,7 +265,18 @@ export interface SavedPlan {
 export function loadPlan(): SavedPlan {
   const saved = read<Partial<SavedPlan>>(PLAN_KEY, {});
   const wants = Array.isArray(saved.wants) ? saved.wants.filter((want) => want && typeof want.id === 'string' && Array.isArray(want.codes)) : [];
-  return { term: typeof saved.term === 'string' ? saved.term : '', wants: wants.map((want) => ({ id: want.id, label: String(want.label ?? ''), codes: want.codes.map(String) })), rules: normalizeRules(saved.rules) };
+  const chat = Array.isArray(saved.chat) ? saved.chat.filter((entry) => entry && (entry.role === 'user' || entry.role === 'assistant') && typeof entry.text === 'string').slice(-24) : [];
+  return {
+    term: typeof saved.term === 'string' ? saved.term : '',
+    wants: wants.map((want) => ({
+      id: want.id,
+      label: String(want.label ?? ''),
+      codes: want.codes.map(String),
+      sessions: Array.isArray(want.sessions) ? [...new Set(want.sessions.map(sessionHalf).filter((half): half is '71' | '72' => !!half))] : [],
+    })),
+    rules: normalizeRules(saved.rules),
+    chat: chat.map((entry) => ({ role: entry.role, text: entry.text.slice(0, 1200) })),
+  };
 }
 
 export function savePlan(plan: SavedPlan): void {

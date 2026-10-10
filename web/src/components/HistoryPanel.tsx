@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { IconClose, IconPlus, IconSearch, IconTrash } from '../icons';
 import { navigate, onLinkClick } from '../router';
 import { clearConversations, deleteConversation, setActiveConversation, type Conversation } from '../store';
@@ -31,6 +31,7 @@ function grouped(conversations: Conversation[], now = new Date()): Array<{ label
  */
 export function HistoryPanel({ conversations, current, open, onClose }: { conversations: Conversation[]; current: string | null; open: boolean; onClose(): void }) {
   const [query, setQuery] = useState('');
+  const panel = useRef<HTMLElement>(null);
   const shown = useMemo(() => {
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);
     const matching = words.length ? conversations.filter((conversation) => words.every((word) => `${conversation.title} ${conversation.messages.map((message) => message.content).join(' ')}`.toLowerCase().includes(word))) : conversations;
@@ -39,9 +40,29 @@ export function HistoryPanel({ conversations, current, open, onClose }: { conver
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && window.matchMedia('(max-width: 1099px)').matches && onClose();
+    const mobile = window.matchMedia('(max-width: 1099px)').matches;
+    if (!mobile) return;
+    const before = document.activeElement as HTMLElement | null;
+    const body = document.querySelector<HTMLElement>('.ask-body');
+    body?.setAttribute('inert', '');
+    (panel.current?.querySelector<HTMLInputElement>('input') ?? panel.current?.querySelector<HTMLButtonElement>('button'))?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Tab') return;
+      const items = [...(panel.current?.querySelectorAll<HTMLElement>('button, a, input') ?? [])];
+      const first = items[0];
+      const last = items.at(-1);
+      if ((event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first)?.focus();
+      }
+    };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    return () => {
+      body?.removeAttribute('inert');
+      document.removeEventListener('keydown', onKey);
+      before?.focus();
+    };
   }, [open, onClose]);
 
   const startNew = () => {
@@ -64,16 +85,14 @@ export function HistoryPanel({ conversations, current, open, onClose }: { conver
   return (
     <>
       <div className="history-scrim" onClick={onClose} aria-hidden="true" />
-      <aside id="conversation-history" className="history-panel" aria-label="Your conversations">
+      <aside ref={panel} id="conversation-history" inert={!open} role={open && window.matchMedia('(max-width: 1099px)').matches ? 'dialog' : undefined} aria-modal={open && window.matchMedia('(max-width: 1099px)').matches ? true : undefined} className="history-panel" aria-label="Your conversations">
+        <div className="hp-title"><h2>History</h2><button type="button" className="icon-btn" onClick={onClose} aria-label="Close history"><IconClose /></button></div>
         <div className="hp-head">
           <button type="button" className="hp-new" onClick={startNew}>
             <IconPlus /> New question
           </button>
-          <button type="button" className="icon-btn hp-close" onClick={onClose} aria-label="Hide conversations" title="Hide conversations">
-            <IconClose />
-          </button>
         </div>
-        {conversations.length > 6 && (
+        {conversations.length > 0 && (
           <div className="search-field hp-search">
             <IconSearch />
             <input className="input" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search conversations" aria-label="Search conversations" />
@@ -81,7 +100,7 @@ export function HistoryPanel({ conversations, current, open, onClose }: { conver
         )}
         <nav className="hp-list">
           {conversations.length === 0 ? (
-            <p className="hp-empty">Your questions will be listed here.</p>
+            <div className="hp-empty"><IconSearch /><p>Your conversations will appear here.</p><span>Ask a question to get started.</span></div>
           ) : shown.length === 0 ? (
             <p className="hp-empty">Nothing matches.</p>
           ) : (
@@ -99,7 +118,7 @@ export function HistoryPanel({ conversations, current, open, onClose }: { conver
                       title={conversation.title}
                       aria-current={current === conversation.id ? 'page' : undefined}
                     >
-                      <b>{conversation.title || 'Untitled'}</b>
+                      <b>{conversation.title || 'Untitled'}</b><span className="hist-preview">{conversation.messages.filter((message) => message.role === 'model').at(-1)?.content.replace(/[*#`\[\]]/g, '').slice(0, 100) || 'Open conversation'}</span>
                     </a>
                     <button type="button" onClick={() => remove(conversation.id)} aria-label={`Delete "${conversation.title}"`}>
                       <IconTrash />
