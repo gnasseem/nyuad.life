@@ -310,6 +310,7 @@ export function AskPage({ resumeId }: Props) {
     <div className="conv">
       <div className="conv-main">
         <div className="conv-head">
+          <span className="conv-title">Ask / conversation</span>
           <button
             type="button"
             className="btn ghost sm"
@@ -429,20 +430,19 @@ export function AskPage({ resumeId }: Props) {
   );
 }
 
-/** The four stages the server reports, as stops on a short line that fills as the answer is put together. */
+/** Show the server's current step without inventing a completion percentage. */
 function Route({ status }: { status: string }) {
   const stage = STAGES.findIndex((entry) => entry.match.test(status));
   return (
-    <div className="route" role="status" aria-label={status}>
-      {STAGES.map((entry, index) => (
-        <span key={entry.label} style={{ display: 'contents' }}>
-          {index > 0 && <span className={`route-seg${stage >= index ? ' done' : ''}`} />}
-          <span className={`route-stop${stage > index ? ' done' : stage === index ? ' now' : ''}`}>
-            <i /> {entry.label}
+    <div className="ask-process" role="status" aria-live="polite">
+      <div className="process-status"><span className="process-cursor" aria-hidden="true" /><span>{status}</span></div>
+      <div className="process-steps" aria-hidden="true">
+        {STAGES.map((entry, index) => (
+          <span key={entry.label} className={stage > index ? 'done' : stage === index ? 'now' : ''}>
+            <i />{entry.label}
           </span>
-        </span>
-      ))}
-      {stage < 0 && <span className="route-note">{status}</span>}
+        ))}
+      </div>
     </div>
   );
 }
@@ -511,6 +511,7 @@ function Home({ composer, answersOff }: { composer: ReactNode; answersOff: boole
   return (
     <div className="home">
       <section className="central">
+        <div className="terminal-bar"><span className="terminal-lights" aria-hidden="true"><i /><i /><i /></span><span>nyuad.life / ask</span></div>
         <div className="central-sign">
           <h1>What do you need to know?</h1>
           <span lang="ar" dir="rtl">
@@ -527,12 +528,6 @@ function Home({ composer, answersOff }: { composer: ReactNode; answersOff: boole
           </div>
         </div>
       </section>
-      <div className="campus-links" aria-label="Official campus links">
-        <span>Campus essentials</span>
-        <a href="https://students.nyuad.nyu.edu/" target="_blank" rel="noopener noreferrer">Student portal <IconArrow /></a>
-        <a href="https://nyuad.nyu.edu/en/academics/undergraduate/academic-calendar.html" target="_blank" rel="noopener noreferrer">Academic calendar <IconArrow /></a>
-        <a href="https://albert.nyu.edu/" target="_blank" rel="noopener noreferrer">Albert <IconArrow /></a>
-      </div>
 
       <div className="line-cards">
         <LineCard line="notices" title="Events" ar="الفعاليات" href="/events">

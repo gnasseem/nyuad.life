@@ -21,7 +21,7 @@ import { loadArchive, resetArchive } from './store.ts';
 
 const DIMS = 16;
 const posts = [
-  { id: 'p1', url: 'https://fb/p1', author: 'Ana', date: '2026-04-01', text: 'Who is the best professor for Calculus? Thinking about MATH-UH 1012.', comments: [{ author: 'Ben', date: '2026-04-01', text: 'Take it with Dania, she explains everything clearly and grades fairly.' }, { author: 'Cy', date: '2026-04-02', text: 'Agreed, Dania is great. Avoid the 8am section though.' }, { author: 'Ana', date: '2026-04-03', text: 'bump' }], reactions: 12, commentCount: 3 },
+  { id: 'p1', url: 'https://fb/p1', author: 'Ana', date: '2026-04-01', text: 'Who is the best professor for Calculus? Thinking about MATH-UH 1012 with Dania.', comments: [{ author: 'Ben', date: '2026-04-01', text: 'Take it with Dania, she explains everything clearly and grades fairly.' }, { author: 'Cy', date: '2026-04-02', text: 'I took her class. Her exams are fair and her lectures are clear.' }, { author: 'Ana', date: '2026-04-03', text: 'bump' }], reactions: 12, commentCount: 3 },
   { id: 'p2', url: 'https://fb/p2', author: 'Dee', date: '2026-03-10', text: 'Housing question: is A2 quieter than A5? Roommate situation matters to me.', comments: [{ author: 'Eli', date: '2026-03-10', text: 'A5 is the party building, A2 is chill.' }] },
   { id: 'p3', url: 'https://fb/p3', author: 'Fay', date: '2025-11-20', text: 'Visa renewal timeline? Mine took two weeks last year.', comments: [] },
   { id: 'p4', url: 'https://fb/p4', author: 'Gus', date: '2026-05-05', text: 'Calculus with Dania or with the new professor? CS-UH 1001 also on my plate.', comments: [{ author: 'Hal', date: '2026-05-05', text: 'Dania. The new professor is fine too but moves fast.' }] },
@@ -122,9 +122,9 @@ beforeAll(async () => {
       } else if (schema?.properties?.questions) {
         text = JSON.stringify({ questions: ['How is her grading?', 'Which section is best?', 'What about the new professor?'] });
       } else if (schema?.properties?.evidence && !schema?.properties?.difficulty) {
-        text = JSON.stringify({ score: 4.1, verdict: 'Clear lectures and fair grading [1].', basis: 2, confidence: 'medium', evidence: [1] });
+        text = JSON.stringify({ score: 4.1, verdict: 'Clear lectures and fair grading [1].', basis: 1, confidence: 'medium', evidence: [1] });
       } else if (schema?.properties?.basis) {
-        text = JSON.stringify({ score: 4.26, difficulty: 3, workload: null, verdict: 'Hard but fair [1].', pros: ['Dania explains clearly [1][4]', ''], cons: [], tips: [], basis: 3, confidence: 'high', evidence: [1] });
+        text = JSON.stringify({ score: 4.26, difficulty: 3, workload: null, verdict: 'Hard but fair [1].', pros: ['Dania explains clearly [1][4]', ''], cons: [], tips: [], basis: 1, confidence: 'high', evidence: [1] });
       } else if (schema?.properties?.daysOff) {
         text = JSON.stringify({ wants: [{ label: 'Calculus', codes: ['MATH-UH 1012Q'] }, { label: 'an Arts Core', codes: ['CADT-UH 9999'] }], missing: [], earliest: '9:00', latest: null, daysOff: ['Fri', 'Sat'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Prof. Dania'], avoid: ['Nobody Here'] });
       } else if (schema?.properties?.verdict) {
@@ -439,7 +439,7 @@ describe('api', () => {
     // Writing a rating spends model calls, so only students who signed up can have one written.
     expect((await fetch(`${apiUrl}/api/courses?code=MATH-UH%201012&rating=1`)).status).toBe(401);
     const { rating } = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012&rating=1`, { headers });
-    expect(rating).toMatchObject({ score: 4.3, difficulty: 3, workload: null, basis: 3, confidence: 'high' });
+    expect(rating).toMatchObject({ score: 4.3, difficulty: 3, workload: null, basis: 1, confidence: 'low' });
     // Citations the model wrote anyway are taken out.
     expect(rating.pros).toEqual(['Dania explains clearly']);
     expect(rating.sources).toEqual([expect.objectContaining({ url: 'https://fb/p1' })]);
@@ -449,11 +449,21 @@ describe('api', () => {
   });
 
   it('rates a current professor only with first-hand evidence and links the thread', async () => {
+    const key = process.env.GEMINI_API_KEY;
+    try {
+      delete process.env.GEMINI_API_KEY;
+      const unavailable = await fetch(`${apiUrl}/api/courses?profs=${encodeURIComponent('Rana Dania')}`);
+      expect(unavailable.status).toBe(503);
+      expect(await unavailable.json()).toMatchObject({ error: 'no_model' });
+    } finally {
+      process.env.GEMINI_API_KEY = key;
+    }
     const detail = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012`);
     expect(detail.instructors).toEqual(['Rana Dania']);
     const result = await getJson(`${apiUrl}/api/courses?profs=${encodeURIComponent('Rana Dania')}`);
-    expect(result.ratings['Rana Dania']).toMatchObject({ score: 4.1, basis: 2, verdict: 'Clear lectures and fair grading.' });
+    expect(result.ratings['Rana Dania']).toMatchObject({ score: 4.1, basis: 1, confidence: 'low', verdict: 'Clear lectures and fair grading.' });
     expect(result.ratings['Rana Dania'].sources).toEqual([expect.objectContaining({ url: 'https://fb/p1' })]);
+    expect(geminiCalls.at(-1)!.prompt).toContain('Her exams are fair and her lectures are clear.');
   });
 
   it('reads a plan request into codes the term has and rules the planner can use', async () => {

@@ -22,7 +22,7 @@ import { retrieve, sourcesBlock, toSourceCards } from '../lib/rag.ts';
 import { rerankerFromEnv } from '../lib/rerank.ts';
 import type { Hit } from '../lib/search.ts';
 import { loadArchive, type Archive } from '../lib/store.ts';
-import { bestWindow, collapseWhitespace, formatDate, truncate } from '../lib/text.ts';
+import { bestWindow, collapseWhitespace, formatDate, tokenize, truncate } from '../lib/text.ts';
 
 export const config = { maxDuration: 60 };
 
@@ -115,7 +115,13 @@ async function courseThreads(archive: Archive, catalog: Catalog, official: Offic
   if (cached && Date.now() - cached.at < THREAD_TTL_MS) return cached.hits;
   const title = titleOf(catalog, official, code);
   const mentioned = new Set([...(archive.byCourse.get(code) ?? []), ...(archive.byCourse.get(bareCode(code)) ?? [])]);
-  const retrieval = await retrieve(archive, `${title} ${bareCode(code)}`.trim(), { k: 24 });
+  const retrieval = await retrieve(archive, `${title} ${bareCode(code)}`.trim(), { k: 48 });
+  const titleWords = [...new Set(tokenize(title.replace(/\bintroduction to\b/gi, 'intro').replace(/\bcomputer science\b/gi, 'CS').replace(/\bcalculus\b/gi, 'calc')))];
+  const namesCourse = (hit: Hit) => {
+    const post = archive.posts[hit.post]!;
+    const words = new Set(tokenize([post.text, ...post.comments.map((comment) => comment.text)].join(' ').replace(/\bintroduction to\b/gi, 'intro').replace(/\bcomputer science\b/gi, 'CS').replace(/\bcalculus\b/gi, 'calc')));
+    return titleWords.length > 0 && titleWords.every((word) => words.has(word));
+  };
   let hits = retrieval.hits;
   const reranker = rerankerFromEnv();
   let judged = false;
@@ -129,12 +135,16 @@ async function courseThreads(archive: Archive, catalog: Catalog, official: Offic
       console.warn('[courses] rerank unavailable:', (error as Error).message);
     }
   }
-  // Without a judge, keep only threads both keyword and meaning search agree on, or that name the code.
-  if (!judged) hits = hits.filter((hit) => mentioned.has(hit.post) || (hit.lexicalRank !== undefined && hit.denseRank !== undefined) || !retrieval.dense);
-  const kept = hits.slice(0, MAX_THREADS);
+  // Without a judge, keep title or code matches and threads keyword and meaning search agree on.
+  if (!judged) hits = hits.filter((hit) => mentioned.has(hit.post) || namesCourse(hit) || (hit.lexicalRank !== undefined && hit.denseRank !== undefined));
+  const kept = hits.filter((hit) => mentioned.has(hit.post)).slice(0, MAX_THREADS);
   for (const post of mentioned) {
     if (kept.length >= MAX_THREADS) break;
     if (!kept.some((hit) => hit.post === post)) kept.push({ post, chunk: archive.postChunk[post]!, score: 0 });
+  }
+  for (const hit of hits) {
+    if (kept.length >= MAX_THREADS) break;
+    if (!kept.some((entry) => entry.post === hit.post)) kept.push(hit);
   }
   threadCache.set(code, { at: Date.now(), hits: kept });
   return kept;
@@ -191,14 +201,14 @@ const RATING_SYSTEM = [
   'Every point must be specific to this course: name the thing (the final, weekly problem sets, the lab reports, the group project, a professor and what students said about their teaching). Never write vague points like "some professors are good" or "experiences vary". If students only say something general, leave it out.',
   'Each point under 16 words, plain words, no citations, source numbers or thread references. Report complaints as plainly as praise.',
   'About professors, only how they teach, grade or run the class, as students reported it ("students found her exams fair"); nothing personal, no rumours. When a point held only in one year or with one professor, say so in a few words.',
-  'If fewer than two different students describe taking this course first-hand, set basis below 2. Never invent anything.',
+  'One clear first-hand account is enough for a limited rating: set basis to 1 and confidence to low. With no first-hand accounts, set basis to 0. Never invent anything.',
 ].join('\n');
 
 const RATING_TTL_MS = 30 * 86_400_000;
 const hot = new Map<string, CourseRating>();
 
 function ratingKey(code: string): string {
-  return `course-rating:v4:${code}`;
+  return `course-rating:v5:${code}`;
 }
 
 /** A fresh rating already written (null: students have not written enough), or undefined when one has to be written. */
@@ -228,8 +238,8 @@ async function courseRating(archive: Archive, official: OfficialCorpus | null, c
   const hits = await courseThreads(archive, catalog, official, code);
   if (hits.length === 0) return null;
   const title = titleOf(catalog, official, code) || code;
-  const cards = toSourceCards(archive, hits.slice(0, 7), [], 1);
-  const threads = sourcesBlock(archive, cards);
+  const cards = toSourceCards(archive, hits, tokenize(title), 1);
+  const threads = sourcesBlock(archive, cards, cards.map((card, i) => ({ card, chunk: archive.chunks[hits[i]!.chunk]!.text })));
   let rating: CourseRating | null;
   try {
     const result = await siteJson<Partial<CourseRating> & { evidence?: number[] }>(gemini, backups, {
@@ -256,7 +266,7 @@ async function courseRating(archive: Archive, official: OfficialCorpus | null, c
 function cleanRating(raw: Partial<CourseRating> & { evidence?: number[] }, cards: ReturnType<typeof toSourceCards>, model: string): CourseRating | null {
   const basis = Math.max(0, Math.round(Number(raw.basis) || 0));
   const given = Number(raw.score);
-  if (basis < 2 || !Number.isFinite(given) || given < 1 || given > 5) return null;
+  if (basis < 1 || !Number.isFinite(given) || given < 1 || given > 5) return null;
   const score = Math.round(given * 10) / 10;
   const evidence = [...new Set(raw.evidence ?? [])].filter((n) => Number.isInteger(n) && n >= 1 && n <= cards.length).slice(0, 3);
   if (!evidence.length || !raw.verdict?.trim()) return null;
@@ -274,7 +284,7 @@ function cleanRating(raw: Partial<CourseRating> & { evidence?: number[] }, cards
     cons: list(raw.cons, 4),
     tips: list(raw.tips, 3),
     basis,
-    confidence: level === 'high' || level === 'low' ? level : 'medium',
+    confidence: basis === 1 ? 'low' : level === 'high' || level === 'low' ? level : 'medium',
     sources: evidence.map((n) => ({ url: cards[n - 1]!.url, date: cards[n - 1]!.date, excerpt: cards[n - 1]!.snippet })),
     model,
     createdAt: new Date().toISOString(),
@@ -357,7 +367,7 @@ function teachers(catalog: Catalog): Map<string, Teacher> {
 }
 
 function profKey(name: string): string {
-  return `prof-rating:v3:${foldName(name)}`;
+  return `prof-rating:v4:${foldName(name)}`;
 }
 
 function fresh(entry: SavedProf | null | undefined): entry is SavedProf {
@@ -401,7 +411,7 @@ async function profRatings(req: ApiRequest, catalog: Catalog, param: string) {
   const gemini = geminiConfig();
   const backups = providersFromEnv();
   if (!gemini && backups.length === 0) {
-    for (const name of unwritten) ratings[name] = null;
+    if (unwritten.length) throw new ApiError(503, 'Ratings are off on this server.', 'no_model');
     return { ratings, pending: [] };
   }
   const writing: string[] = [];
@@ -440,7 +450,7 @@ function spend(req: ApiRequest): boolean {
 }
 
 const TEACHING = /\b(?:prof|profs|professor|professors|dr|teach\w*|taught|class|classes|course|courses|lectures?|exams?|midterms?|finals?|grad(?:e|es|ed|ing)|syllabus|section|office hours)\b/;
-const TEACHING_REVIEW = /\b(?:take|took|taken|teach\w*|taught|explain\w*|clear|fair\w*|grad\w*|lectur\w*|exam\w*|assignment\w*|homework|workload|helpful|supportive|strict|lenient|organiz\w*|engag\w*|boring|great|excellent|awful|terrible|hard|easy|difficult|recommend\w*|avoid|enjoy\w*|learn\w*)\b/;
+const TEACHING_REVIEW = /\b(?:take|took|taken|teach\w*|taught|explain\w*|clear|fair\w*|grad\w*|lectur\w*|exam\w*|assignment\w*|homework|workload|helpful|supportive|strict|lenient|organiz\w*|engag\w*|boring|good|great|amazing|fantastic|excellent|patient|harsh|tough|confusing|fun|love\w*|hate\w*|awful|terrible|hard|easy|difficult|recommend\w*|avoid|enjoy\w*|learn\w*)\b/;
 
 function namesAndReviews(text: string, named: RegExp): boolean {
   return (text.match(/[^.!?]+[.!?]?/g) ?? []).some((sentence) => {
@@ -463,7 +473,7 @@ async function profThreads(archive: Archive, teacher: Teacher): Promise<Array<{ 
   const first = foldName(teacher.first).split(' ')[0] ?? '';
   const numbers = teacher.courses.map((course) => /\d{4}/.exec(course)?.[0]).filter((value): value is string => !!value);
   const title = teacher.courses[0]?.replace(/^\S+ \S+ /, '') ?? '';
-  const [byName, byCourse] = await Promise.all([retrieve(archive, `professor ${teacher.surname} ${teacher.first}`, { k: 40, useDense: false }), retrieve(archive, `${teacher.surname} ${title}`, { k: 20, useDense: false })]);
+  const [byName, byCourse] = await Promise.all([retrieve(archive, teacher.surname, { k: 80, useDense: false }), retrieve(archive, `${teacher.surname} ${title}`, { k: 40, useDense: false })]);
   const seen = new Set<number>();
   const out: Array<{ text: string; url: string; date: string; excerpt: string }> = [];
   for (const hit of [...byName.hits, ...byCourse.hits]) {
@@ -476,7 +486,12 @@ async function profThreads(archive: Archive, teacher: Teacher): Promise<Array<{ 
     if (!named.test(all)) continue;
     // A surname alone could be a student's: the thread has to be about teaching.
     if (!TEACHING.test(all) && !(first.length > 2 && all.includes(first)) && !numbers.some((value) => all.includes(value))) continue;
-    const reviewed = [post.text, ...post.comments.map((comment) => comment.text)].map((text) => namesAndReviews(text, named));
+    const focused = named.test(folded[0]!) && !/\b(?:or|versus|vs)\b/.test(folded[0]!);
+    const reviewed = [post.text, ...post.comments.map((comment) => comment.text)].map((text, i) => {
+      if (namesAndReviews(text, named)) return true;
+      // An answered question supplies the subject of short replies such as "her exams are fair".
+      return i > 0 && focused && !text.trimEnd().endsWith('?') && TEACHING_REVIEW.test(folded[i]!);
+    });
     if (!reviewed.some(Boolean)) continue;
     const terms = [teacher.surname.toLowerCase(), surname];
     const lines = [`Post by ${post.author || 'a student'} on ${formatDate(post.date)}: ${reviewed[0] ? bestWindow(post.text, terms, 900) : truncate(collapseWhitespace(post.text), 400)}`];
@@ -486,7 +501,7 @@ async function profThreads(archive: Archive, teacher: Teacher): Promise<Array<{ 
       shown.add(i);
       if (i + 1 < post.comments.length) shown.add(i + 1);
     });
-    for (const i of [...shown].sort((a, b) => a - b).slice(0, 8)) {
+    for (const i of [...shown].sort((a, b) => a - b).slice(0, 16)) {
       const comment = post.comments[i]!;
       lines.push(`- ${comment.author || 'Someone'}${comment.date ? ` (${formatDate(comment.date)})` : ''}: ${bestWindow(comment.text, terms, 500)}`);
     }
@@ -517,7 +532,7 @@ const PROF_SYSTEM = [
   'confidence: high when several recent first-hand accounts agree, medium when there are few or older ones, low when they are thin, very old or split.',
   'Use the dates on posts and comments. State a bad teaching review directly; do not soften repeated complaints or treat an old review as current.',
   'Only teaching, grading and how they run the class, as students reported it. Nothing personal: nothing about their looks, private life or character outside class, and no rumours. Keep citations out of the verdict.',
-  'Never invent anything. When fewer than two different students describe being taught by them first-hand, return basis below 2.',
+  'One clear first-hand teaching account is enough for a limited rating: set basis to 1 and confidence to low. With none, return basis 0. Replies to a question naming this professor can describe their teaching without repeating their name; use that context, but do not attribute ambiguous replies comparing several professors.',
 ].join('\n');
 
 /** A new rating, or null when students have not written enough first-hand; both are kept. Throws when the model fails. */
@@ -551,7 +566,7 @@ function cleanProf(raw: Partial<ProfRating> & { evidence?: number[] }, threads: 
   const score = Math.round(given * 10) / 10;
   const verdict = collapseWhitespace(String(raw.verdict ?? '').replace(/\s*\[\d+\](?:\[\d+\])*/g, '')).slice(0, 220);
   const evidence = [...new Set(raw.evidence ?? [])].filter((n) => Number.isInteger(n) && n >= 1 && n <= threads.length).slice(0, 3);
-  if (basis < 2 || !Number.isFinite(given) || given < 1 || given > 5 || !verdict || !evidence.length) return null;
+  if (basis < 1 || !Number.isFinite(given) || given < 1 || given > 5 || !verdict || !evidence.length) return null;
   const level = String(raw.confidence ?? '').toLowerCase();
-  return { score, basis, verdict, confidence: level === 'high' || level === 'low' ? level : 'medium', sources: evidence.map((n) => ({ url: threads[n - 1]!.url, date: threads[n - 1]!.date, excerpt: threads[n - 1]!.excerpt })), model, createdAt: new Date().toISOString() };
+  return { score, basis, verdict, confidence: basis === 1 ? 'low' : level === 'high' || level === 'low' ? level : 'medium', sources: evidence.map((n) => ({ url: threads[n - 1]!.url, date: threads[n - 1]!.date, excerpt: threads[n - 1]!.excerpt })), model, createdAt: new Date().toISOString() };
 }

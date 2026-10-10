@@ -75,6 +75,7 @@ export function PlanPage() {
   const [rows, setRows] = useState<{ term: string; courses: CourseRow[] } | null>(null);
   const [error, setError] = useState('');
   const [text, setText] = useState('');
+  const [controls, setControls] = useState<'courses' | 'week' | 'professors'>('courses');
   const [reading, setReading] = useState(false);
   const [notes, setNotes] = useState<string[]>([]);
   const [viewing, setViewing] = useState<{ key: string; index: number } | null>(null);
@@ -234,12 +235,13 @@ export function PlanPage() {
       {error && <div className="alert error">{error}</div>}
       <div className="plan">
         <div className="plan-side">
-          <div className="plan-intro"><h2>Your next semester, planned.</h2><p>Add courses to compare sections and find a week that fits. Use the planner to describe what you want.</p></div>
-          <div className="plan-ask"><label htmlFor="plan-request">Describe your ideal schedule</label>
+          <details className="plan-ask">
+            <summary>Describe your schedule <IconArrow /></summary>
+            <label htmlFor="plan-request">Courses and preferences</label>
             <textarea
               id="plan-request"
               className="input"
-              rows={3}
+              rows={2}
               value={text}
               maxLength={600}
               onChange={(event) => setText(event.target.value)}
@@ -256,7 +258,7 @@ export function PlanPage() {
               {reading ? <span className="spinner" /> : <IconArrow />}
               {saved.wants.length ? 'Update' : 'Plan it'}
             </button>
-          </div>
+          </details>
           {notes.length > 0 && (
             <ul className="plan-notes" role="status">
               {notes.map((note) => (
@@ -265,7 +267,8 @@ export function PlanPage() {
             </ul>
           )}
 
-          <div className="plan-block">
+          <Segmented<'courses' | 'week' | 'professors'> label="Plan controls" value={controls} onChange={setControls} options={[{ id: 'courses', label: 'Courses' }, { id: 'week', label: 'Week' }, { id: 'professors', label: 'Professors' }]} />
+          <div className="plan-block" hidden={controls !== 'courses'}>
             <div className="plan-block-head">
               <h2>Your courses</h2>
               {saved.wants.length > 0 && (
@@ -286,80 +289,72 @@ export function PlanPage() {
             {saved.wants.length > 0 && <Load low={credits.low} high={credits.high} />}
           </div>
 
-          <details className="plan-block plan-preferences" key={term}>
-            <summary><span className="preference-title">Shape your week</span><span className="preference-summary">{[
-              saved.rules.earliest && `After ${clock(saved.rules.earliest)}`,
-              saved.rules.latest && `By ${clock(saved.rules.latest)}`,
-              saved.rules.daysOff.length && `${saved.rules.daysOff.join(', ')} off`,
-              saved.rules.shape !== 'any' && SHAPES.find((shape) => shape.id === saved.rules.shape)?.label,
-              saved.rules.bestRated && 'Top professors',
-            ].filter(Boolean).join(' · ') || 'Set times, days off and priorities'}</span><span className="preference-action">Edit</span></summary>
+          <div className="plan-block plan-preferences" hidden={controls === 'courses'}>
             <div className="rules">
-              <h3 className="rules-heading">Time on campus</h3>
-              <label className="rule">
-                <span>No class before</span>
-                <select className="input" value={saved.rules.earliest} onChange={(event) => setRules({ earliest: event.target.value })}>
-                  {[...new Set([...STARTS, saved.rules.earliest])].map((time) => (
-                    <option key={time} value={time}>
-                      {time ? clock(time) : 'Any time'}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="rule">
-                <span>Done by</span>
-                <select className="input" value={saved.rules.latest} onChange={(event) => setRules({ latest: event.target.value })}>
-                  {[...new Set([...ENDS, saved.rules.latest])].map((time) => (
-                    <option key={time} value={time}>
-                      {time ? clock(time) : 'Any time'}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <h3 className="rules-heading">Arrange the week</h3>
-              <div className="rule">
-                <span id="days-off">Days off</span>
-                <div className="day-toggles" role="group" aria-labelledby="days-off">
-                  {WEEKDAYS.map((day) => {
-                    const off = saved.rules.daysOff.includes(day);
-                    return (
-                      <button key={day} type="button" className={`day-toggle${off ? ' on' : ''}`} aria-pressed={off} aria-label={`${day} off`} onClick={() => setRules({ daysOff: off ? saved.rules.daysOff.filter((entry) => entry !== day) : [...saved.rules.daysOff, day] })}>
-                        {DAY_LETTER[day]}
-                      </button>
-                    );
-                  })}
+              <div className="rule-group" hidden={controls !== 'week'}>
+                <label className="rule">
+                  <span>No class before</span>
+                  <select className="input" value={saved.rules.earliest} onChange={(event) => setRules({ earliest: event.target.value })}>
+                    {[...new Set([...STARTS, saved.rules.earliest])].map((time) => (
+                      <option key={time} value={time}>
+                        {time ? clock(time) : 'Any time'}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="rule">
+                  <span>Done by</span>
+                  <select className="input" value={saved.rules.latest} onChange={(event) => setRules({ latest: event.target.value })}>
+                    {[...new Set([...ENDS, saved.rules.latest])].map((time) => (
+                      <option key={time} value={time}>
+                        {time ? clock(time) : 'Any time'}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="rule">
+                  <span id="days-off">Days off</span>
+                  <div className="day-toggles" role="group" aria-labelledby="days-off">
+                    {WEEKDAYS.map((day) => {
+                      const off = saved.rules.daysOff.includes(day);
+                      return (
+                        <button key={day} type="button" className={`day-toggle${off ? ' on' : ''}`} aria-pressed={off} aria-label={`${day} off`} onClick={() => setRules({ daysOff: off ? saved.rules.daysOff.filter((entry) => entry !== day) : [...saved.rules.daysOff, day] })}>
+                          {DAY_LETTER[day]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <label className="rule">
+                  <span>Classes a day</span>
+                  <select className="input" value={saved.rules.maxPerDay} onChange={(event) => setRules({ maxPerDay: Number(event.target.value) })}>
+                    {PER_DAY.map((most) => (
+                      <option key={most} value={most}>
+                        {most ? `At most ${most}` : 'Any number'}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="rule wide">
+                  <span>Shape of the week</span>
+                  <Segmented label="Shape of the week" value={saved.rules.shape} onChange={(shape) => setRules({ shape })} options={SHAPES} />
+                  <small className="rule-help">{SHAPE_HELP[saved.rules.shape]}</small>
+                </div>
+                <div className="rule wide switches">
+                  <Switch on={saved.rules.bestRated} onChange={(bestRated) => setRules({ bestRated })} label="Best-rated professors">
+                    Put well-reviewed professors first.
+                    {saved.rules.bestRated && candidates.length > 0 && (unread > 0 ? ` Reading about ${unread} more…` : rated ? ` ${rated} of ${candidates.length} rated.` : ' None rated yet.')}
+                  </Switch>
+                  <Switch on={saved.rules.noBackToBack} onChange={(noBackToBack) => setRules({ noBackToBack })} label="No back-to-back">
+                    Leave a break between classes.
+                  </Switch>
+                  <Switch on={saved.rules.waitlisted} onChange={(waitlisted) => setRules({ waitlisted })} label="Include waitlists">
+                    Include full sections you could waitlist.
+                  </Switch>
                 </div>
               </div>
-              <label className="rule">
-                <span>Classes a day</span>
-                <select className="input" value={saved.rules.maxPerDay} onChange={(event) => setRules({ maxPerDay: Number(event.target.value) })}>
-                  {PER_DAY.map((most) => (
-                    <option key={most} value={most}>
-                      {most ? `At most ${most}` : 'Any number'}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="rule wide">
-                <span>Shape of the week</span>
-                <Segmented label="Shape of the week" value={saved.rules.shape} onChange={(shape) => setRules({ shape })} options={SHAPES} />
-                <small className="rule-help">{SHAPE_HELP[saved.rules.shape]}</small>
-              </div>
-              <h3 className="rules-heading">Priorities</h3>
-              <div className="rule wide switches">
-                <Switch on={saved.rules.bestRated} onChange={(bestRated) => setRules({ bestRated })} label="Best-rated professors">
-                  Professors students praise in the group come first; unrated ones count as average.
-                  {saved.rules.bestRated && candidates.length > 0 && (unread > 0 ? ` Reading about ${unread} more…` : rated ? ` ${rated} of ${candidates.length} rated.` : ' None rated yet.')}
-                </Switch>
-                <Switch on={saved.rules.noBackToBack} onChange={(noBackToBack) => setRules({ noBackToBack })} label="No back-to-back">
-                  A real break between two classes, not just the 10 minutes to walk.
-                </Switch>
-                <Switch on={saved.rules.waitlisted} onChange={(waitlisted) => setRules({ waitlisted })} label="Include waitlists">
-                  Plans with full sections too, for when you would join the waitlist.
-                </Switch>
-              </div>
-              <div className="rule wide">
-                <span>Professors</span>
+              <div className="rule wide" hidden={controls !== 'professors'}>
+                <span>Prefer or avoid a professor</span>
                 {(saved.rules.prefer.length > 0 || saved.rules.avoid.length > 0) && (
                   <div className="chips">
                     {saved.rules.prefer.map((name) => (
@@ -378,7 +373,7 @@ export function PlanPage() {
                 <small className="rule-help">With: plans with them come first. Not: they are left out.</small>
               </div>
             </div>
-          </details>
+          </div>
         </div>
 
         <div className="plan-main" ref={mainRef}>

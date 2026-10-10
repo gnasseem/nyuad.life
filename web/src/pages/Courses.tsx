@@ -325,7 +325,7 @@ function Detail({ code, onClose }: { code: string; onClose(): void }) {
         ) : rating.value ? (
           <Rating rating={rating.value} />
         ) : (
-          <p className="rating-none">{rating.failed ? 'The rating could not be written right now. Try again in a minute.' : 'Not enough students have written about this course to rate it yet.'}</p>
+          <p className="rating-none">{rating.failed ? 'The rating could not be written right now. Try again in a minute.' : 'No first-hand course review found in the saved threads.'}</p>
         )}
         {detail && (
           <div className="detail-actions">
@@ -482,14 +482,14 @@ function ProfessorDetail({ name, courses, onClose }: { name: string; courses: st
       <div className="pane-body">
         {error && <div className="alert error">{error}</div>}
         {rating === undefined && !error && <RatingLoading />}
-        {rating === null && <p className="rating-none">Not enough first-hand student reviews to rate this professor.</p>}
+        {rating === null && <p className="rating-none">No first-hand teaching review found in the saved threads.</p>}
         {rating && (
           <div className="rating">
             <div className="rating-head">
               <div className="rating-score" aria-label={`Rated ${rating.score} out of 5`}><b>{rating.score.toFixed(1)}</b><span>out of 5</span></div>
               <p className="rating-verdict">{rating.verdict}</p>
             </div>
-            <p className="rating-basis">AI rating from {rating.basis} students in the group{rating.confidence === 'low' ? ' · limited evidence' : ''}.</p>
+            <p className="rating-basis">AI rating from {rating.basis === 1 ? 'one student' : `${rating.basis} students`} in the group{rating.confidence === 'low' ? ' · limited evidence' : ''}.</p>
             {rating.sources?.length > 0 && <div className="rating-evidence"><span>Read the threads</span>{rating.sources.map((source, index) => <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer">{source.date || 'Undated'} · {source.excerpt.slice(0, 90)}</a>)}</div>}
           </div>
         )}

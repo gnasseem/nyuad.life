@@ -64,7 +64,7 @@ export function HistoryPanel({ conversations, current, open, onClose }: { conver
   return (
     <>
       <div className="history-scrim" onClick={onClose} aria-hidden="true" />
-      <aside className="history-panel" aria-label="Your conversations">
+      <aside id="conversation-history" className="history-panel" aria-label="Your conversations">
         <div className="hp-head">
           <button type="button" className="hp-new" onClick={startNew}>
             <IconPlus /> New question

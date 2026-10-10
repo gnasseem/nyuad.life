@@ -279,14 +279,14 @@ export function App() {
             <a href={askHref} className="brand" onClick={onLinkClick} aria-label={`${APP_NAME}, home`}>
               <Wordmark />
             </a>
-            {onAsk && (
-              <button type="button" className="icon-btn panel-toggle" onClick={togglePanel} aria-expanded={panelOpen} aria-label={panelOpen ? 'Hide conversations' : 'Show conversations'} title={panelOpen ? 'Hide conversations' : 'Your conversations'}>
-                <IconSidebar />
-              </button>
-            )}
           </div>
           <LineNav activeIndex={activeIndex} hrefOf={hrefOf} helpCount={helpCount} />
           <div className="bar-tools">
+            {onAsk && (
+              <button type="button" className="btn ghost history-toggle" onClick={togglePanel} aria-expanded={panelOpen} aria-controls="conversation-history" title="Your conversations">
+                <IconSidebar /> <span>History</span>
+              </button>
+            )}
             {admin && (
               <a href="/settings#admin" className="admin-badge" onClick={onLinkClick} title="Admin mode is on">
                 <IconShield /> <span>Admin</span>

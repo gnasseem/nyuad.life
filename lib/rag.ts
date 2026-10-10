@@ -462,7 +462,7 @@ export function sourcesBlock(archive: Archive, cards: SourceCard[], live: LiveSo
       const lines = post.comments.map((comment) => `- ${comment.author || 'Someone'}${comment.date ? ` (${formatDate(comment.date)})` : ''}: ${truncate(collapseWhitespace(comment.text), 500)}`);
       // In a long thread, the comments in the passage that matched the question go in first; the rest fill what is
       // left. Either way they are shown in the order they were written.
-      const focus = entry?.chunk ?? '';
+      const focus = entry?.chunk ?? card.snippet;
       const matched = (i: number) => !!focus && focus.includes(collapseWhitespace(post.comments[i]!.text).slice(0, 60));
       const order = [...lines.keys()].sort((a, b) => Number(matched(b)) - Number(matched(a)) || a - b);
       const shown = new Set<number>();
@@ -514,7 +514,7 @@ Then commit. Give a clear verdict or recommendation when the evidence supports o
 
 Be candid. Students come here for what the brochure leaves out, so report downsides, complaints, risks and common mistakes as plainly as the praise: specific and attributed ("two students found the grading harsh [4][7]"), never softened into "some may find it challenging". Keep criticism of people to their teaching, grading, workload or how an office runs; leave out personal remarks and rumours.
 
-For questions about lived experience, do not let a course description or official page stand in for a student review. If the group has bad reviews, say the verdict plainly. If no first-hand review is saved, say that instead of guessing.
+For questions about lived experience, do not let a course description or official page stand in for a student review. If the group has bad reviews, say the verdict plainly. If only one first-hand review is saved, describe it with its date and make clear it is one account, not a consensus. Check the comments as well as the original post before claiming no reviews were found. If none is saved, say that instead of guessing.
 
 Shape of the answer:
 1. Open with the answer itself in one short sentence: the verdict, the fact, or "it depends on X". No preamble and no restating the question. If the sources only cover part of it, say plainly what is missing.
