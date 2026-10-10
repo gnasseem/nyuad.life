@@ -67,10 +67,14 @@ export function crossSite(req: IncomingMessage): boolean {
   return !(process.env.VERCEL !== '1' && /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host));
 }
 
-export function sendJson(res: ApiResponse, status: number, body: unknown, cacheSeconds = 0): void {
+/**
+ * `scope` 'private' keeps a response out of the CDN, which keys its cache by URL alone: anything only members may read
+ * must be private, or the next visitor without an account would be served the member's copy.
+ */
+export function sendJson(res: ApiResponse, status: number, body: unknown, cacheSeconds = 0, scope: 'public' | 'private' = 'public'): void {
   res.statusCode = status;
   res.setHeader('content-type', 'application/json; charset=utf-8');
-  res.setHeader('cache-control', cacheSeconds > 0 ? `public, s-maxage=${cacheSeconds}, stale-while-revalidate=${cacheSeconds * 4}` : 'no-store');
+  res.setHeader('cache-control', cacheSeconds <= 0 ? 'no-store' : scope === 'private' ? `private, max-age=${cacheSeconds}` : `public, s-maxage=${cacheSeconds}, stale-while-revalidate=${cacheSeconds * 4}`);
   res.end(JSON.stringify(body));
 }
 
@@ -118,8 +122,9 @@ export function clientIp(req: IncomingMessage): string {
  * function instance recycles, which is fine for abuse control.
  */
 const buckets = new Map<string, { tokens: number; updated: number }>();
-export function rateLimit(req: IncomingMessage, capacity: number, perMinute: number, scope = 'default'): void {
-  const ip = `${scope}:${clientKey(clientIp(req))}`;
+export function rateLimit(req: IncomingMessage, capacity: number, perMinute: number, scope = 'default', who?: string): void {
+  // `who` counts a person (a NetID) rather than an address, which a whole campus behind one NAT can share.
+  const ip = `${scope}:${who ?? clientKey(clientIp(req))}`;
   const now = Date.now();
   const bucket = buckets.get(ip) ?? { tokens: capacity, updated: now };
   bucket.tokens = Math.min(capacity, bucket.tokens + ((now - bucket.updated) / 60_000) * perMinute);

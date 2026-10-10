@@ -2,7 +2,7 @@ import { boardStore } from '../lib/board-store.ts';
 import { addCookies, chatgptConfig, ChatGPTError, freshSession, readSession, sessionCookies } from '../lib/chatgpt.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, rateLimit, readJson, route, sendJson, startSse } from '../lib/http.ts';
-import { requireMember } from '../lib/identity.ts';
+import { limitDurably, requireMember } from '../lib/identity.ts';
 import { loadOfficial } from '../lib/official.ts';
 import { providersFromEnv, warmModels } from '../lib/providers.ts';
 import { ask, validateAsk } from '../lib/rag.ts';
@@ -16,13 +16,20 @@ const DEADLINE_MS = 54_000;
 
 export default route(['POST'], async (req, res) => {
   const deadline = Date.now() + DEADLINE_MS;
-  rateLimit(req, 12, 10, 'ask');
-  // And a daily ceiling per address, so one client cannot spend the free model quota everyone shares.
-  rateLimit(req, 150, 150 / 1440, 'ask-day');
+  // Per address only loosely: a campus or a phone network puts many students behind one. The real limits are per
+  // student, below, once the request is known to come from one.
+  rateLimit(req, 40, 30, 'ask');
   const request = validateAsk(await readJson<Partial<AskRequest>>(req));
   // Answers cost model calls: only students who signed up get them. Meanwhile the model lists are checked against
   // what the keys can use (cached for hours, so this is free after an instance's first question).
-  await Promise.all([requireMember(req), warmModels()]);
+  const [member] = await Promise.all([requireMember(req), warmModels()]);
+  if (member) {
+    rateLimit(req, 10, 6, 'ask-student', member.netId);
+    // A daily ceiling per student across every instance, so one account cannot spend the free quota everyone shares.
+    await limitDurably(boardStore(), `ask:${member.netId}`, 150, 86_400, 'You have asked a lot today. Ask again tomorrow, or ask other students on Questions.');
+  } else {
+    rateLimit(req, 150, 150 / 1440, 'ask-day');
+  }
   const cfg = geminiConfig();
 
   // A student who connected ChatGPT is answered on their own plan. Their token is refreshed here, before anything is

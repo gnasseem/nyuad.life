@@ -8,9 +8,9 @@ import { RedirectCard } from '../components/RedirectCard';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
 import { initials, plural, relativeDate } from '../format';
-import { IconBack, IconChat, IconLink, IconPlus } from '../icons';
+import { IconBack, IconChat, IconLink, IconPlus, IconSearch } from '../icons';
 import { navigate, onLinkClick } from '../router';
-import { askerKey } from '../store';
+import { askerKey, loadSeenAnswers, saveSeenAnswers } from '../store';
 
 const QUESTION_MAX = 600;
 const ANSWER_MAX = 1200;
@@ -54,6 +54,10 @@ export function QuestionsPage(_props: { search: URLSearchParams }) {
       .feed()
       .then((result) => {
         setQuestions(result.questions);
+        // Your questions' answers are on screen here, so the home page stops pointing them out.
+        const seen = loadSeenAnswers();
+        for (const question of result.questions) if (question.mine) seen[question.id] = question.answers.length;
+        saveSeenAnswers(seen);
         setMore(result.more);
         setCursor(result.next);
         setError('');
@@ -101,7 +105,7 @@ export function QuestionsPage(_props: { search: URLSearchParams }) {
     if (filter === 'open') return entry.answers.length === 0;
     if (filter === 'answered') return entry.answers.length > 0;
     if (filter === 'mine') return entry.mine;
-    if (filter === 'for-you') return !entry.mine && entry.answers.length < 3 && ((!entry.majors.length && !entry.years.length) || (profile ? entry.majors.includes(profile.major) || entry.years.includes(profile.year) : false));
+    if (filter === 'for-you') return !entry.mine && !entry.byMe && entry.answers.length < 3 && ((!entry.majors.length && !entry.years.length) || (profile ? entry.majors.includes(profile.major) || entry.years.includes(profile.year) : false));
     return true;
   }).sort((a, b) => {
     const score = (entry: FeedQuestion) => {
@@ -116,7 +120,7 @@ export function QuestionsPage(_props: { search: URLSearchParams }) {
 
   return (
     <div className="page">
-      <Sign title="Questions" ar="الأسئلة">
+      <Sign title="Questions" ar="الأسئلة" sub="What Ask could not answer, answered by students. Unanswered ones come first, with a lift for your major and year.">
         <button type="button" className="btn primary" onClick={() => setAsking(true)}>
           <IconPlus /> Ask students
         </button>
@@ -126,8 +130,10 @@ export function QuestionsPage(_props: { search: URLSearchParams }) {
       ) : (
         <div className="split">
           <div className="feed">
-            <div className="field"><label htmlFor="question-search">Find a question</label><input id="question-search" className="input" type="search" placeholder="Search questions and answers" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
-            <p className="small muted" style={{ margin: '12px 0' }}>Unanswered questions come first, with a lift for your major and year.</p>
+            <div className="search-field feed-search">
+              <IconSearch />
+              <input id="question-search" className="input" type="search" placeholder="Search questions and answers" aria-label="Search questions and answers" value={query} onChange={(event) => setQuery(event.target.value)} />
+            </div>
             <div className="chips scroll-x feed-filters" role="radiogroup" aria-label="Show">
               {FILTERS.map((entry) => (
                 <button key={entry.id} type="button" role="radio" aria-checked={filter === entry.id} className={`chip${filter === entry.id ? ' on' : ''}`} onClick={() => setFilter(entry.id)}>
@@ -395,7 +401,7 @@ function QuestionCard({ question, onAnswered, compact = false }: { question: Fee
           Show all {answers.length} answers
         </button>
       )}
-      {!compact && !question.mine && profile && (
+      {!compact && !question.mine && question.byMe !== 'answer' && profile && (
         <div className="qcard-answer">
           {writing ? (
             <>

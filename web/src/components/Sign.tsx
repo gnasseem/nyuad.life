@@ -1,19 +1,22 @@
 import type { ReactNode } from 'react';
 
-/** A page title set as a station sign: the name, its Arabic, and the line running on to the page's actions. */
-export function Sign({ title, ar, children }: { title: string; ar?: string; children?: ReactNode }) {
+/** A page's header: its name in the section's colour, the Arabic beside it, an optional line under it, and its actions. */
+export function Sign({ title, ar, sub, children }: { title: string; ar?: string; sub?: ReactNode; children?: ReactNode }) {
   return (
-    <div className="sign">
-      <div className="sign-name">
-        <h1>{title}</h1>
-        {ar && (
-          <span className="sign-ar" lang="ar" dir="rtl">
-            {ar}
-          </span>
-        )}
+    <header className="page-head">
+      <div className="ph-text">
+        <div className="ph-name">
+          <span className="ph-dot" aria-hidden="true" />
+          <h1>{title}</h1>
+          {ar && (
+            <span className="ph-ar" lang="ar" dir="rtl">
+              {ar}
+            </span>
+          )}
+        </div>
+        {sub && <p className="ph-sub">{sub}</p>}
       </div>
-      <span className="sign-line" aria-hidden="true" />
-      {children && <div className="sign-actions">{children}</div>}
-    </div>
+      {children && <div className="ph-actions">{children}</div>}
+    </header>
   );
 }

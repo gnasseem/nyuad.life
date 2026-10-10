@@ -145,10 +145,11 @@ export interface Answer {
 /** A question with its answers in place of the count of them. */
 export type QuestionWithAnswers = Omit<Question, 'answers'> & { answers: Answer[] };
 /** A question in the feed: `mine` when this browser asked it. */
-export type FeedQuestion = QuestionWithAnswers & { mine?: boolean };
+/** `byMe`: this student already answered or skipped it. */
+export type FeedQuestion = QuestionWithAnswers & { mine?: boolean; byMe?: 'answer' | 'skip' };
 
 /** What an admin can remove. */
-export type AdminTarget = 'question' | 'answer' | 'notice' | 'listing' | 'offer';
+export type AdminTarget = 'question' | 'answer' | 'notice' | 'listing' | 'offer' | 'review';
 
 export interface ModelCheck {
   name: string;
@@ -332,6 +333,30 @@ export interface CourseRating {
   sources: Array<{ url: string; date: string; excerpt: string }>;
 }
 
+/** Every score written so far, for the lists: AI ratings by course code and professor, and reviews written here. */
+export interface ScoreIndex {
+  courses: Record<string, { score: number; basis: number; difficulty: number | null; workload: number | null }>;
+  profs: Record<string, { score: number; basis: number }>;
+  students: Record<string, { n: number; avg: number }>;
+}
+
+/** A review a student wrote here about a course they took. */
+export interface CourseReview {
+  id: string;
+  code: string;
+  authorName: string;
+  authorMajor: string;
+  authorYear: Standing;
+  rating: number;
+  difficulty: number | null;
+  workload: number | null;
+  text: string;
+  term: string;
+  createdAt: string;
+  updatedAt: string;
+  mine: boolean;
+}
+
 /** How students in the group rate being taught by a professor. */
 export interface ProfRating {
   score: number;
@@ -479,6 +504,9 @@ export const api = {
     listingDone: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'listing_done', ...body }),
     unlisting: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unlisting', ...body }),
     leaderboard: (_netId?: string) => request<{ helpers: LeaderboardEntry[] }>('/api/board?op=leaderboard'),
+    reviews: (code: string) => request<{ reviews: CourseReview[]; open?: boolean }>(`/api/board?op=reviews&code=${encodeURIComponent(code)}`),
+    review: (body: { code: string; rating: number; difficulty: number | null; workload: number | null; text: string; term: string }) => post<{ review: CourseReview }>('/api/board', { op: 'review', ...body }),
+    unreview: (code: string) => post<{ ok: true }>('/api/board', { op: 'unreview', code }),
     contact: (type: 'offer' | 'listing', id: string) => request<{ contactKind: ContactKind; contact: string }>(`/api/board?op=contact&type=${type}&id=${encodeURIComponent(id)}`),
   },
   admin: {
@@ -498,6 +526,7 @@ export const api = {
     all: () => cached('courses:all', () => request<{ courses: CourseEntry[] }>('/api/courses?all=1')),
     detail: (code: string) => request<CourseDetail>(`/api/courses?code=${encodeURIComponent(code)}`),
     rating: (code: string) => cached(`rating:${code}`, () => request<{ rating: CourseRating | null }>(`/api/courses?code=${encodeURIComponent(code)}&rating=1`)),
+    scores: () => cached('scores', () => request<ScoreIndex>('/api/courses?ratings=1')),
     profs: profRatings,
   },
 };

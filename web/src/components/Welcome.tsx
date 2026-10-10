@@ -6,10 +6,10 @@ import { ProfileForm } from './ProfileForm';
 import { Wordmark } from './Logo';
 import '../welcome.css';
 
-type Line = 'ask' | 'plan' | 'questions' | 'notices' | 'market' | 'guide';
+type Line = 'ask' | 'plan' | 'questions' | 'guide';
 
 interface Stop {
-  line: Line | 'central';
+  line: Line;
   kicker: string;
   title: string;
   text: string;
@@ -19,65 +19,41 @@ interface Stop {
 
 const STOPS: Stop[] = [
   {
-    line: 'central',
-    kicker: 'Welcome',
-    title: 'Life at NYUAD, in one place',
-    text: 'nyuad.life is built on thousands of threads from the Room of Requirement, the official NYUAD pages, the class schedule, and students like you.',
-    points: ['Six lines, one map. Here is a quick ride through each.'],
-    scene: <MapScene />,
-  },
-  {
     line: 'ask',
     kicker: 'Ask',
-    title: 'Ask anything, get an answer with sources',
-    text: 'Courses, professors, housing, visas, the best shawarma near campus.',
-    points: ['Every answer cites the threads and pages it comes from', 'Ask follow-ups and return to saved conversations anytime'],
+    title: 'Ask anything about NYUAD',
+    text: 'Answers come from official NYUAD pages, the Albert schedule and thirteen years of Room of Requirement threads.',
+    points: ['Every claim links to the thread or page it came from'],
     scene: <AskScene />,
   },
   {
     line: 'plan',
     kicker: 'Plan',
     title: 'Plan a semester in one sentence',
-    text: '"Calc, intro to CS, any Arts Core, nothing before 10, Fridays off."',
-    points: ['Every timetable that fits, best-rated professors first', 'Class numbers ready to paste into Albert'],
+    text: '"Calc, intro to CS, any Arts Core, Fridays off." You get every week that fits, best-rated professors first.',
+    points: ['Class numbers ready to paste into Albert'],
     scene: <PlanScene />,
-  },
-  {
-    line: 'questions',
-    kicker: 'Questions',
-    title: 'When the archive falls short, ask students',
-    text: 'Questions go into a feed everyone sees, and students in the right major and year answer them.',
-    points: ['Tap + to ask', 'Answer what you know and climb the helpers board'],
-    scene: <QuestionsScene />,
-  },
-  {
-    line: 'notices',
-    kicker: 'Events',
-    title: 'Never miss what is on',
-    text: 'Campus gatherings from clubs and students, day by day.',
-    points: ['Add anything to your calendar in one tap', 'Event details are screened before posting'],
-    scene: <NoticesScene />,
-  },
-  {
-    line: 'market',
-    kicker: 'Market',
-    title: 'Buy, sell, swap and share a ride',
-    text: 'Things for sale, wanted or free, Falcon and Campus Dirham trades, rides off campus, and lost and found.',
-    points: ['Contacts are shown one post at a time, only to students'],
-    scene: <MarketScene />,
   },
   {
     line: 'guide',
     kicker: 'Reviews',
     title: 'Know a course before you take it',
-    text: 'Every course in Albert, searchable by code, title or professor.',
-    points: ['Ratings written from what students actually said', 'Difficulty, workload, what they loved and what to watch out for'],
+    text: 'Ratings written from what students said about every course and professor, plus reviews from students here.',
+    points: ['Took a course? Rate it in ten seconds'],
     scene: <CoursesScene />,
+  },
+  {
+    line: 'questions',
+    kicker: 'Students',
+    title: 'The rest comes from students like you',
+    text: 'Ask what the archive cannot answer, answer what you know, find events, sell things and share rides.',
+    points: ['Everyone here signs in with an NYU email'],
+    scene: <QuestionsScene />,
   },
 ];
 
 /**
- * The first thing a new visitor sees: a short animated ride through each section, then email verification and account details, which
+ * The first thing a new visitor sees: four short screens on what the site does, then email verification and account details, which
  * everyone fills in before using the site. Someone who has seen the tour but has no details (they removed them, or
  * the server lost them) goes straight to the form.
  */
@@ -141,9 +117,9 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
   }, [index, last]);
 
   const stop = STOPS[index];
-  const line = stop?.line ?? 'central';
+  const line = stop?.line ?? 'ask';
   return createPortal(
-    <div className="welcome" data-line={line === 'central' ? 'ask' : line} role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+    <div className="welcome" data-line={line} role="dialog" aria-modal="true" aria-labelledby="welcome-title">
       <div
         ref={cardRef}
         className={`welcome-card${stop ? '' : ' is-signup'}`}
@@ -162,14 +138,14 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
       >
         <div className="welcome-head">
           <div className="welcome-brand"><Wordmark /></div>
-          {stop && <button type="button" className="welcome-skip" onClick={() => go(last)}>Skip tour <IconArrow /></button>}
+          {stop && <button type="button" className="welcome-skip" onClick={() => go(last)}>Log in <IconArrow /></button>}
         </div>
         <div key={index} className={`welcome-page${stop ? '' : ' is-signup'} ${direction > 0 ? 'from-right' : 'from-left'}`}>
           {stop ? (
             <>
               <div className="welcome-visual">
                 <div className="welcome-scene" aria-hidden="true">{stop.scene}</div>
-                <span className="welcome-preview">{index === 0 ? 'Six lines. One campus.' : 'Illustrative preview'}</span>
+                <span className="welcome-preview">Preview</span>
               </div>
               <div className="welcome-copy">
                 <h2 id="welcome-title" tabIndex={-1}>{stop.title}</h2>
@@ -202,7 +178,7 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
                   <IconBack />
                 </button>
                 <button type="button" className="btn primary welcome-next" onClick={() => go(index + 1)}>
-                  {index === last - 1 ? 'Log in' : index === 0 ? 'Start the tour' : 'Next'} <IconArrow className="go" />
+                  {index === last - 1 ? 'Log in' : 'Next'} <IconArrow className="go" />
                 </button>
               </div>
             </>
@@ -227,39 +203,13 @@ function Progress({ index, total, onPick }: { index: number; total: number; onPi
       <span className="welcome-track" aria-hidden="true" />
       <span className="welcome-train" aria-hidden="true" style={{ left: `calc(${(index / (total - 1)) * 100}% - 5px)` }} />
       {STOPS.map((stop, i) => (
-        <button key={stop.kicker} type="button" aria-current={i === index ? 'step' : undefined} aria-label={`${stop.kicker}, step ${i + 1} of ${total}`} className={`welcome-dot${i <= index ? ' done' : ''}`} data-line={stop.line === 'central' ? 'ask' : stop.line} style={{ left: `${(i / (total - 1)) * 100}%` }} onClick={() => onPick(i)} />
+        <button key={stop.kicker} type="button" aria-current={i === index ? 'step' : undefined} aria-label={`${stop.kicker}, step ${i + 1} of ${total}`} className={`welcome-dot${i <= index ? ' done' : ''}`} data-line={stop.line} style={{ left: `${(i / (total - 1)) * 100}%` }} onClick={() => onPick(i)} />
       ))}
     </div>
   );
 }
 
 /* ---------- Scenes: a little of each section, moving ---------- */
-
-function MapScene() {
-  const lines: Array<{ d: string; line: Line; delay: number }> = [
-    { d: 'M -20 40 H 90 L 160 110', line: 'questions', delay: 0 },
-    { d: 'M 340 30 H 240 L 160 110', line: 'notices', delay: 0.12 },
-    { d: 'M -20 180 H 70 L 160 110', line: 'market', delay: 0.24 },
-    { d: 'M 340 190 H 250 L 160 110', line: 'guide', delay: 0.36 },
-    { d: 'M 160 -20 V 110', line: 'plan', delay: 0.48 },
-    { d: 'M 160 240 V 110', line: 'ask', delay: 0.6 },
-  ];
-  return (
-    <svg className="scene-map" viewBox="0 0 320 220">
-      {lines.map((entry) => (
-        <g key={entry.line} data-line={entry.line}>
-          <path className="map-line" d={entry.d} pathLength={1} style={{ animationDelay: `${entry.delay}s` }} />
-          <path className="map-train" d={entry.d} pathLength={1} style={{ animationDelay: `${1.2 + entry.delay}s` }} />
-        </g>
-      ))}
-      <circle className="map-central" cx="160" cy="110" r="20" />
-      <rect className="map-plate" x="118" y="141" width="84" height="20" rx="6" />
-      <text className="map-label" x="160" y="156" textAnchor="middle">
-        CENTRAL
-      </text>
-    </svg>
-  );
-}
 
 function AskScene() {
   return (
@@ -330,53 +280,6 @@ function QuestionsScene() {
         <span className="sq-pill">Needs an answer</span>
       </div>
       <span className="sq-plus">+</span>
-    </div>
-  );
-}
-
-function NoticesScene() {
-  return (
-    <div className="scene-notices">
-      <div className="sn-week">
-        {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, i) => (
-          <span key={i} style={{ '--i': i } as CSSProperties}>
-            <em>{day}</em>
-            <i className={i === 3 ? 'on' : ''} />
-          </span>
-        ))}
-      </div>
-      <div className="sn-card">
-        <b>Thu 7:00pm</b>
-        <span>Robotics club open night</span>
-        <small>C2 Lab 012 · Add to calendar</small>
-      </div>
-    </div>
-  );
-}
-
-function MarketScene() {
-  return (
-    <div className="scene-market">
-      <div className="sm-tags">
-        {[
-          { what: 'Desk lamp', price: '40', unit: 'AED' },
-          { what: 'Mini fridge', price: 'Free', unit: '' },
-          { what: 'Falcons', price: '0.80', unit: 'AED' },
-        ].map((tag, i) => (
-          <div key={tag.what} className="sm-tag" style={{ '--i': i } as CSSProperties}>
-            <span>{tag.what}</span>
-            <b>
-              {tag.price}
-              {tag.unit && <small> {tag.unit}</small>}
-            </b>
-          </div>
-        ))}
-      </div>
-      <div className="sm-board">
-        <b>18:30</b>
-        <span>Campus to Dubai Mall</span>
-        <em>2 seats</em>
-      </div>
     </div>
   );
 }

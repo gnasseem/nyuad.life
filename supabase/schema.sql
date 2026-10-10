@@ -305,3 +305,25 @@ revoke execute on function public.auth_rebind_profile(text, text, text) from pub
 grant execute on function public.auth_reserve_otp(text, text) to service_role;
 grant execute on function public.auth_consume_otp(text, text) to service_role;
 grant execute on function public.auth_rebind_profile(text, text, text) to service_role;
+
+-- Students' own reviews of courses they took: one per student and course, replaced when they write again.
+create table if not exists public.course_reviews (
+  id           uuid primary key default gen_random_uuid(),
+  code         text not null,
+  net_id       text not null references public.board_profiles (net_id) on delete cascade,
+  author_name  text not null default '',
+  author_major text not null default '',
+  author_year  text not null default '',
+  rating       smallint not null check (rating between 1 and 5),
+  difficulty   smallint check (difficulty between 1 and 5),
+  workload     smallint check (workload between 1 and 5),
+  text         text not null default '',
+  term         text not null default '',
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  unique (code, net_id)
+);
+create index if not exists course_reviews_code_idx on public.course_reviews (code);
+alter table public.course_reviews enable row level security;
+revoke all on public.course_reviews from anon, authenticated;
+grant all on public.course_reviews to service_role;

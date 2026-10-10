@@ -4,7 +4,7 @@ import { api, ApiError, type CourseRating, type CourseRow, type ProfRating, type
 import { Segmented } from '../components/Segmented';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
-import { IconArrow, IconBack, IconCheck, IconChevronRight, IconClose, IconCopy, IconSearch } from '../icons';
+import { IconArrow, IconBack, IconBolt, IconCheck, IconChevronRight, IconClose, IconCopy, IconSearch } from '../icons';
 import { navigate, onLinkClick, useRoute } from '../router';
 import { loadPlan, savePlan, uid, type PlanMessage, type SavedPlan } from '../store';
 
@@ -77,14 +77,24 @@ export function PlanPage() {
   const [text, setText] = useState('');
   const [reading, setReading] = useState(false);
   const [viewing, setViewing] = useState<{ key: string; index: number } | null>(null);
+  const [showChat, setShowChat] = useState(false);
   const mainRef = useRef<HTMLDivElement>(null);
+  const requestRef = useRef<HTMLTextAreaElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const requestId = useRef(0);
   const chat = saved.chat ?? [];
+  const lastReply = chat.at(-1)?.role === 'assistant' ? chat.at(-1) : undefined;
 
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
-  }, [chat.length, reading]);
+  }, [chat.length, reading, showChat]);
+
+  useEffect(() => {
+    const element = requestRef.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = `${Math.min(160, element.scrollHeight)}px`;
+  }, [text]);
 
   useEffect(() => {
     requestId.current++;
@@ -236,6 +246,7 @@ export function PlanPage() {
 
   const clear = () => {
     update({ wants: [], rules: DEFAULT_RULES, chat: [] });
+    setShowChat(false);
   };
 
   const rated = candidates.filter((name) => profRatings.get(name)).length;
@@ -243,151 +254,208 @@ export function PlanPage() {
 
   return (
     <div className="page plan-page">
-      <Sign title="Plan" ar="الجدول" />
-      <div className="plan-term"><label htmlFor="plan-term">Semester</label>
+      <Sign title="Plan" ar="الجدول" sub="Say what you need or add courses yourself. You get every week that fits, best-rated professors first.">
         {terms && terms.length > 0 && (
-          <select id="plan-term" className="input" value={term} onChange={(event) => update({ term: event.target.value, chat: [] })} aria-label="Term">
-            {regularTerms(terms).map((entry) => (
-              <option key={entry.name} value={entry.name}>
-                {entry.name}
-              </option>
-            ))}
-          </select>
+          <label className="term-pick">
+            <span className="sr-only">Semester</span>
+            <select className="input" value={term} onChange={(event) => update({ term: event.target.value, chat: [] })} aria-label="Semester">
+              {regularTerms(terms).map((entry) => (
+                <option key={entry.name} value={entry.name}>
+                  {entry.name}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
-      </div>
+        {(saved.wants.length > 0 || chat.length > 0) && (
+          <button type="button" className="btn ghost sm" onClick={clear}>
+            Start over
+          </button>
+        )}
+      </Sign>
       {error && <div className="alert error">{error}</div>}
-      <div className="plan">
-        <div className="plan-side">
-          <div className="plan-chat">
-            <div className="plan-chat-head"><h2>Plan assistant</h2><button type="button" className="link-btn small" onClick={() => mainRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>View week <IconArrow /></button></div>
-            <div className="plan-chat-log" ref={chatRef} role="log" aria-label="Planning conversation">
-              {chat.length === 0 && <div className="plan-chat-empty"><p>What would you like to take?</p><span>Tell me your courses, times and preferences. We can adjust them as we go.</span><button type="button" onClick={() => setText('Add a seven-week Core course, either 71 or 72')}>Find a 7-week Core <IconArrow /></button></div>}
-              {chat.map((message, i) => <div key={i} className={`plan-message ${message.role}`}>{message.text}</div>)}
-              {reading && <div className="plan-thinking" role="status"><span className="process-cursor" />Updating your plan…</div>}
-            </div>
-            <div className="composer plan-composer">
-              <textarea id="plan-request" rows={2} value={text} maxLength={600} disabled={reading} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void read(); }
-              }} placeholder={chat.length ? 'Adjust your plan…' : 'Calc, a 7-week Core, Fridays off…'} aria-label="Message plan assistant" />
-              <button type="button" className="send" onClick={() => void read()} disabled={!text.trim() || reading || !rows} aria-label="Send plan message"><IconArrow /></button>
-            </div>
+
+      <section className="assistant" aria-label="Plan assistant">
+        <div className="composer assistant-bar">
+          <span className="assistant-mark" aria-hidden="true">
+            <IconBolt />
+          </span>
+          <textarea
+            ref={requestRef}
+            id="plan-request"
+            rows={1}
+            value={text}
+            maxLength={600}
+            disabled={reading}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                void read();
+              }
+            }}
+            placeholder={saved.wants.length ? 'Change anything: "no classes after 4"' : 'Calc, intro to CS, Fridays off…'}
+            aria-label="Tell the plan assistant what you need"
+            enterKeyHint="send"
+          />
+          <button type="button" className="send" onClick={() => void read()} disabled={!text.trim() || reading || !rows} aria-label="Send to the plan assistant">
+            <IconArrow />
+          </button>
+        </div>
+        {reading ? (
+          <p className="assistant-reply thinking" role="status">
+            <span className="spinner" aria-hidden="true" /> Reading your request…
+          </p>
+        ) : lastReply ? (
+          <div className="assistant-reply">
+            <p>{lastReply.text}</p>
+            {chat.length > 2 && (
+              <button type="button" className="link-btn" onClick={() => setShowChat((current) => !current)} aria-expanded={showChat}>
+                {showChat ? 'Hide conversation' : `Show conversation (${chat.filter((message) => message.role === 'user').length})`}
+              </button>
+            )}
           </div>
-          <fieldset className="plan-controls" disabled={reading}>
-            <div className="plan-block">
-              <div className="plan-block-head">
-                <h2>Your courses</h2>
-                {saved.wants.length > 0 && (
-                  <button type="button" className="link-btn small" onClick={clear}>
-                    Start over
-                  </button>
-                )}
+        ) : (
+          <div className="assistant-ideas" aria-label="Try">
+            {IDEAS.map((idea) => (
+              <button
+                key={idea}
+                type="button"
+                onClick={() => {
+                  setText(idea);
+                  requestRef.current?.focus();
+                }}
+              >
+                {idea}
+              </button>
+            ))}
+          </div>
+        )}
+        {showChat && chat.length > 2 && (
+          <div className="assistant-log" ref={chatRef} role="log" aria-label="Planning conversation">
+            {chat.slice(0, -1).map((message, i) => (
+              <div key={i} className={`plan-message ${message.role}`}>
+                {message.text}
               </div>
-              {saved.wants.length > 0 && (
-                <div className="wants">
-                  {saved.wants.map((want, i) => (
-                    <WantRow key={want.id} want={want} color={i} titles={titles} problem={result?.problems.find((problem) => problem.want === want.id)?.text} onRemove={() => removeWant(want.id)} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <div className={`plan${option ? ' has-plan' : ''}`}>
+        <fieldset className="plan-side" disabled={reading}>
+          <div className="plan-block">
+            <div className="plan-block-head">
+              <h2>Courses</h2>
+              {saved.wants.length > 0 && <Load low={credits.low} high={credits.high} />}
+            </div>
+            {saved.wants.length > 0 && (
+              <div className="wants">
+                {saved.wants.map((want, i) => (
+                  <WantRow key={want.id} want={want} color={i} titles={titles} problem={result?.problems.find((problem) => problem.want === want.id)?.text} onRemove={() => removeWant(want.id)} />
+                ))}
+              </div>
+            )}
+            <CoursePicker rows={rows?.courses ?? null} taken={new Set(saved.wants.flatMap((want) => want.codes))} onPick={addCode} />
+          </div>
+
+          <details className="plan-fold">
+            <summary>
+              <span>Week</span>
+              <small>{rulesSummary(saved.rules) || 'Any time, any day'}</small>
+            </summary>
+            <div className="rules">
+              <label className="rule">
+                <span>No class before</span>
+                <select className="input" value={saved.rules.earliest} onChange={(event) => setRules({ earliest: event.target.value })}>
+                  {[...new Set([...STARTS, saved.rules.earliest])].map((time) => (
+                    <option key={time} value={time}>
+                      {time ? clock(time) : 'Any time'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="rule">
+                <span>Done by</span>
+                <select className="input" value={saved.rules.latest} onChange={(event) => setRules({ latest: event.target.value })}>
+                  {[...new Set([...ENDS, saved.rules.latest])].map((time) => (
+                    <option key={time} value={time}>
+                      {time ? clock(time) : 'Any time'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="rule wide">
+                <span id="days-off">Days off</span>
+                <div className="day-toggles" role="group" aria-labelledby="days-off">
+                  {WEEKDAYS.map((day) => {
+                    const off = saved.rules.daysOff.includes(day);
+                    return (
+                      <button key={day} type="button" className={`day-toggle${off ? ' on' : ''}`} aria-pressed={off} aria-label={`${day} off`} onClick={() => setRules({ daysOff: off ? saved.rules.daysOff.filter((entry) => entry !== day) : [...saved.rules.daysOff, day] })}>
+                        {DAY_LETTER[day]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <label className="rule">
+                <span>Classes a day</span>
+                <select className="input" value={saved.rules.maxPerDay} onChange={(event) => setRules({ maxPerDay: Number(event.target.value) })}>
+                  {PER_DAY.map((most) => (
+                    <option key={most} value={most}>
+                      {most ? `At most ${most}` : 'Any number'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="rule">
+                <span>Shape</span>
+                <Segmented label="Shape of the week" value={saved.rules.shape} onChange={(shape) => setRules({ shape })} options={SHAPES} />
+              </div>
+              <small className="rule-help wide">{SHAPE_HELP[saved.rules.shape]}</small>
+              <div className="rule wide switches">
+                <Switch on={saved.rules.bestRated} onChange={(bestRated) => setRules({ bestRated })} label="Best-rated professors first">
+                  {saved.rules.bestRated && candidates.length > 0 ? (unread > 0 ? `Reading about ${unread} more…` : rated ? `${rated} of ${candidates.length} rated.` : 'None rated yet.') : 'From what students wrote about them.'}
+                </Switch>
+                <Switch on={saved.rules.noBackToBack} onChange={(noBackToBack) => setRules({ noBackToBack })} label="No back-to-back">
+                  Leave a break between classes.
+                </Switch>
+                <Switch on={saved.rules.waitlisted} onChange={(waitlisted) => setRules({ waitlisted })} label="Include waitlists">
+                  Full sections you could waitlist.
+                </Switch>
+              </div>
+            </div>
+          </details>
+
+          <details className="plan-fold">
+            <summary>
+              <span>Professors</span>
+              <small>{saved.rules.prefer.length || saved.rules.avoid.length ? [saved.rules.prefer.length ? `With ${saved.rules.prefer.length}` : '', saved.rules.avoid.length ? `not ${saved.rules.avoid.length}` : ''].filter(Boolean).join(', ') : 'No preference'}</small>
+            </summary>
+            <div className="rule wide">
+              {(saved.rules.prefer.length > 0 || saved.rules.avoid.length > 0) && (
+                <div className="chips">
+                  {saved.rules.prefer.map((name) => (
+                    <button key={`p-${name}`} type="button" className="chip on" onClick={() => setRules({ prefer: saved.rules.prefer.filter((entry) => entry !== name) })} aria-label={`Stop preferring ${name}`}>
+                      With {name} <IconClose />
+                    </button>
+                  ))}
+                  {saved.rules.avoid.map((name) => (
+                    <button key={`a-${name}`} type="button" className="chip on avoid" onClick={() => setRules({ avoid: saved.rules.avoid.filter((entry) => entry !== name) })} aria-label={`Stop avoiding ${name}`}>
+                      Not {name} <IconClose />
+                    </button>
                   ))}
                 </div>
               )}
-              <p className="plan-step">Search by course name or code</p>
-              <CoursePicker rows={rows?.courses ?? null} taken={new Set(saved.wants.flatMap((want) => want.codes))} onPick={addCode} />
-              {saved.wants.length > 0 && <Load low={credits.low} high={credits.high} />}
+              <ProfPicker rows={rows?.courses ?? null} plan={new Set(candidates)} ratings={profRatings} taken={new Set([...saved.rules.prefer, ...saved.rules.avoid])} onPick={person} />
+              <small className="rule-help">With: plans with them come first. Not: they are left out.</small>
             </div>
-
-            <div className="plan-block plan-preferences">
-              <div className="rules">
-                <details className="plan-week"><summary>Week preferences</summary>
-                  <div className="rule-group">
-                    <label className="rule">
-                      <span>No class before</span>
-                      <select className="input" value={saved.rules.earliest} onChange={(event) => setRules({ earliest: event.target.value })}>
-                        {[...new Set([...STARTS, saved.rules.earliest])].map((time) => (
-                          <option key={time} value={time}>
-                            {time ? clock(time) : 'Any time'}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="rule">
-                      <span>Done by</span>
-                      <select className="input" value={saved.rules.latest} onChange={(event) => setRules({ latest: event.target.value })}>
-                        {[...new Set([...ENDS, saved.rules.latest])].map((time) => (
-                          <option key={time} value={time}>
-                            {time ? clock(time) : 'Any time'}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="rule">
-                      <span id="days-off">Days off</span>
-                      <div className="day-toggles" role="group" aria-labelledby="days-off">
-                        {WEEKDAYS.map((day) => {
-                          const off = saved.rules.daysOff.includes(day);
-                          return (
-                            <button key={day} type="button" className={`day-toggle${off ? ' on' : ''}`} aria-pressed={off} aria-label={`${day} off`} onClick={() => setRules({ daysOff: off ? saved.rules.daysOff.filter((entry) => entry !== day) : [...saved.rules.daysOff, day] })}>
-                              {DAY_LETTER[day]}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <label className="rule">
-                      <span>Classes a day</span>
-                      <select className="input" value={saved.rules.maxPerDay} onChange={(event) => setRules({ maxPerDay: Number(event.target.value) })}>
-                        {PER_DAY.map((most) => (
-                          <option key={most} value={most}>
-                            {most ? `At most ${most}` : 'Any number'}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="rule wide">
-                        <span>Shape of the week</span>
-                        <Segmented label="Shape of the week" value={saved.rules.shape} onChange={(shape) => setRules({ shape })} options={SHAPES} />
-                        <small className="rule-help">{SHAPE_HELP[saved.rules.shape]}</small>
-                      </div>
-                      <div className="rule wide switches">
-                        <Switch on={saved.rules.bestRated} onChange={(bestRated) => setRules({ bestRated })} label="Best-rated professors">
-                          Put well-reviewed professors first.
-                          {saved.rules.bestRated && candidates.length > 0 && (unread > 0 ? ` Reading about ${unread} more…` : rated ? ` ${rated} of ${candidates.length} rated.` : ' None rated yet.')}
-                        </Switch>
-                        <Switch on={saved.rules.noBackToBack} onChange={(noBackToBack) => setRules({ noBackToBack })} label="No back-to-back">
-                          Leave a break between classes.
-                        </Switch>
-                        <Switch on={saved.rules.waitlisted} onChange={(waitlisted) => setRules({ waitlisted })} label="Include waitlists">
-                          Include full sections you could waitlist.
-                        </Switch>
-                      </div>
-                  </div>
-                </details>
-                <details className="plan-professors"><summary>Professors</summary>
-                  <div className="rule wide">
-                  {(saved.rules.prefer.length > 0 || saved.rules.avoid.length > 0) && (
-                    <div className="chips">
-                      {saved.rules.prefer.map((name) => (
-                        <button key={`p-${name}`} type="button" className="chip on" onClick={() => setRules({ prefer: saved.rules.prefer.filter((entry) => entry !== name) })} aria-label={`Stop preferring ${name}`}>
-                          With {name} <IconClose />
-                        </button>
-                      ))}
-                      {saved.rules.avoid.map((name) => (
-                        <button key={`a-${name}`} type="button" className="chip on avoid" onClick={() => setRules({ avoid: saved.rules.avoid.filter((entry) => entry !== name) })} aria-label={`Stop avoiding ${name}`}>
-                          Not {name} <IconClose />
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <ProfPicker rows={rows?.courses ?? null} plan={new Set(candidates)} ratings={profRatings} taken={new Set([...saved.rules.prefer, ...saved.rules.avoid])} onPick={person} />
-                  <small className="rule-help">With: plans with them come first. Not: they are left out.</small>
-                  </div>
-                </details>
-              </div>
-            </div>
-          </fieldset>
-        </div>
+          </details>
+        </fieldset>
 
         <div className="plan-main" ref={mainRef}>
           {!rows && !error && <div className="skeleton" style={{ height: 420 }} />}
-          {rows && saved.wants.length === 0 && <WeekGrid option={null} daysOff={saved.rules.daysOff} empty="Add your courses to see a week that fits." />}
+          {rows && saved.wants.length === 0 && <WeekGrid option={null} daysOff={saved.rules.daysOff} empty="Add courses, or tell the assistant what you need, to see a week that fits." />}
           {result && result.problems.length > 0 && (
             <>
               <div className="alert warn plan-problems" role="status">
@@ -415,9 +483,6 @@ export function PlanPage() {
           {result && option && (
             <>
               <div className="option-bar">
-                <button type="button" className="icon-btn" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Previous plan">
-                  <IconBack />
-                </button>
                 <div className="option-name">
                   <div className="option-title">
                     <b>Plan {index + 1}</b>
@@ -428,9 +493,14 @@ export function PlanPage() {
                   </div>
                   {why && <p className="option-why">{why.charAt(0).toUpperCase() + why.slice(1)}</p>}
                 </div>
-                <button type="button" className="icon-btn" onClick={() => go(index + 1)} disabled={index >= result.options.length - 1} aria-label="Next plan">
-                  <IconChevronRight />
-                </button>
+                <div className="option-nav">
+                  <button type="button" className="icon-btn" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Previous plan">
+                    <IconBack />
+                  </button>
+                  <button type="button" className="icon-btn" onClick={() => go(index + 1)} disabled={index >= result.options.length - 1} aria-label="Next plan">
+                    <IconChevronRight />
+                  </button>
+                </div>
               </div>
               <WeekGrid option={option} daysOff={saved.rules.daysOff} />
               <PlanList option={option} wants={saved.wants} profs={profRatings} />
@@ -440,6 +510,24 @@ export function PlanPage() {
       </div>
     </div>
   );
+}
+
+const IDEAS = ['Calc, intro to CS and an Arts Core', 'Nothing before 10, Fridays off', 'Add a 7-week Core in the first half', 'No back-to-back classes'];
+
+/** The week's rules in a line, for the folded preferences. */
+function rulesSummary(rules: Rules): string {
+  return [
+    rules.earliest ? `After ${clock(rules.earliest)}` : '',
+    rules.latest ? `done by ${clock(rules.latest)}` : '',
+    rules.daysOff.length ? `${rules.daysOff.join(', ')} off` : '',
+    rules.maxPerDay ? `max ${rules.maxPerDay} a day` : '',
+    rules.shape === 'compact' ? 'fewer days' : rules.shape === 'spread' ? 'lighter days' : '',
+    rules.noBackToBack ? 'breaks between' : '',
+    rules.waitlisted ? 'waitlists ok' : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+    .replace(/^./, (first) => first.toUpperCase());
 }
 
 /** A value that changes only once it has held still for a moment. */

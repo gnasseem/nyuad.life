@@ -13,7 +13,7 @@ export function onAdminRemoved(reload: () => void): () => void {
   return () => window.removeEventListener(REMOVED_EVENT, reload);
 }
 
-const NOUN: Record<AdminTarget, string> = { question: 'question', answer: 'answer', notice: 'notice', listing: 'listing', offer: 'offer' };
+const NOUN: Record<AdminTarget, string> = { question: 'question', answer: 'answer', notice: 'notice', listing: 'listing', offer: 'offer', review: 'review' };
 
 /**
  * In admin mode, a remove button on any post: remove it, or remove it and bar whoever wrote it from posting again.

@@ -46,13 +46,6 @@
 .welcome-dot:hover::before { border-color: var(--ink-3); }
 
 /* Welcome: six lines drawing into Central, then trains running along them. */
-.scene-map { width: 100%; height: 100%; }
-.scene-map .map-line { fill: none; stroke: var(--line); stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1s var(--ease-io) forwards; }
-.scene-map g[data-line='ask'] .map-line { stroke: var(--ink); }
-.scene-map .map-train { fill: none; stroke: #ffffff; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 0.06 0.94; stroke-dashoffset: 0.06; opacity: 0; animation: run 3.2s linear infinite; }
-.scene-map .map-central { fill: var(--plate); stroke: var(--ink); stroke-width: 7; animation: stop-pop 0.5s var(--ease) 0.9s both; transform-origin: 160px 110px; }
-.scene-map .map-plate { fill: var(--plate); stroke: var(--rule); animation: fade-in 0.4s ease-out 1.1s both; }
-.scene-map .map-label { fill: var(--ink); font: 800 12px var(--sign); letter-spacing: 0.14em; animation: fade-in 0.4s ease-out 1.1s both; }
 
 /* Ask: the question, the route it takes, the answer arriving with its citations. */
 .scene-ask { display: grid; gap: 12px; width: min(420px, 88%); }
@@ -60,10 +53,10 @@
 .sa-q span { display: inline-block; white-space: nowrap; overflow: hidden; vertical-align: bottom; max-width: 100%; clip-path: inset(0 100% 0 0); animation: type 0.9s steps(28) 0.15s forwards; }
 @keyframes type { to { clip-path: inset(0 0 0 0); } }
 .sa-route { display: flex; gap: 14px; color: var(--ink-3); font: 600 12px/1 var(--text); }
-.sa-route span { display: inline-flex; align-items: center; gap: 6px; opacity: 0; animation: fade-in 0.3s ease-out forwards; animation-delay: calc(1s + var(--i) * 0.25s); }
+.sa-route span { display: inline-flex; align-items: center; gap: 6px; opacity: 0; animation: appear 0.3s ease-out forwards; animation-delay: calc(1s + var(--i) * 0.25s); }
 .sa-route i { width: 9px; height: 9px; border-radius: 50%; background: var(--ink); }
 .sa-answer { display: grid; gap: 7px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--plate); font-size: 13.5px; }
-.sa-answer p { margin: 0; opacity: 0; animation: rise-in 0.4s var(--ease) forwards; animation-delay: calc(1.7s + var(--i) * 0.25s); }
+.sa-answer p { margin: 0; opacity: 0; animation: appear 0.4s var(--ease) forwards; animation-delay: calc(1.7s + var(--i) * 0.25s); }
 .sa-answer p.short { height: 9px; width: 60%; border-radius: 5px; background: var(--plate-3); }
 .sa-answer em { display: inline-grid; place-items: center; min-width: 17px; height: 17px; margin-left: 2px; border: 1.5px solid var(--cobalt); border-radius: 9px; color: var(--cobalt-ink); font: 700 9.5px/1 var(--sign); font-style: normal; vertical-align: 1px; }
 
@@ -72,6 +65,8 @@
 .sp-head { display: grid; grid-template-columns: repeat(5, 1fr); color: var(--ink-3); font: 720 11px/1 var(--sign); letter-spacing: 0.08em; text-align: center; }
 .sp-grid { position: relative; height: 130px; border: 1px solid var(--rule); border-radius: 12px; background: repeating-linear-gradient(90deg, transparent 0 calc(20% - 1px), var(--rule) calc(20% - 1px) 20%), var(--plate); overflow: hidden; }
 .sp-grid i { position: absolute; width: 18%; border-left: 3px solid var(--c); border-radius: 5px; background: color-mix(in srgb, var(--c) 22%, var(--plate)); transform-origin: top; animation: block-drop 0.5s var(--ease) both; animation-delay: calc(0.3s + var(--i) * 0.18s); }
+/* Hidden until their turn, so the animation has to end visible rather than at the element's own opacity. */
+@keyframes appear { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes block-drop { from { opacity: 0; transform: translateY(-18px) scaleY(0.6); } }
 .sp-off { position: absolute; right: 0; top: 0; bottom: 0; width: 20%; display: grid; place-items: center; color: var(--ink-3); font: 650 11px/1.2 var(--text); text-align: center; background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--line) 12%, transparent) 6px 12px); animation: fade-in 0.5s ease-out 1.3s both; }
 .sp-badge { justify-self: center; padding: 6px 12px; border-radius: 999px; background: var(--line-fill); color: var(--line-on); font: 600 12.5px/1 var(--text); animation: stop-pop 0.4s var(--ease) 1.5s both; }
@@ -88,28 +83,8 @@
 @keyframes nudge { 0%, 70%, 100% { transform: scale(1); } 80% { transform: scale(1.12); } 90% { transform: scale(0.97); } }
 
 /* Notices: the week lights up, Thursday has something on. */
-.scene-notices { display: grid; gap: 14px; width: min(420px, 88%); }
-.sn-week { position: relative; display: grid; grid-template-columns: repeat(7, 1fr); padding: 10px 6px; border: 1px solid var(--rule); border-radius: 12px; background: var(--plate); }
-.sn-week::before { content: ''; position: absolute; left: 8%; right: 8%; top: 38px; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--line) 45%, var(--rule)); }
-.sn-week span { display: grid; justify-items: center; gap: 8px; }
-.sn-week em { color: var(--ink-3); font: 720 10.5px/1 var(--sign); font-style: normal; }
-.sn-week i { position: relative; width: 16px; height: 16px; border-radius: 50%; border: 4px solid color-mix(in srgb, var(--line) 45%, var(--rule)); background: var(--plate); box-sizing: border-box; animation: stop-pop 0.35s var(--ease) both; animation-delay: calc(0.2s + var(--i) * 0.08s); }
-.sn-week i.on { border-color: var(--line); background: var(--line); animation: stop-pop 0.35s var(--ease) both, live 1.6s ease-out 1.2s infinite; --tone: var(--line); }
-.sn-card { display: grid; gap: 3px; padding: 12px 14px; border: 1px solid var(--rule); border-left: 4px solid var(--line); border-radius: 12px; background: var(--plate); box-shadow: var(--shadow-1); animation: rise-in 0.5s var(--ease) 0.9s both; font-size: 13.5px; }
-.sn-card b { font: 800 18px/1 var(--sign); font-stretch: 78%; }
-.sn-card small { color: var(--ink-3); }
 
 /* Market: price tags flip down like a departure board, and a ride is boarding. */
-.scene-market { display: grid; gap: 12px; width: min(440px, 90%); }
-.sm-tags { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; perspective: 500px; }
-.sm-tag { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 12px; background: var(--plate); box-shadow: var(--shadow-1); transform-origin: top; animation: flap 0.6s var(--ease) both; animation-delay: calc(0.2s + var(--i) * 0.18s); }
-.sm-tag span { color: var(--ink-3); font-size: 12px; }
-.sm-tag b { font: 820 24px/0.9 var(--sign); font-stretch: 76%; }
-.sm-tag b small { color: var(--ink-3); font-size: 11px; }
-.sm-board { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: var(--board); color: #f0f2fa; animation: rise-in 0.45s var(--ease) 0.9s both; }
-.sm-board b { color: #ffc21a; font: 820 24px/0.9 var(--sign); font-stretch: 74%; }
-.sm-board span { font-size: 13.5px; }
-.sm-board em { color: #4fe08c; font: 760 11px/1 var(--sign); font-style: normal; letter-spacing: 0.08em; text-transform: uppercase; animation: board-blink 1.2s steps(2) 1.4s infinite; }
 
 /* Courses: the rating plate fills its stops, the meters fill beside it. */
 .scene-courses { display: flex; align-items: center; gap: 18px; width: min(430px, 90%); }
@@ -128,7 +103,7 @@
 
 @media (max-width: 700px) {
   .welcome { padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
-  .welcome-card { height: min(740px, 100%); width: min(480px, 100%); }
+  .welcome-card { height: min(680px, 100%); width: min(480px, 100%); }
   .welcome-head { padding: 10px 16px; }
   .welcome-brand { gap: 8px; }
   .welcome-brand .brand-mark { width: 24px; height: 24px; }
@@ -143,10 +118,6 @@
   .welcome-signup { padding: 6px 0 12px; }
   .welcome-foot { padding: 12px 20px 16px; }
   .welcome-next { flex: 1; min-width: 0; }
-  .sm-tag { padding: 10px 8px; }
-  .sm-tag b { font-size: 20px; }
-  .sm-board { gap: 8px; padding: 12px 10px; }
-  .sm-board span { font-size: 12px; }
   .sc-plate { padding: 14px 12px 12px; }
   .scene-courses { gap: 12px; }
   .sa-q, .sa-answer { font-size: 12px; }

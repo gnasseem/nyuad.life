@@ -3,7 +3,7 @@
  * production; an in-memory store for local development and tests. `boardStore()` picks one from the environment.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { ENOUGH_ANSWERS, type Announcement, type Answer, type BoardEvent, type EventKind, type Listing, type Offer, type Profile, type Question } from './board.ts';
+import { ENOUGH_ANSWERS, type Announcement, type Answer, type BoardEvent, type CourseReview, type EventKind, type Listing, type Offer, type Profile, type Question, type Standing } from './board.ts';
 import { ApiError } from './http.ts';
 
 interface BoardStats {
@@ -76,6 +76,16 @@ export interface BoardStore {
   putSummary(key: string, payload: unknown): Promise<void>;
   /** Drops cached entries whose key starts with `prefix` and that were written before `before` (an ISO time). */
   deleteSummaries(prefix: string, before: string): Promise<void>;
+  /** Cached entries whose key starts with `prefix`, with only the named top-level payload fields: the course list's scores. */
+  listSummaryFields(prefix: string, fields: string[]): Promise<Array<{ key: string; createdAt: string; fields: Record<string, unknown> }>>;
+  /** Counts one hit against `bucket`, across every instance, and says whether it went over `max` in the window. */
+  hit(bucket: string, max: number, windowSeconds: number): Promise<boolean>;
+  listReviews(code: string): Promise<CourseReview[]>;
+  /** One review per student and course: writing again replaces it. */
+  upsertReview(review: Omit<CourseReview, 'id' | 'createdAt' | 'updatedAt'>): Promise<CourseReview>;
+  deleteReview(code: string, netId: string): Promise<boolean>;
+  /** Every review's course and rating, for the averages on the course list. */
+  listReviewScores(): Promise<Array<{ code: string; rating: number }>>;
 
   /** Questions that are not closed, newest first, older than `before` (an ISO time) when given: the Questions feed. */
   listFeed(limit: number, before?: string): Promise<Question[]>;
@@ -91,7 +101,7 @@ export interface BoardStore {
   recordAudit(entry: { action: string; target: string; snapshot?: unknown; ip: string }): Promise<void>;
 }
 
-export type AdminTarget = 'question' | 'answer' | 'notice' | 'listing' | 'offer';
+export type AdminTarget = 'question' | 'answer' | 'notice' | 'listing' | 'offer' | 'review';
 
 export interface Ban {
   netId: string;
@@ -295,6 +305,38 @@ export class MemoryBoardStore implements BoardStore {
   async deleteSummaries(prefix: string, before: string): Promise<void> {
     for (const [key, entry] of this.summaries) if (key.startsWith(prefix) && entry.createdAt < before) this.summaries.delete(key);
   }
+  async listSummaryFields(prefix: string, fields: string[]): Promise<Array<{ key: string; createdAt: string; fields: Record<string, unknown> }>> {
+    return [...this.summaries]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([key, entry]) => ({ key, createdAt: entry.createdAt, fields: Object.fromEntries(fields.map((field) => [field, (entry.payload as Record<string, unknown> | null)?.[field] ?? null])) }));
+  }
+  private hits = new Map<string, { count: number; start: number }>();
+  async hit(bucket: string, max: number, windowSeconds: number): Promise<boolean> {
+    const now = Date.now();
+    const entry = this.hits.get(bucket);
+    const fresh = !entry || now - entry.start >= windowSeconds * 1000;
+    const next = fresh ? { count: 1, start: now } : { count: entry.count + 1, start: entry.start };
+    this.hits.set(bucket, next);
+    return next.count > max;
+  }
+  private reviews = new Map<string, CourseReview>();
+  async listReviews(code: string): Promise<CourseReview[]> {
+    return [...this.reviews.values()].filter((review) => review.code === code).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+  async upsertReview(review: Omit<CourseReview, 'id' | 'createdAt' | 'updatedAt'>): Promise<CourseReview> {
+    const key = `${review.code}|${review.netId}`;
+    const now = new Date().toISOString();
+    const old = this.reviews.get(key);
+    const saved = { ...review, id: old?.id ?? randomUUID(), createdAt: old?.createdAt ?? now, updatedAt: now };
+    this.reviews.set(key, saved);
+    return saved;
+  }
+  async deleteReview(code: string, netId: string): Promise<boolean> {
+    return this.reviews.delete(`${code}|${netId}`);
+  }
+  async listReviewScores(): Promise<Array<{ code: string; rating: number }>> {
+    return [...this.reviews.values()].map((review) => ({ code: review.code, rating: review.rating }));
+  }
   private bans = new Map<string, Ban>();
   readonly audit: Array<{ action: string; target: string; snapshot?: unknown; ip: string; createdAt: string }> = [];
   async listFeed(limit: number, before?: string): Promise<Question[]> {
@@ -330,6 +372,12 @@ export class MemoryBoardStore implements BoardStore {
       this.answers = this.answers.filter((entry) => entry.id !== id);
       await this.bump(answer.questionId, { answers: -1 });
       return { ...answer };
+    }
+    if (type === 'review') {
+      const found = [...this.reviews].find(([, review]) => review.id === id);
+      if (!found) return null;
+      this.reviews.delete(found[0]);
+      return { ...found[1] };
     }
     const table = type === 'notice' ? this.announcements : type === 'listing' ? this.listings : this.offers;
     const found = table.get(id);
@@ -448,6 +496,8 @@ type Row = Record<string, unknown>;
 
 /** Ids are uuid columns: anything else would make Postgres answer 400 instead of "not found". */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Everything about a question but its embedding (a thousand floats): only the answer engine reads that. */
+const QUESTION_COLUMNS = 'select=id,text,summary,topics,courses,majors,years,asker_key,asker_name,status,views,skips,answers,created_at,updated_at';
 
 export class SupabaseBoardStore implements BoardStore {
   readonly persistent = true;
@@ -516,6 +566,7 @@ export class SupabaseBoardStore implements BoardStore {
       ['board_announcements', `poster_net_id=eq.${enc(netId)}`],
       ['board_offers', `poster_net_id=eq.${enc(netId)}`],
       ['board_listings', `poster_net_id=eq.${enc(netId)}`],
+      ['course_reviews', `net_id=eq.${enc(netId)}`],
     ]) await this.call(`${table}?${filter}`, { method: 'DELETE', headers: this.headers('return=minimal') });
     const removed = (await this.call(`board_profiles?net_id=eq.${enc(netId)}&owner_key=eq.${enc(ownerKey)}`, { method: 'DELETE', headers: this.headers('return=representation') })) as Row[] | null;
     return Boolean(removed?.length);
@@ -540,15 +591,15 @@ export class SupabaseBoardStore implements BoardStore {
   }
   async getQuestion(id: string): Promise<Question | null> {
     if (!UUID.test(id)) return null;
-    const rows = await this.select('board_questions', `id=eq.${enc(id)}&limit=1`);
+    const rows = await this.select('board_questions', `${QUESTION_COLUMNS}&id=eq.${enc(id)}&limit=1`);
     return rows[0] ? questionFrom(rows[0]) : null;
   }
   async listOpen(limit: number): Promise<Question[]> {
     // Fully answered questions are left out here, or once there were enough of them, older open ones would never be reached.
-    return (await this.select('board_questions', `status=neq.closed&answers=lt.${ENOUGH_ANSWERS}&order=created_at.desc&limit=${limit}`)).map(questionFrom);
+    return (await this.select('board_questions', `${QUESTION_COLUMNS}&status=neq.closed&answers=lt.${ENOUGH_ANSWERS}&order=created_at.desc&limit=${limit}`)).map(questionFrom);
   }
   async listByAsker(askerKey: string): Promise<Question[]> {
-    return (await this.select('board_questions', `asker_key=eq.${enc(askerKey)}&order=created_at.desc&limit=100`)).map(questionFrom);
+    return (await this.select('board_questions', `${QUESTION_COLUMNS}&asker_key=eq.${enc(askerKey)}&order=created_at.desc&limit=100`)).map(questionFrom);
   }
   async listAnswered(limit: number): Promise<Question[]> {
     return (await this.select('board_questions', `answers=gt.0&order=created_at.desc&limit=${limit}`)).map(questionFrom);
@@ -563,7 +614,7 @@ export class SupabaseBoardStore implements BoardStore {
     return (await Promise.all(batches)).flat().map(answerFrom).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
   async listRecentAnswers(limit: number): Promise<Answer[]> {
-    return (await this.select('board_answers', `order=created_at.desc&limit=${limit}`)).map(answerFrom);
+    return (await this.select('board_answers', `select=id,question_id,helper_net_id,helper_name,helper_major,helper_year,created_at&order=created_at.desc&limit=${limit}`)).map(answerFrom);
   }
   async createAnswer(answer: Omit<Answer, 'id' | 'createdAt'>): Promise<Answer> {
     const rows = await this.write('POST', 'board_answers', {
@@ -580,7 +631,12 @@ export class SupabaseBoardStore implements BoardStore {
     await this.write('POST', 'board_events', { question_id: event.questionId, net_id: event.netId, kind: event.kind }, 'return=minimal');
   }
   async listEventsByHelper(netId: string): Promise<BoardEvent[]> {
-    return (await this.select('board_events', `net_id=eq.${enc(netId)}&order=created_at.desc&limit=2000`)).map((row) => ({
+    // Answers and skips are read in full, so a busy helper's old ones never drop out; views only matter when recent.
+    const [done, views] = await Promise.all([
+      this.select('board_events', `net_id=eq.${enc(netId)}&kind=neq.view&order=created_at.desc&limit=5000`),
+      this.select('board_events', `net_id=eq.${enc(netId)}&kind=eq.view&order=created_at.desc&limit=200`),
+    ]);
+    return [...done, ...views].map((row) => ({
       questionId: String(row.question_id),
       netId: String(row.net_id),
       kind: String(row.kind) as EventKind,
@@ -701,10 +757,46 @@ export class SupabaseBoardStore implements BoardStore {
   async deleteSummaries(prefix: string, before: string): Promise<void> {
     await this.call(`guide_summaries?key=like.${enc(`${prefix}*`)}&created_at=lt.${enc(before)}`, { method: 'DELETE', headers: this.headers('return=minimal') });
   }
+  async listSummaryFields(prefix: string, fields: string[]): Promise<Array<{ key: string; createdAt: string; fields: Record<string, unknown> }>> {
+    const columns = fields.filter((field) => /^[a-z]+$/i.test(field)).map((field) => `${field}:payload->${field}`);
+    const rows = await this.select('guide_summaries', `select=key,created_at,${columns.join(',')}&key=like.${enc(`${prefix}*`)}&limit=10000`);
+    return rows.map((row) => ({ key: String(row.key), createdAt: String(row.created_at), fields: Object.fromEntries(fields.map((field) => [field, row[field] ?? null])) }));
+  }
+  async hit(bucket: string, max: number, windowSeconds: number): Promise<boolean> {
+    // The admin attempt counter locks a bucket on the hit that reaches its limit, so it is asked for one more than allowed.
+    const locked = await this.rpc('admin_register_failure', { p_bucket: bucket.slice(0, 200), p_max: max + 1, p_window_seconds: windowSeconds });
+    return typeof locked === 'string' && Date.parse(locked) > Date.now();
+  }
+  async listReviews(code: string): Promise<CourseReview[]> {
+    return (await this.select('course_reviews', `code=eq.${enc(code)}&order=updated_at.desc&limit=200`)).map(reviewFrom);
+  }
+  async upsertReview(review: Omit<CourseReview, 'id' | 'createdAt' | 'updatedAt'>): Promise<CourseReview> {
+    const rows = await this.write('POST', 'course_reviews?on_conflict=code,net_id', {
+      code: review.code,
+      net_id: review.netId,
+      author_name: review.authorName,
+      author_major: review.authorMajor,
+      author_year: review.authorYear,
+      rating: review.rating,
+      difficulty: review.difficulty,
+      workload: review.workload,
+      text: review.text,
+      term: review.term,
+      updated_at: new Date().toISOString(),
+    }, 'resolution=merge-duplicates,return=representation');
+    return reviewFrom(rows[0]!);
+  }
+  async deleteReview(code: string, netId: string): Promise<boolean> {
+    const rows = (await this.call(`course_reviews?code=eq.${enc(code)}&net_id=eq.${enc(netId)}`, { method: 'DELETE', headers: this.headers('return=representation') })) as Row[] | null;
+    return Boolean(rows?.length);
+  }
+  async listReviewScores(): Promise<Array<{ code: string; rating: number }>> {
+    return (await this.select('course_reviews', 'select=code,rating&limit=20000')).map((row) => ({ code: String(row.code), rating: Number(row.rating) }));
+  }
 
   async listFeed(limit: number, before?: string): Promise<Question[]> {
     const older = before && !Number.isNaN(Date.parse(before)) ? `&created_at=lt.${enc(new Date(before).toISOString())}` : '';
-    return (await this.select('board_questions', `status=neq.closed${older}&order=created_at.desc&limit=${limit}`)).map(questionFrom);
+    return (await this.select('board_questions', `${QUESTION_COLUMNS}&status=neq.closed${older}&order=created_at.desc&limit=${limit}`)).map(questionFrom);
   }
 
   /** Bans, read whole and kept for a minute: every post checks them, and there are few. */
@@ -736,7 +828,7 @@ export class SupabaseBoardStore implements BoardStore {
   }
   async adminDelete(type: AdminTarget, id: string): Promise<Record<string, unknown> | null> {
     if (!UUID.test(id)) return null;
-    const table = { question: 'board_questions', answer: 'board_answers', notice: 'board_announcements', listing: 'board_listings', offer: 'board_offers' }[type];
+    const table = { question: 'board_questions', answer: 'board_answers', notice: 'board_announcements', listing: 'board_listings', offer: 'board_offers', review: 'course_reviews' }[type];
     // Answers and events go with their question (on delete cascade).
     const rows = (await this.call(`${table}?id=eq.${enc(id)}`, { method: 'DELETE', headers: this.headers('return=representation') })) as Row[] | null;
     const removed = Array.isArray(rows) ? rows[0] : undefined;
@@ -871,11 +963,30 @@ function questionFrom(row: Row): Question {
   };
 }
 
+function reviewFrom(row: Row): CourseReview {
+  const scale = (value: unknown) => (value === null || value === undefined ? null : Number(value));
+  return {
+    id: String(row.id),
+    code: String(row.code),
+    netId: String(row.net_id),
+    authorName: String(row.author_name ?? ''),
+    authorMajor: String(row.author_major ?? ''),
+    authorYear: String(row.author_year ?? '') as Standing,
+    rating: Number(row.rating),
+    difficulty: scale(row.difficulty),
+    workload: scale(row.workload),
+    text: String(row.text ?? ''),
+    term: String(row.term ?? ''),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at ?? row.created_at),
+  };
+}
+
 function answerFrom(row: Row): Answer {
   return {
     id: String(row.id),
     questionId: String(row.question_id),
-    text: String(row.text),
+    text: String(row.text ?? ''),
     helperNetId: String(row.helper_net_id),
     helperName: String(row.helper_name),
     helperMajor: String(row.helper_major),

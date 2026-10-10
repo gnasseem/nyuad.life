@@ -1,35 +1,56 @@
-import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, boardProblem as describeBoardProblem, onSignupRequired, type ChatGPTStatus, type Health, type Profile } from './api';
 import { APP_NAME } from './brand';
 import { HistoryPanel } from './components/HistoryPanel';
 import { Wordmark } from './components/Logo';
 import { ProfileModal } from './components/ProfileForm';
-import { Welcome } from './components/Welcome';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
 import { initials } from './format';
-import { IconAsk, IconBag, IconBook, IconCalendar, IconMegaphone, IconMoon, IconQuestions, IconShield, IconSidebar, IconSun, IconUser } from './icons';
-import { AnnouncementsPage } from './pages/Announcements';
+import { IconAsk, IconBag, IconBook, IconCalendar, IconMegaphone, IconMoon, IconQuestions, IconShield, IconSun, IconUser } from './icons';
 import { AskPage } from './pages/Ask';
-import { CoursesPage } from './pages/Courses';
-import { MarketPage } from './pages/Market';
-import { PlanPage } from './pages/Plan';
-import { PostPage } from './pages/Post';
-import { QuestionPage, QuestionsPage } from './pages/Questions';
-import { SettingsPage } from './pages/Settings';
-import { ThreadSearch } from './pages/Threads';
 import { navigate, onLinkClick, routePath, useRoute, type Route } from './router';
 import { applyTheme, loadActiveConversation, loadConversations, loadOnboarded, loadProfile, loadSidebarClosed, loadTheme, onConversationsChange, saveOnboarded, saveAccountKey, saveProfile, saveSidebarClosed, type Conversation, type Theme } from './store';
 import { standingFor } from './year';
 
 type Line = 'ask' | 'questions' | 'notices' | 'market' | 'guide' | 'plan';
 
+// Ask is the page most visits open on, so it ships with the app; the others load when first opened, and are fetched
+// in the background once the first screen is up so that opening them later is instant.
+const loaders = {
+  plan: () => import('./pages/Plan'),
+  courses: () => import('./pages/Courses'),
+  questions: () => import('./pages/Questions'),
+  events: () => import('./pages/Announcements'),
+  market: () => import('./pages/Market'),
+  post: () => import('./pages/Post'),
+  threads: () => import('./pages/Threads'),
+  settings: () => import('./pages/Settings'),
+  welcome: () => import('./components/Welcome'),
+};
+const PlanPage = lazy(() => loaders.plan().then((module) => ({ default: module.PlanPage })));
+const CoursesPage = lazy(() => loaders.courses().then((module) => ({ default: module.CoursesPage })));
+const QuestionsPage = lazy(() => loaders.questions().then((module) => ({ default: module.QuestionsPage })));
+const QuestionPage = lazy(() => loaders.questions().then((module) => ({ default: module.QuestionPage })));
+const AnnouncementsPage = lazy(() => loaders.events().then((module) => ({ default: module.AnnouncementsPage })));
+const MarketPage = lazy(() => loaders.market().then((module) => ({ default: module.MarketPage })));
+const PostPage = lazy(() => loaders.post().then((module) => ({ default: module.PostPage })));
+const ThreadSearch = lazy(() => loaders.threads().then((module) => ({ default: module.ThreadSearch })));
+const SettingsPage = lazy(() => loaders.settings().then((module) => ({ default: module.SettingsPage })));
+const Welcome = lazy(() => loaders.welcome().then((module) => ({ default: module.Welcome })));
+
+function prefetchPages(): void {
+  const run = () => Object.values(loaders).forEach((load) => void load().catch(() => undefined));
+  if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(run, { timeout: 4_000 });
+  else window.setTimeout(run, 2_000);
+}
+
 const NAV: Array<{ route: Route; label: string; line: Line; icon: typeof IconAsk; matches: Route['name'][] }> = [
   { route: { name: 'ask' }, label: 'Ask', line: 'ask', icon: IconAsk, matches: ['ask'] },
   { route: { name: 'plan' }, label: 'Plan', line: 'plan', icon: IconCalendar, matches: ['plan'] },
+  { route: { name: 'courses' }, label: 'Reviews', line: 'guide', icon: IconBook, matches: ['courses', 'professors', 'threads', 'post'] },
   { route: { name: 'questions' }, label: 'Questions', line: 'questions', icon: IconQuestions, matches: ['questions', 'question'] },
   { route: { name: 'announcements' }, label: 'Events', line: 'notices', icon: IconMegaphone, matches: ['announcements'] },
   { route: { name: 'market', tab: 'items' }, label: 'Market', line: 'market', icon: IconBag, matches: ['market'] },
-  { route: { name: 'courses' }, label: 'Reviews', line: 'guide', icon: IconBook, matches: ['courses', 'professors', 'threads', 'post'] },
 ];
 
 /** The button names what it switches to. */
@@ -54,7 +75,6 @@ export function App() {
   const { route, search } = useRoute();
   const [health, setHealth] = useState<Health | null>(null);
   const [profile, setProfileState] = useState<Profile | null>(loadProfile);
-  const [helpCount, setHelpCount] = useState(0);
   const [theme, setThemeState] = useState<Theme>(loadTheme);
   const [toastState, setToastState] = useState<{ message: string; leaving: boolean; id: number } | null>(null);
   const [askPrefill, setAskPrefillState] = useState<(Prefill & { token: number }) | null>(null);
@@ -114,22 +134,8 @@ export function App() {
     }).catch(() => { if (profile) setResignup(true); });
   }, []);
 
-  useEffect(() => {
-    if (!profile) { setHelpCount(0); return; }
-    let live = true;
-    const refresh = () => {
-      if (document.visibilityState === 'hidden') return;
-      void api.board.feed().then(({ questions }) => {
-        if (live) setHelpCount(questions.filter((question) => !question.mine && question.status !== 'closed' && question.answers.length < 3 && (question.majors.includes(profile.major) || question.years.includes(profile.year) || (!question.majors.length && !question.years.length))).length);
-      }).catch(() => {});
-    };
-    refresh();
-    const timer = window.setInterval(refresh, 120_000);
-    document.addEventListener('visibilitychange', refresh);
-    return () => { live = false; window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
-  }, [profile?.netId, profile?.major, profile?.year, route.name]);
-
   useEffect(() => onSignupRequired(() => setResignup(true)), []);
+  useEffect(prefetchPages, []);
 
   useEffect(() => {
     applyTheme(theme);
@@ -250,7 +256,7 @@ export function App() {
       case 'settings':
         return <SettingsPage />;
       default:
-        return <AskPage resumeId={currentConversation ?? undefined} />;
+        return <AskPage resumeId={currentConversation ?? undefined} history={{ open: panelOpen, count: conversations.length, toggle: togglePanel }} />;
     }
   })();
 
@@ -280,13 +286,8 @@ export function App() {
               <Wordmark />
             </a>
           </div>
-          <LineNav activeIndex={activeIndex} hrefOf={hrefOf} helpCount={helpCount} />
+          <LineNav activeIndex={activeIndex} hrefOf={hrefOf} />
           <div className="bar-tools">
-            {onAsk && (
-              <button type="button" className="btn ghost history-toggle" onClick={togglePanel} aria-expanded={panelOpen} aria-controls="conversation-history" title="Your conversations">
-                <IconSidebar /> <span>History</span>
-              </button>
-            )}
             {admin && (
               <a href="/settings#admin" className="admin-badge" onClick={onLinkClick} title="Admin mode is on">
                 <IconShield /> <span>Admin</span>
@@ -308,7 +309,9 @@ export function App() {
               </div>
             </div>
           ) : (
-            <ErrorBoundary>{page}</ErrorBoundary>
+            <ErrorBoundary>
+              <Suspense fallback={<PageLoading />}>{page}</Suspense>
+            </ErrorBoundary>
           )}
         </main>
 
@@ -317,7 +320,6 @@ export function App() {
             <a key={item.label} href={hrefOf(item.route)} data-line={item.line} aria-current={index === activeIndex ? 'page' : undefined} onClick={onLinkClick}>
               <item.icon />
               <span>{item.label}</span>
-              {item.line === 'questions' && helpCount > 0 && <span className="help-count" aria-label={`${helpCount} questions need help`}>{helpCount}</span>}
             </a>
           ))}
         </nav>
@@ -329,28 +331,30 @@ export function App() {
       )}
       <ProfileModal open={profileAsk !== null && !gate} title={profileAsk?.title ?? ''} reason={profileAsk?.reason ?? ''} onClose={() => finishProfile(false)} onDone={() => finishProfile(true)} />
       {gate && (
-        <Welcome
-          tour={!onboarded && !resignup}
-          reason={resignup && profile ? 'Verify your NYU email to log in on this device.' : undefined}
-          onToured={() => {
-            saveOnboarded();
-            setOnboarded(true);
-          }}
-          onDone={(saved) => {
-            saveOnboarded();
-            setOnboarded(true);
-            setResignup(false);
-            setProfile(saved);
-            toast(`Welcome aboard, ${saved.name.split(' ')[0]}`);
-          }}
-        />
+        <Suspense fallback={null}>
+          <Welcome
+            tour={!onboarded && !resignup}
+            reason={resignup && profile ? 'Verify your NYU email to log in on this device.' : undefined}
+            onToured={() => {
+              saveOnboarded();
+              setOnboarded(true);
+            }}
+            onDone={(saved) => {
+              saveOnboarded();
+              setOnboarded(true);
+              setResignup(false);
+              setProfile(saved);
+              toast(`Welcome aboard, ${saved.name.split(' ')[0]}`);
+            }}
+          />
+        </Suspense>
       )}
     </AppContext.Provider>
   );
 }
 
-/** The six lines as tabs, with one enamel plate that slides to the line you are on and takes its colour. */
-function LineNav({ activeIndex, hrefOf, helpCount }: { activeIndex: number; hrefOf(route: Route): string; helpCount: number }) {
+/** The six sections as tabs, with one plate that slides to the one you are on and takes its colour. */
+function LineNav({ activeIndex, hrefOf }: { activeIndex: number; hrefOf(route: Route): string }) {
   const ref = useRef<HTMLElement>(null);
   const [plate, setPlate] = useState<{ x: number; w: number } | null>(null);
   const [ready, setReady] = useState(false);
@@ -387,10 +391,19 @@ function LineNav({ activeIndex, hrefOf, helpCount }: { activeIndex: number; href
         <a key={item.label} href={hrefOf(item.route)} className="line-tab" data-line={item.line} aria-current={index === activeIndex ? 'page' : undefined} onClick={onLinkClick}>
           <span className="swatch" />
           {item.label}
-          {item.line === 'questions' && helpCount > 0 && <span className="help-count" aria-label={`${helpCount} questions need help`}>{helpCount}</span>}
         </a>
       ))}
     </nav>
+  );
+}
+
+/** What a page shows for the moment its code is still arriving. */
+function PageLoading() {
+  return (
+    <div className="page" aria-busy="true">
+      <div className="skeleton" style={{ height: 40, width: 220, marginBottom: 24 }} />
+      <div className="skeleton" style={{ height: 320 }} />
+    </div>
   );
 }
 

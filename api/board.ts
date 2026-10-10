@@ -23,20 +23,24 @@ import {
   CURRENCY_LABELS,
   validateProfile,
   validateQuestionText,
+  validateReview,
   type Announcement,
   type Answer,
+  type CourseReview,
   type Listing,
   type Offer,
   type Profile,
   type Question,
 } from '../lib/board.ts';
 import { boardStore, type BoardStore } from '../lib/board-store.ts';
+import { loadCatalog } from '../lib/courses.ts';
 import { detectRedirect } from '../lib/domains.ts';
+import { normalizeCode } from '../lib/html.ts';
 import { embedderForIndex } from '../lib/embeddings.ts';
 import { geminiConfig } from '../lib/gemini.ts';
-import { ApiError, queryString, rateLimit, readJson, route, sendJson, type ApiRequest } from '../lib/http.ts';
+import { ApiError, clientIp, clientKey, queryString, rateLimit, readJson, route, sendJson, type ApiRequest } from '../lib/http.ts';
 import { accountKey, clearEmailSession, emailNetId, emailSession, otpDigest, requireEmailSession, sendLoginCode, setEmailSession } from '../lib/auth.ts';
-import { claimedIdentity, NETID_TAKEN, ownerOf, requireMember, requireProfile } from '../lib/identity.ts';
+import { claimedIdentity, limitDurably, NETID_TAKEN, ownerOf, requireMember, requireProfile } from '../lib/identity.ts';
 import { reviewPost, screenPost, type PostKind, type ReviewedKind } from '../lib/moderation.ts';
 import { providersFromEnv, warmModels } from '../lib/providers.ts';
 import { retrieve } from '../lib/rag.ts';
@@ -52,8 +56,12 @@ export default route(['GET', 'POST'], async (req, res) => {
   const op = String(req.method === 'POST' ? body.op ?? '' : queryString(req, 'op')).trim();
   if (['auth_send', 'auth_verify', 'auth_logout'].includes(op) && req.method !== 'POST') throw new ApiError(405, 'Use POST for login operations.', 'method_not_allowed');
   if (op === 'auth_send') {
-    rateLimit(req, 5, 1, 'email-send');
+    rateLimit(req, 10, 2, 'email-send');
     const netId = emailNetId(body.email);
+    // Codes are limited per NetID in the database; these keep a script cycling made-up NetIDs from spending the
+    // site's email quota (and its sender reputation) for everyone.
+    await limitDurably(store, `send-ip:${clientKey(clientIp(req))}`, 30, 3_600, 'Too many login codes from this network. Try again in an hour.');
+    await limitDurably(store, 'send-all', 600, 86_400, 'Login emails are paused for today. Try again tomorrow.');
     await sendLoginCode(store, netId);
     sendJson(res, 200, { email: `${netId}@nyu.edu` });
     return;
@@ -82,7 +90,7 @@ export default route(['GET', 'POST'], async (req, res) => {
     sendJson(res, 200, { ok: true });
     return;
   }
-  const publicReads = ['stats', 'announcements', 'offers', 'listings', 'recent', 'feed', 'leaderboard', 'question'];
+  const publicReads = ['stats', 'announcements', 'offers', 'listings', 'recent', 'feed', 'leaderboard', 'question', 'reviews'];
   if (req.method === 'POST' || !publicReads.includes(op)) {
     const session = requireEmailSession(req);
     if (body.netId && body.netId !== session.netId) throw new ApiError(403, 'Use the account you logged in with.', 'identity_mismatch');
@@ -95,7 +103,7 @@ export default route(['GET', 'POST'], async (req, res) => {
   switch (op) {
     case 'stats':
       rateLimit(req, 60, 60, 'board-read');
-      sendJson(res, 200, await store.stats());
+      sendJson(res, 200, await boardStats(store));
       return;
     case 'announcements':
       rateLimit(req, 60, 60, 'board-read');
@@ -133,10 +141,14 @@ export default route(['GET', 'POST'], async (req, res) => {
       const page = await store.listFeed(FEED_PAGE, before || undefined);
       const pending = before ? [] : await store.listOpen(300);
       const questions = [...new Map([...pending, ...page].map((entry) => [entry.id, entry])).values()];
-      const answers = await store.listAnswers(questions.map((question) => question.id));
+      const me = emailSession(req)?.netId;
+      const [answers, events] = await Promise.all([store.listAnswers(questions.map((question) => question.id)), me ? store.listEventsByHelper(me) : Promise.resolve([])]);
       const key = /^[a-z0-9-]{8,64}$/i.test(headerKey) ? headerKey : '';
+      // What this student already did with each question, so the feed and the home page stop offering it to them.
+      const byMe = new Map<string, 'answer' | 'skip'>();
+      for (const event of events) if (event.kind !== 'view' && byMe.get(event.questionId) !== 'answer') byMe.set(event.questionId, event.kind);
       sendJson(res, 200, {
-        questions: questions.map((question) => ({ ...publicQuestion(question), mine: Boolean(key) && question.askerKey === key, answers: answers.filter((answer) => answer.questionId === question.id).map(publicAnswer) })),
+        questions: questions.map((question) => ({ ...publicQuestion(question), mine: Boolean(key) && question.askerKey === key, byMe: byMe.get(question.id), answers: answers.filter((answer) => answer.questionId === question.id).map(publicAnswer) })),
         more: page.length === FEED_PAGE,
         next: page.at(-1)?.createdAt ?? null,
       });
@@ -145,7 +157,9 @@ export default route(['GET', 'POST'], async (req, res) => {
     case 'contact': {
       // A handful a minute is plenty for a person and slow for a scraper; and only members see contacts at all.
       rateLimit(req, 12, 4, 'board-contact');
-      await requireMember(req, store);
+      const viewer = await requireMember(req, store);
+      // Contacts are read one at a time and only by members; this keeps one account from collecting all of them.
+      if (viewer) await limitDurably(store, `contact:${viewer.netId}`, 60, 86_400, 'You have opened a lot of contacts today. Try again tomorrow.');
       const id = queryString(req, 'id').trim();
       const type = queryString(req, 'type').trim();
       if (type !== 'offer' && type !== 'listing') throw new ApiError(400, 'type must be offer or listing.', 'bad_type');
@@ -159,7 +173,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       // "You" is only marked for the NetID this browser owns: marking any NetID asked about would let anyone find which
       // NetID belongs to which name on the board.
       const me = await ownNetId(store, req);
-      sendJson(res, 200, { helpers: leaderboard(await store.listRecentAnswers(3000), new Date(), 10, me) });
+      sendJson(res, 200, { helpers: leaderboard(await recentAnswers(store), new Date(), 10, me) });
       return;
     }
     case 'question': {
@@ -167,6 +181,41 @@ export default route(['GET', 'POST'], async (req, res) => {
       const question = await store.getQuestion(queryString(req, 'id').trim());
       if (!question) throw new ApiError(404, 'No question with that id.', 'not_found');
       sendJson(res, 200, { question: publicQuestion(question), answers: (await store.listAnswers([question.id])).map(publicAnswer) });
+      return;
+    }
+    case 'reviews': {
+      rateLimit(req, 60, 60, 'board-read');
+      const code = courseCode(queryString(req, 'code'));
+      const me = emailSession(req)?.netId;
+      // Until supabase/schema.sql has been run again there is no reviews table: the course page shows none yet.
+      let open = true;
+      const reviews = await store.listReviews(code).catch((error: unknown) => {
+        if (!(error instanceof ApiError) || error.code !== 'board_schema_missing') throw error;
+        open = false;
+        return [];
+      });
+      sendJson(res, 200, { reviews: reviews.map((entry) => publicReview(entry, me)), open });
+      return;
+    }
+    case 'review': {
+      rateLimit(req, 10, 4, 'board-review');
+      const profile = await requireProfile(store, body.netId, body.key);
+      const code = courseCode(body.code);
+      const draft = validateReview(body);
+      allow('review', draft.text);
+      if (draft.text) await review('review', `Course: ${code}`, `Rating: ${draft.rating} of 5`, `Review: ${draft.text}`);
+      const saved = await store.upsertReview({ ...draft, code, netId: profile.netId, authorName: profile.name.split(' ')[0] ?? profile.name, authorMajor: profile.major, authorYear: standingFor(profile.classOf) }).catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === 'board_schema_missing') throw new ApiError(503, 'Course reviews are not open yet. Try again soon.', 'reviews_unavailable');
+        throw error;
+      });
+      sendJson(res, 200, { review: publicReview(saved, profile.netId) });
+      return;
+    }
+    case 'unreview': {
+      rateLimit(req, 10, 4, 'board-review');
+      const profile = await requireProfile(store, body.netId, body.key);
+      if (!await store.deleteReview(courseCode(body.code), profile.netId)) throw new ApiError(404, 'You have not reviewed this course.', 'not_found');
+      sendJson(res, 200, { ok: true });
       return;
     }
     case 'mine': {
@@ -182,6 +231,7 @@ export default route(['GET', 'POST'], async (req, res) => {
     case 'profile': {
       rateLimit(req, 10, 10, 'board-profile');
       const draft = validateProfile(body);
+      if (await store.isBanned(draft.netId)) throw new ApiError(403, 'This account can no longer use the site.', 'banned');
       allow('name', draft.name, draft.major);
       const owner = ownerOf(body.key);
       const existing = await store.getProfile(draft.netId);
@@ -241,11 +291,14 @@ export default route(['GET', 'POST'], async (req, res) => {
       sendJson(res, 200, { ok: true });
       return;
     }
-    case 'ask':
+    case 'ask': {
       rateLimit(req, 5, 3, 'board-ask');
-      await requireMember(req, store);
+      const asker = await requireMember(req, store);
+      // The name shown is the asker's own first name or none, never whatever the request says.
+      body.name = body.name && asker ? asker.name.split(' ')[0] : '';
       sendJson(res, 200, await askQuestion(store, body));
       return;
+    }
     case 'next': {
       rateLimit(req, 40, 30, 'board-help');
       const profile = await requireProfile(store, body.netId, body.key);
@@ -272,6 +325,8 @@ export default route(['GET', 'POST'], async (req, res) => {
       await review('answer', `Question: ${question.text}`, `Answer: ${text}`);
       const answer = await store.createAnswer({ questionId: question.id, text, helperNetId: profile.netId, helperName: profile.name, helperMajor: profile.major, helperYear: standingFor(profile.classOf) });
       await Promise.all([store.recordEvent({ questionId: question.id, netId: profile.netId, kind: 'answer' }), store.bump(question.id, { answers: 1 }), store.touchProfile(profile.netId, true)]);
+      answersMemo = null;
+      statsMemo = null;
       sendJson(res, 200, { answer: publicAnswer(answer), answered: profile.answers + 1 });
       return;
     }
@@ -325,6 +380,27 @@ async function review(kind: ReviewedKind, ...parts: Array<string | null | undefi
 }
 
 const FEED_PAGE = 30;
+
+/** The leaderboard and the counts change slowly and are read on every visit: each instance keeps them a minute. */
+let answersMemo: { at: number; answers: Promise<Answer[]> } | null = null;
+let statsMemo: { at: number; stats: ReturnType<BoardStore['stats']> } | null = null;
+const MEMO_MS = 60_000;
+
+function recentAnswers(store: BoardStore): Promise<Answer[]> {
+  if (!answersMemo || Date.now() - answersMemo.at > MEMO_MS) {
+    answersMemo = { at: Date.now(), answers: store.listRecentAnswers(3000) };
+    answersMemo.answers.catch(() => (answersMemo = null));
+  }
+  return answersMemo.answers;
+}
+
+function boardStats(store: BoardStore): ReturnType<BoardStore['stats']> {
+  if (!statsMemo || Date.now() - statsMemo.at > MEMO_MS) {
+    statsMemo = { at: Date.now(), stats: store.stats() };
+    statsMemo.stats.catch(() => (statsMemo = null));
+  }
+  return statsMemo.stats;
+}
 
 /** A time as students on campus read it, for the reviewer to judge whether it makes sense. */
 function localTime(iso: string): string {
@@ -403,6 +479,18 @@ function publicQuestion(question: Question) {
 function publicAnswer(answer: Answer) {
   const { helperNetId: _netId, ...rest } = answer;
   return rest;
+}
+
+function publicReview(entry: CourseReview, me?: string) {
+  const { netId, ...rest } = entry;
+  return { ...rest, mine: Boolean(me) && netId === me };
+}
+
+/** A course code from the request, refused unless Albert lists it, so reviews cannot pile up under made-up codes. */
+function courseCode(value: unknown): string {
+  const code = normalizeCode(String(value ?? ''));
+  if (!code || !loadCatalog().byCode.has(code)) throw new ApiError(404, 'No course with that code.', 'not_found');
+  return code;
 }
 
 function publicAnnouncement(announcement: Announcement) {

@@ -41,6 +41,7 @@ const ACTIVE_KEY = 'room.active';
 const PLAN_KEY = 'room.plan';
 const ONBOARDED_KEY = 'room.onboarded';
 const SIDEBAR_KEY = 'room.sidebar';
+const SEEN_KEY = 'room.seen';
 const MAX_CONVERSATIONS = 60;
 
 function read<T>(key: string, fallback: T): T {
@@ -192,7 +193,7 @@ export function saveContact(value: { contactKind: ContactKind; contact: string }
 
 /** Clears local preferences and history. Keep the browser key so this browser can reclaim its existing NetID. */
 export function forgetDevice(removeIdentity = false): void {
-  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, ...(removeIdentity ? [KEY_KEY] : []), ANNOUNCED_KEY, CONTACT_KEY, PLAN_KEY, ONBOARDED_KEY, SIDEBAR_KEY]) {
+  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, ...(removeIdentity ? [KEY_KEY] : []), ANNOUNCED_KEY, CONTACT_KEY, PLAN_KEY, ONBOARDED_KEY, SIDEBAR_KEY, SEEN_KEY]) {
     try {
       localStorage.removeItem(key);
     } catch {
@@ -201,6 +202,15 @@ export function forgetDevice(removeIdentity = false): void {
   }
   setActiveConversation(null);
   notify();
+}
+
+/** How many answers each of your questions had when you last looked, so new ones can be pointed out. */
+export function loadSeenAnswers(): Record<string, number> {
+  return read<Record<string, number>>(SEEN_KEY, {});
+}
+
+export function saveSeenAnswers(seen: Record<string, number>): void {
+  write(SEEN_KEY, Object.fromEntries(Object.entries(seen).slice(-100)));
 }
 
 /* ---------- Theme ---------- */

@@ -9,6 +9,8 @@
  *   GET /api/courses?code=CS-UH%201001&rating=1     the rating, written once and cached (slow the first time)
  *   GET /api/courses?profs=Thomas%20P%C3%B6tsch|... ratings of up to 24 professors: the cached ones, plus a couple
  *                                                  newly written; the rest come back in `pending` to ask again
+ *   GET /api/courses?ratings=1                     every score written so far, and students' own review averages,
+ *                                                  for the course and professor lists
  */
 import { boardStore } from '../lib/board-store.ts';
 import { allCourses, courseHistory, courseRows, displayName, loadCatalog, termOrder, type Catalog } from '../lib/courses.ts';
@@ -35,6 +37,10 @@ export default route(['GET'], async (req, res) => {
 
   if (profs) {
     sendJson(res, 200, await profRatings(req, catalog, profs));
+    return;
+  }
+  if (queryString(req, 'ratings')) {
+    sendJson(res, 200, await scoreIndex(catalog), 120);
     return;
   }
   if (code) {
@@ -205,21 +211,31 @@ const RATING_SYSTEM = [
 ].join('\n');
 
 const RATING_TTL_MS = 30 * 86_400_000;
-const hot = new Map<string, CourseRating>();
+const hot = new Map<string, SavedCourse>();
 
 function ratingKey(code: string): string {
   return `course-rating:v5:${code}`;
+}
+
+/** What is kept for a course: a rating, or that students have not written enough to give one. */
+type SavedCourse = CourseRating | { none: true; createdAt: string };
+/** A course students have not described is looked at again after a week: new threads come in every day. */
+const RATING_NONE_TTL_MS = 7 * 86_400_000;
+
+function freshCourse(entry: SavedCourse | null | undefined): entry is SavedCourse {
+  if (!entry || typeof entry !== 'object' || typeof entry.createdAt !== 'string') return false;
+  return Date.now() - Date.parse(entry.createdAt) < ('none' in entry ? RATING_NONE_TTL_MS : RATING_TTL_MS);
 }
 
 /** A fresh rating already written (null: students have not written enough), or undefined when one has to be written. */
 async function savedRating(code: string): Promise<CourseRating | null | undefined> {
   const key = ratingKey(code);
   const remembered = hot.get(key);
-  if (remembered && Date.now() - Date.parse(remembered.createdAt) < RATING_TTL_MS) return remembered;
-  const saved = (await boardStore()?.getSummary(key).catch(() => null))?.payload as CourseRating | null | undefined;
-  if (saved && Date.now() - Date.parse(saved.createdAt) < RATING_TTL_MS) {
+  if (freshCourse(remembered)) return 'none' in remembered ? null : remembered;
+  const saved = (await boardStore()?.getSummary(key).catch(() => null))?.payload as SavedCourse | null | undefined;
+  if (freshCourse(saved)) {
     hot.set(key, saved);
-    return saved;
+    return 'none' in saved ? null : saved;
   }
   return undefined;
 }
@@ -228,15 +244,22 @@ async function savedRating(code: string): Promise<CourseRating | null | undefine
 async function courseRating(archive: Archive, official: OfficialCorpus | null, catalog: Catalog, code: string): Promise<CourseRating | null> {
   const key = ratingKey(code);
   const store = boardStore();
-  const saved = (await store?.getSummary(key).catch(() => null))?.payload as CourseRating | null | undefined;
+  const stored = (await store?.getSummary(key).catch(() => null))?.payload as SavedCourse | null | undefined;
+  const saved = stored && !('none' in stored) && typeof stored.score === 'number' ? stored : null;
   const gemini = geminiConfig();
   const backups = providersFromEnv();
   if (!gemini && backups.length === 0) {
     if (saved) return saved;
     throw new ApiError(503, 'Ratings are off on this server.', 'no_model');
   }
+  const none = async () => {
+    const entry: SavedCourse = { none: true, createdAt: new Date().toISOString() };
+    hot.set(key, entry);
+    await store?.putSummary(key, entry).catch(() => undefined);
+    return null;
+  };
   const hits = await courseThreads(archive, catalog, official, code);
-  if (hits.length === 0) return null;
+  if (hits.length === 0) return none();
   const title = titleOf(catalog, official, code) || code;
   const cards = toSourceCards(archive, hits, tokenize(title), 1);
   const threads = sourcesBlock(archive, cards, cards.map((card, i) => ({ card, chunk: archive.chunks[hits[i]!.chunk]!.text })));
@@ -257,9 +280,9 @@ async function courseRating(archive: Archive, official: OfficialCorpus | null, c
     if (saved) return saved;
     throw new ApiError(503, 'The rating could not be written right now.', 'busy');
   }
-  if (rating) hot.set(key, rating);
-  // Only a real rating is kept; a course students have not described yet is looked at again after the next cold start.
-  if (rating) await store?.putSummary(key, rating).catch((error) => console.warn('[courses] could not cache the rating:', (error as Error).message));
+  if (!rating) return none();
+  hot.set(key, rating);
+  await store?.putSummary(key, rating).catch((error) => console.warn('[courses] could not cache the rating:', (error as Error).message));
   return rating;
 }
 
@@ -416,8 +439,10 @@ async function profRatings(req: ApiRequest, catalog: Catalog, param: string) {
   }
   const writing: string[] = [];
   const pending: string[] = [];
+  // Writing one costs a search and a model call, so only students who signed up can have them written.
+  const member = unwritten.length > 0 && (await requireMember(req).then(() => true, () => false));
   for (const name of unwritten) {
-    if (writing.length < NEW_PER_REQUEST && spend(req)) writing.push(name);
+    if (member && writing.length < NEW_PER_REQUEST && spend(req)) writing.push(name);
     else pending.push(name);
   }
   if (writing.length) {
@@ -495,6 +520,8 @@ async function profThreads(archive: Archive, teacher: Teacher): Promise<Array<{ 
     if (!reviewed.some(Boolean)) continue;
     const terms = [teacher.surname.toLowerCase(), surname];
     const lines = [`Post by ${post.author || 'a student'} on ${formatDate(post.date)}: ${reviewed[0] ? bestWindow(post.text, terms, 900) : truncate(collapseWhitespace(post.text), 400)}`];
+    // What the page shows as the thread's excerpt: what was said, without who said it.
+    const said: string[] = [];
     const shown = new Set<number>();
     post.comments.forEach((_, i) => {
       if (!reviewed[i + 1]) return;
@@ -504,8 +531,9 @@ async function profThreads(archive: Archive, teacher: Teacher): Promise<Array<{ 
     for (const i of [...shown].sort((a, b) => a - b).slice(0, 16)) {
       const comment = post.comments[i]!;
       lines.push(`- ${comment.author || 'Someone'}${comment.date ? ` (${formatDate(comment.date)})` : ''}: ${bestWindow(comment.text, terms, 500)}`);
+      said.push(bestWindow(comment.text, terms, 220));
     }
-    out.push({ text: lines.join('\n'), url: post.url, date: post.date, excerpt: lines.slice(1).join(' ').slice(0, 220) || lines[0]!.slice(0, 220) });
+    out.push({ text: lines.join('\n'), url: post.url, date: post.date, excerpt: (said.join(' … ') || truncate(collapseWhitespace(post.text), 220)).slice(0, 220) });
   }
   return out;
 }
@@ -569,4 +597,52 @@ function cleanProf(raw: Partial<ProfRating> & { evidence?: number[] }, threads: 
   if (basis < 1 || !Number.isFinite(given) || given < 1 || given > 5 || !verdict || !evidence.length) return null;
   const level = String(raw.confidence ?? '').toLowerCase();
   return { score, basis, verdict, confidence: basis === 1 ? 'low' : level === 'high' || level === 'low' ? level : 'medium', sources: evidence.map((n) => ({ url: threads[n - 1]!.url, date: threads[n - 1]!.date, excerpt: threads[n - 1]!.excerpt })), model, createdAt: new Date().toISOString() };
+}
+
+/* ---------- Every score at once, for the lists ---------- */
+
+interface ScoreIndex {
+  courses: Record<string, { score: number; basis: number; difficulty: number | null; workload: number | null }>;
+  profs: Record<string, { score: number; basis: number }>;
+  students: Record<string, { n: number; avg: number }>;
+}
+
+let scoreCache: { at: number; index: ScoreIndex } | null = null;
+const SCORE_TTL_MS = 60_000;
+
+/** The scores already written for courses and professors, and students' review averages: no model calls, cached a minute. */
+async function scoreIndex(catalog: Catalog): Promise<ScoreIndex> {
+  if (scoreCache && Date.now() - scoreCache.at < SCORE_TTL_MS) return scoreCache.index;
+  const store = boardStore();
+  const index: ScoreIndex = { courses: {}, profs: {}, students: {} };
+  if (!store) return index;
+  const [courseRows, profRows, reviews] = await Promise.all([
+    store.listSummaryFields(ratingKey(''), ['score', 'basis', 'difficulty', 'workload', 'none']).catch(() => []),
+    store.listSummaryFields(profKey(''), ['score', 'basis', 'none']).catch(() => []),
+    store.listReviewScores().catch(() => []),
+  ]);
+  const fresh = (createdAt: string) => Date.now() - Date.parse(createdAt) < RATING_TTL_MS;
+  for (const row of courseRows) {
+    const score = Number(row.fields.score);
+    if (row.fields.none || !Number.isFinite(score) || !fresh(row.createdAt)) continue;
+    const scale = (value: unknown) => (value === null || value === undefined ? null : Number(value));
+    index.courses[row.key.slice(ratingKey('').length)] = { score, basis: Number(row.fields.basis) || 0, difficulty: scale(row.fields.difficulty), workload: scale(row.fields.workload) };
+  }
+  const names = new Map([...teachers(catalog)].map(([folded, teacher]) => [folded, teacher.name]));
+  for (const row of profRows) {
+    const score = Number(row.fields.score);
+    const name = names.get(row.key.slice(profKey('').length));
+    if (row.fields.none || !Number.isFinite(score) || !name || !fresh(row.createdAt)) continue;
+    index.profs[name] = { score, basis: Number(row.fields.basis) || 0 };
+  }
+  const sums = new Map<string, { n: number; total: number }>();
+  for (const review of reviews) {
+    const entry = sums.get(review.code) ?? { n: 0, total: 0 };
+    entry.n++;
+    entry.total += review.rating;
+    sums.set(review.code, entry);
+  }
+  for (const [code, entry] of sums) index.students[code] = { n: entry.n, avg: Math.round((entry.total / entry.n) * 10) / 10 };
+  scoreCache = { at: Date.now(), index };
+  return index;
 }

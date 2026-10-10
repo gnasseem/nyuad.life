@@ -48,3 +48,16 @@ export async function requireMember(req: IncomingMessage, store: BoardStore | nu
     throw new ApiError(503, 'Could not verify your account. Try again shortly.', 'identity_unavailable');
   }
 }
+
+/**
+ * A limit that holds across every serverless instance and restart, counted in the database: for what costs money or
+ * shared quota (login emails, answers, contact details). Best effort: a database hiccup does not lock anyone out.
+ */
+export async function limitDurably(store: BoardStore | null, bucket: string, max: number, windowSeconds: number, message = 'Too many requests. Try again later.'): Promise<void> {
+  if (!store) return;
+  const over = await store.hit(bucket, max, windowSeconds).catch((error: Error) => {
+    console.warn('[limits] could not count', bucket.split(':')[0], error.message);
+    return false;
+  });
+  if (over) throw new ApiError(429, message, 'rate_limited');
+}

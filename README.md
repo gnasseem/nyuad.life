@@ -18,16 +18,19 @@ archive browsing, plan reading and contacts to anyone who has not.
 - **Questions.** When the archive falls short, a question goes to students: a feed of every question with its answers,
   newest first, that anyone can answer in place, filtered to the ones for your major and year, the unanswered ones or
   your own; the + button asks a new one. Nobody can answer their own question or answer one twice. Answered questions
-  are cited by Ask.
+  are cited by Ask. The Ask home page puts the questions you are most likely to know first, answerable right there,
+  and says when one of your own questions got a new answer.
 - **Events.** Scheduled campus gatherings with required dates, locations and host details, browsed by day with calendar downloads. Events drop off one day after starting. Service requests and general notices are rejected.
 - **Market.** What the group is mostly used for besides questions: things for sale (up for three weeks), wanted (two)
   or free (one), offers to buy or sell Falcons and Campus Dirhams (two separate balances, each with its own order book;
   five days), shared rides by day (gone three hours after they leave) and lost and found (three weeks). Contact details
   are fetched one post at a time, on tap. Ask sends listings, trades, rides and lost items here.
-- **Courses.** Every course in Albert's schedule once, searchable by code, title or professor and filtered by subject and
-  Core. Picking one shows an AI rating written from the group's threads about it: a score out of five, difficulty and
-  workload, what students liked, what they warn about, and their tips. Ratings are cached for a month per course. The
-  group's threads are a second tab, searchable by keyword and topic with no model involved.
+- **Reviews.** Every course in Albert's schedule once, searchable by code, title or professor, filtered by subject, Core
+  or rated, and sortable by rating. Picking one shows an AI rating written from the group's threads about it (a score
+  out of five, difficulty and workload, what students liked and what they warn about), who teaches it this term, and
+  reviews students wrote here: stars, difficulty, workload, when they took it and a line of advice, one per student and
+  course. The list shows both scores, read from the cache in one request. Ratings are cached for a month per course,
+  and a course nobody has described for a week, so opening it again costs nothing. Professors are a second tab.
 - **Plan.** A schedule builder after [Horarium](https://github.com/Phoenix-3139/Horarium). Say what you need ("calc,
   intro to CS, any Arts Core, nothing before 10, Fridays off") and a model reads it into courses from the term's real list
   and rules; or add courses one by one. The browser then finds every combination where no two classes meet at once
@@ -50,8 +53,7 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
    | Variable | Needed for |
    | --- | --- |
    | `GEMINI_API_KEY` | Answers for students not signed in with ChatGPT, question tagging, course summaries. |
-   | `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Free backup models for answers when Gemini is overloaded or out of quota (below). Any or all. |
-   | `MISTRAL_API_KEY` | Optional backup when its account has capacity; add `mistral` to `ROR_MODEL_ORDER` to use it. |
+   | `GEMINI_EXTRA_KEYS`, `GROQ_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, `NVIDIA_API_KEY`, `ZAI_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY` | Free backup models for answers when Gemini is overloaded or out of quota (below). Any or all; each variable takes several keys separated by commas. |
    | `DEEPSEEK_API_KEY` | Optional paid safety net, about $0.002 an answer: used only when every free model is down (below). |
    | `ROR_ADMIN_NETIDS` | Comma-separated verified administrator NetIDs, for example `gnn9245`. |
    | `RESEND_API_KEY`, `RESEND_FROM`, `SESSION_SECRET` | NYU email login: a verified Resend sender and a 32+ character session secret. |
@@ -60,7 +62,8 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
    | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | The board: questions, notices, offers, listings, course summaries. |
    | `ROR_GROUP_URL` | Where listings and rides are sent. Defaults to the group. |
 
-3. Deploy. `GET /api/health` reports what is active. In Settings, admin mode's "Check models" sends one tiny request
+3. Deploy. `GET /api/health` reports what is active: the whole report (model chain, index, database) to an
+   administrator's session, and only what the site itself needs to everyone else. In Settings, admin mode's "Check models" sends one tiny request
    to every model and shows what each one said: the quickest way to tell a wrong key from a spent quota. `board.ok` comes from a real probe of the database and
    `board.problem` says what is wrong when it is false.
 
@@ -74,11 +77,18 @@ search, courses, plan and the board are rate-limited per IP.
 
 Free model tiers can be overloaded (503) or rate-limited (429). Ask moves down a chain before writing any text:
 
-1. Gemini 3.5 Flash-Lite, then Gemma 4 26B.
-2. Groq, OpenRouter's Nemotron model and Cloudflare Workers AI when their keys are set. Groq's free tier caps tokens per
-   minute, so its prompts are shortened to fit. Provider limits can change independently. Mistral can be opted in with
-   `ROR_MODEL_ORDER` when its account has capacity.
+1. Gemini 3.5 Flash-Lite, Gemma 4 31B, Gemma 4 26B and Gemini 3.1 Flash-Lite: each has its own daily quota on one key.
+2. The same models on `GEMINI_EXTRA_KEYS` (AI Studio keys from other Google projects, through Gemini's
+   OpenAI-compatible endpoint), then Groq (gpt-oss 120B, Qwen 3.8 27B, gpt-oss 20B), Cloudflare Workers AI (Gemma 4,
+   about a quarter of Llama's neuron cost), NVIDIA (Nemotron 3 Super, Gemma 4 31B, Kimi), Z.ai (GLM 4.7 Flash),
+   OpenRouter's free models, Mistral and Vercel AI Gateway, for each key that is set. Groq's free tier caps tokens per
+   minute, so its prompts are shortened to fit; a prompt still too long for a provider skips it.
 3. DeepSeek, when `DEEPSEEK_API_KEY` is set: paid, but only reached when every free model has failed.
+
+Every key variable takes several keys separated by commas (`GROQ_API_KEY=gsk_a,gsk_b`): free tiers are counted per
+account, so each key is another quota, tried model by model across the keys. Reasoning models are asked to think
+little or not at all, so answers start quickly. A JSON call (ratings, plan reading, moderation) has one deadline for
+the whole chain, so falling back from model to model cannot outlast the function.
 
 Model names go stale fast (Google shut 2.5 Flash to new keys, Groq retired its Llama models in August 2026), so each
 instance asks Gemini and each provider which models its key can actually use (`GET /models`, cached for six hours),
@@ -113,13 +123,17 @@ it stands (`answers.chain`).
 | Groq | about 1,000 requests a day per model, no card | [console.groq.com/keys](https://console.groq.com/keys) |
 | Mistral | "Experiment" plan, phone check | [console.mistral.ai](https://console.mistral.ai) |
 | OpenRouter | `:free` models, 50 requests a day without paying (1,000 a day only after a $10 top-up) | [openrouter.ai/keys](https://openrouter.ai/keys) |
+| Cloudflare | 10,000 neurons a day, about 90 answers on Gemma 4 | [dash.cloudflare.com](https://dash.cloudflare.com) → AI → Workers AI |
+| NVIDIA | about 40 requests a minute, for prototyping | [build.nvidia.com](https://build.nvidia.com) |
+| Z.ai | GLM Flash models free, one request at a time | [z.ai](https://z.ai) |
 
 Opening questions are also cached for six hours (`lib/answer-cache.ts`): the same question asked again, in any case or
 punctuation, is answered from the cache with no model call. Registration-week questions are asked many times a day, so
 this saves much of the quota. The cache lives in memory and in the board's `guide_summaries` table when Supabase is set
 up, so every serverless instance shares it; expired entries are removed.
 
-Settings: `ROR_MODEL_ORDER=groq,gemini` puts a backup first; `ROR_MODEL_DISCOVERY=0` turns the model listing off; `<PROVIDER>_MODELS` and `<PROVIDER>_LITE_MODELS` (for
+Settings: `ROR_MODEL_ORDER=groq,gemini` puts a backup first (the default is
+`gemini,gemini2,groq,cloudflare,nvidia,zai,openrouter,mistral,gateway,deepseek`); `ROR_MODEL_DISCOVERY=0` turns the model listing off; `<PROVIDER>_MODELS` and `<PROVIDER>_LITE_MODELS` (for
 example `GROQ_MODELS`) replace a provider's model lists; `ROR_ANSWER_CACHE=0` turns the cache off. Gemini's own lists
 are `GEMINI_CHAT_MODEL`, `GEMINI_CHAT_FALLBACK_MODELS`, `GEMINI_LITE_MODEL` and `GEMINI_LITE_FALLBACK_MODELS`.
 
@@ -197,6 +211,8 @@ Manual: `cp .env.example .env`, add the key, `npm run index`, commit `data/index
    running it again is how an existing project gets new columns and tables (Campus Dirham offers need the `currency`
    column, verified accounts need `owner_key` and `auth_email_codes`, and admin mode needs `board_bans` and `admin_audit`).
    Row level security is on with no policies, so only the service role, which the API holds, can read or write.
+   Students' course reviews need the `course_reviews` table: until the schema is run again, course pages show no
+   reviews and no review form.
 2. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on Vercel and in `.env`, then redeploy.
 
 If the pages say the board tables are missing, the schema was not run in the project `SUPABASE_URL` points at. If they
@@ -263,8 +279,11 @@ Everything students write is screened by rules in `lib/moderation.ts`, which add
 - **The answer model** is told that sources are material, never instructions, and that notices and answers from this
   site are unverified; those only reach an answer when the reranker finds them relevant, and such answers are not cached.
 
-Ask is limited per address (a burst, a per-minute rate and a daily ceiling; IPv6 counted per /64), and only answers
-students who signed up. The API refuses posts from other sites' pages (Origin and Sec-Fetch-Site), sends no CORS
+Ask only answers students who signed up, and is limited per student: a per-minute rate, and a daily ceiling counted
+in the database so it holds across every serverless instance. Per address the limits are loose (IPv6 counted per /64),
+since a campus network puts many students behind one. Login codes are capped per network and site-wide in the
+database too, so a script cycling made-up NetIDs cannot spend the email quota, and contact details are capped per
+student per day. Member-only responses are never cached by the CDN. The API refuses posts from other sites' pages (Origin and Sec-Fetch-Site), sends no CORS
 headers in production, and the site is served with a strict Content-Security-Policy and frame-ancestors 'none'. The
 verified session travels in an HttpOnly cookie, and database errors reach the logs, not the browser.
 `ROR_REQUIRE_SIGNUP=0` turns the sign-up requirement off on the server.

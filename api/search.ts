@@ -74,6 +74,7 @@ export default route(['GET'], async (req, res) => {
       results: results.slice(start, start + pageSize).map((entry) => ({ ...summarizePost(entry.post, entry.snippet), score: Number(entry.score.toFixed(4)) })),
     },
     q ? 0 : 120,
+    'private',
   );
 });
 

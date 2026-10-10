@@ -208,10 +208,13 @@ describe('api', () => {
   it('reports health, including which embedding provider the index needs', async () => {
     const health = await getJson(`${apiUrl}/api/health`);
     expect(health.ok).toBe(true);
-    expect(health.archive).toMatchObject({ source: 'index', posts: 4, vectors: true, dimensions: DIMS });
-    expect(health.embeddings).toMatchObject({ provider: 'gemini', keyConfigured: true, semanticSearch: true });
-    expect(health.gemini).toMatchObject({ configured: true, chatModel: 'gemini-3.5-flash', chatFallbacks: ['gemini-3-flash-preview', 'gemini-2.5-flash'], liteModel: 'gemini-3.1-flash-lite' });
+    expect(health.archive).toEqual({ posts: 4, newestPost: expect.any(String) });
+    expect(health.embeddings).toEqual({ semanticSearch: true });
+    expect(health.gemini).toEqual({ configured: true });
+    expect(health.answers).toEqual({ available: true });
+    // The model chain and index details are for administrators only.
     expect(health).not.toHaveProperty('accessCode');
+    expect(health).not.toHaveProperty('reranker');
   });
 
   it('serves the archive to students who signed up, and to nobody else', async () => {
@@ -460,7 +463,9 @@ describe('api', () => {
     }
     const detail = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012`);
     expect(detail.instructors).toEqual(['Rana Dania']);
-    const result = await getJson(`${apiUrl}/api/courses?profs=${encodeURIComponent('Rana Dania')}`);
+    // Writing a rating costs a model call, so a visitor without an account is told to wait instead.
+    expect(await getJson(`${apiUrl}/api/courses?profs=${encodeURIComponent('Rana Dania')}`)).toEqual({ ratings: {}, pending: ['Rana Dania'] });
+    const result = await getJson(`${apiUrl}/api/courses?profs=${encodeURIComponent('Rana Dania')}`, { headers });
     expect(result.ratings['Rana Dania']).toMatchObject({ score: 4.1, basis: 1, confidence: 'low', verdict: 'Clear lectures and fair grading.' });
     expect(result.ratings['Rana Dania'].sources).toEqual([expect.objectContaining({ url: 'https://fb/p1' })]);
     expect(geminiCalls.at(-1)!.prompt).toContain('Her exams are fair and her lectures are clear.');

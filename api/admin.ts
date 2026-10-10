@@ -8,7 +8,7 @@ import { ownerOf } from '../lib/identity.ts';
 import { checkModels, providersFromEnv, warmModels } from '../lib/providers.ts';
 import { collapseWhitespace } from '../lib/text.ts';
 
-const TARGETS: AdminTarget[] = ['question', 'answer', 'notice', 'listing', 'offer'];
+const TARGETS: AdminTarget[] = ['question', 'answer', 'notice', 'listing', 'offer', 'review'];
 
 export default route(['GET', 'POST'], async (req, res) => {
   const cfg = adminConfig();
@@ -70,7 +70,7 @@ function need(store: BoardStore | null): BoardStore {
 
 /** The NetID behind a removed post: its poster, its helper, or for a question the profile its asker's browser set up. */
 async function posterOf(store: BoardStore, type: AdminTarget, row: Record<string, unknown>): Promise<string | null> {
-  const direct = row.poster_net_id ?? row.posterNetId ?? row.helper_net_id ?? row.helperNetId;
+  const direct = row.poster_net_id ?? row.posterNetId ?? row.helper_net_id ?? row.helperNetId ?? row.net_id ?? row.netId;
   if (typeof direct === 'string' && direct) return direct;
   const askerKey = row.asker_key ?? row.askerKey;
   if (type !== 'question' || typeof askerKey !== 'string') return null;

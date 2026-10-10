@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { IconClose, IconPlus, IconSearch, IconTrash } from '../icons';
+import { IconClose, IconPlus, IconSearch, IconSidebar, IconTrash } from '../icons';
+import { useMedia } from '../motion';
 import { navigate, onLinkClick } from '../router';
 import { clearConversations, deleteConversation, setActiveConversation, type Conversation } from '../store';
 
@@ -32,6 +33,7 @@ function grouped(conversations: Conversation[], now = new Date()): Array<{ label
 export function HistoryPanel({ conversations, current, open, onClose }: { conversations: Conversation[]; current: string | null; open: boolean; onClose(): void }) {
   const [query, setQuery] = useState('');
   const panel = useRef<HTMLElement>(null);
+  const wide = useMedia('(min-width: 1100px)');
   const shown = useMemo(() => {
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);
     const matching = words.length ? conversations.filter((conversation) => words.every((word) => `${conversation.title} ${conversation.messages.map((message) => message.content).join(' ')}`.toLowerCase().includes(word))) : conversations;
@@ -85,13 +87,16 @@ export function HistoryPanel({ conversations, current, open, onClose }: { conver
   return (
     <>
       <div className="history-scrim" onClick={onClose} aria-hidden="true" />
-      <aside ref={panel} id="conversation-history" inert={!open} role={open && window.matchMedia('(max-width: 1099px)').matches ? 'dialog' : undefined} aria-modal={open && window.matchMedia('(max-width: 1099px)').matches ? true : undefined} className="history-panel" aria-label="Your conversations">
-        <div className="hp-title"><h2>History</h2><button type="button" className="icon-btn" onClick={onClose} aria-label="Close history"><IconClose /></button></div>
-        <div className="hp-head">
-          <button type="button" className="hp-new" onClick={startNew}>
-            <IconPlus /> New question
+      <aside ref={panel} id="conversation-history" inert={!open} role={open && !wide ? 'dialog' : undefined} aria-modal={open && !wide ? true : undefined} className="history-panel" aria-label="Your conversations">
+        <div className="hp-title">
+          <h2>Conversations</h2>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label={wide ? 'Hide conversations' : 'Close conversations'} title={wide ? 'Hide' : 'Close'}>
+            {wide ? <IconSidebar /> : <IconClose />}
           </button>
         </div>
+        <button type="button" className="hp-new" onClick={startNew}>
+          <IconPlus /> New question
+        </button>
         {conversations.length > 0 && (
           <div className="search-field hp-search">
             <IconSearch />

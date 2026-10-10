@@ -6,7 +6,7 @@
   "functions": {
     "api/**/*.ts": {
       "includeFiles": "data/**",
-      "excludeFiles": "{data/index/cache-*,data/scrape-state.json,data/*.tmp}",
+      "excludeFiles": "{data/index/cache-*,data/scrape-state.json,data/*.tmp,data/posts.jsonl,data/official.jsonl}",
       "maxDuration": 60,
       "memory": 1024
     }

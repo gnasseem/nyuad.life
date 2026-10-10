@@ -23,7 +23,7 @@ export interface Screened {
 }
 
 /** What is being screened decides what is allowed: a phone number is fine on a notice, not in a public answer. */
-export type PostKind = 'question' | 'answer' | 'notice' | 'listing' | 'offer' | 'name';
+export type PostKind = 'question' | 'answer' | 'notice' | 'listing' | 'offer' | 'review' | 'name';
 
 export const SUPPORT_MESSAGE =
   "It sounds like you're going through something really hard, and you don't have to deal with it alone. You can talk to someone right now:\n\n" +
@@ -230,6 +230,7 @@ const BELONGS: Record<ReviewedKind, string> = {
   offer: 'the note on an offer to trade Falcon Dirhams or Campus Dirhams for cash between students.',
   question: 'a question one student asks other students about life, courses or anything at NYUAD.',
   answer: "a student answering another student's question. Blunt opinions about a course, an office or how a class is taught are fine.",
+  review: "a student's review of a course they took: what it was like, the workload, the exams, how it was taught. Blunt and negative opinions about the course or the teaching are fine; comments on a professor's looks or private life, and rumours, are not.",
 };
 
 const REVIEW_SCHEMA = {

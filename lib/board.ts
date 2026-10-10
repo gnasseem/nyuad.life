@@ -169,6 +169,42 @@ export function validateAnswerText(value: unknown): string {
   return text;
 }
 
+/** A student's own review of a course they took: one per student and course. */
+export interface CourseReview {
+  id: string;
+  code: string;
+  netId: string;
+  authorName: string;
+  authorMajor: string;
+  authorYear: Standing;
+  /** 1 to 5: would they recommend it. */
+  rating: number;
+  difficulty: number | null;
+  workload: number | null;
+  text: string;
+  /** When they took it, as Albert names terms ("Spring 2026"), or empty. */
+  term: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const REVIEW_MAX = 600;
+
+export function validateReview(body: Record<string, unknown>): Pick<CourseReview, 'rating' | 'difficulty' | 'workload' | 'text' | 'term'> {
+  const scale = (value: unknown, label: string, required: boolean): number | null => {
+    if ((value === null || value === undefined || value === '') && !required) return null;
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 1 || n > 5) throw new ApiError(400, `Choose a ${label} from 1 to 5.`, 'bad_review');
+    return n;
+  };
+  const text = String(body.text ?? '').replace(/\r\n?/g, '\n').trim();
+  if (text.length > REVIEW_MAX) throw new ApiError(400, `Keep reviews under ${REVIEW_MAX} characters.`, 'review_too_long');
+  if (text) meaningful(text, 'review');
+  const term = collapseWhitespace(String(body.term ?? '')).slice(0, 24);
+  if (term && !/^(?:Fall|Spring|Summer|January) \d{4}$/.test(term)) throw new ApiError(400, 'Choose the term you took it.', 'bad_term');
+  return { rating: scale(body.rating, 'rating', true)!, difficulty: scale(body.difficulty, 'difficulty', false), workload: scale(body.workload, 'workload', false), text, term };
+}
+
 export function validateKey(value: unknown): string {
   const key = String(value ?? '').trim();
   if (!/^[a-z0-9-]{8,64}$/i.test(key)) throw new ApiError(400, 'Missing asker key.', 'bad_key');

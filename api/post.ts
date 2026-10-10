@@ -54,5 +54,6 @@ export default route(['GET'], async (req, res) => {
       related: related.map((index) => summarizePost(archive.posts[index]!)),
     },
     300,
+    'private',
   );
 });

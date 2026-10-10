@@ -1,3 +1,4 @@
+import { adminConfig, adminSession } from '../lib/admin.ts';
 import { boardStore, type BoardCheck, type BoardStore } from '../lib/board-store.ts';
 import { embedderForIndex, keysFor, providerForModel } from '../lib/embeddings.ts';
 import { chatgptConfig } from '../lib/chatgpt.ts';
@@ -23,7 +24,11 @@ async function boardHealth(board: BoardStore | null): Promise<Record<string, unk
   return { configured: true, persistent: board.persistent, ok, ...(ok ? {} : { code, problem }) };
 }
 
-export default route(['GET'], async (_req, res) => {
+/**
+ * What is set up and working. Everyone gets the few fields the site itself reads; administrators get the whole report
+ * (model chain, index details, what the database said), which is no one else's business.
+ */
+export default route(['GET'], async (req, res) => {
   const cfg = geminiConfig();
   const board = boardStore();
   let archive: Awaited<ReturnType<typeof loadArchive>> | undefined;
@@ -48,8 +53,21 @@ export default route(['GET'], async (_req, res) => {
   const backups = providersFromEnv();
   const order = modelOrder();
   const chain = answerWriters({ gemini: cfg, chatgpt: null, backups, order }).map((writer) => writer.name);
+  const boardState = await boardHealth(board);
+  const ok = Boolean(archive && (cfg || chatgpt || backups.length));
+  if (!(await adminSession(adminConfig(), req).catch(() => null))) {
+    sendJson(res, archive ? 200 : 503, {
+      ok,
+      archive: archive ? { posts: archive.posts.length, newestPost: archive.meta.newestPost } : { error: 'unavailable' },
+      embeddings: { semanticSearch: Boolean(archive && archive.vectors.count > 0 && queryEmbedder) },
+      gemini: { configured: Boolean(cfg) },
+      answers: { available: chain.length > 0 || Boolean(chatgpt) },
+      board: { configured: boardState.configured, ok: boardState.ok, ...(boardState.ok || !boardState.configured ? {} : { problem: 'The board is not available right now. Try again in a few minutes.' }) },
+    });
+    return;
+  }
   sendJson(res, archive ? 200 : 503, {
-    ok: Boolean(archive && (cfg || chatgpt || backups.length)),
+    ok,
     archive: archive
       ? {
           source: archive.source,
@@ -96,6 +114,6 @@ export default route(['GET'], async (_req, res) => {
     },
     // The board needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in production; locally it runs in memory. `ok` comes
     // from a real probe, so a schema that was never run or a wrong key shows up here instead of as a vague error.
-    board: await boardHealth(board),
+    board: boardState,
   });
 });

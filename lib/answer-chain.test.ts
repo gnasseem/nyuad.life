@@ -121,7 +121,7 @@ beforeEach(() => {
 });
 
 function groq(models = ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'], maxPromptChars = 20_000): Provider {
-  return { id: 'groq', label: 'Groq', baseUrl: backupUrl, apiKey: 'groq-key', models, liteModels: ['llama-3.1-8b-instant'], maxPromptChars, maxOutputTokens: 1_600 };
+  return { id: 'groq', family: 'groq', label: 'Groq', baseUrl: backupUrl, apiKey: 'groq-key', models, liteModels: ['llama-3.1-8b-instant'], maxPromptChars, maxOutputTokens: 1_600 };
 }
 
 const context = { catalog: null, reranker: null, cache: false } as const;
@@ -214,10 +214,12 @@ describe('the answer cache', () => {
 describe('backup providers', () => {
   it('are read from the environment in the configured order', () => {
     const providers = providersFromEnv({ GROQ_API_KEY: 'g', OPENROUTER_API_KEY: 'o', MISTRAL_API_KEY: 'm', ROR_MODEL_ORDER: 'openrouter,gemini', GROQ_MODELS: 'a, b' });
-    expect(providers.map((provider) => provider.id)).toEqual(['openrouter', 'groq']);
+    expect(providers.map((provider) => provider.id)).toEqual(['openrouter', 'groq', 'mistral']);
     expect(providers.find((provider) => provider.id === 'groq')!.models).toEqual(['a', 'b']);
     expect(providersFromEnv({ MISTRAL_API_KEY: 'm', ROR_MODEL_ORDER: 'mistral,gemini' }).map((provider) => provider.id)).toEqual(['mistral']);
     expect(providersFromEnv({})).toEqual([]);
+    // Several keys in one variable are separate quotas, tried in turn under the same provider.
+    expect(providersFromEnv({ GROQ_API_KEY: 'k1, k2' }).map((provider) => [provider.id, provider.family, provider.apiKey])).toEqual([['groq', 'groq', 'k1'], ['groq-2', 'groq', 'k2']]);
   });
 
   it('rest a model after a failure, for as long as the failure deserves', () => {
