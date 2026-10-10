@@ -136,6 +136,9 @@ describe('the answer model chain', () => {
     expect(statuses).toContain('Switching to a backup model');
     // The overloaded model rests for a minute instead of being tried on every question.
     expect(answerWriters({ gemini: geminiConfig(), chatgpt: null, backups: [], order: ['gemini'] }).map((writer) => writer.name)[0]).toBe('gemini-3-flash-preview');
+    // With two keys each model is tried on both, and a model resting on one key still runs on the other.
+    const twoKeys = geminiConfig({ GEMINI_API_KEY: 'a,b', GEMINI_CHAT_MODEL: 'gemini-3.5-flash', GEMINI_CHAT_FALLBACK_MODELS: 'gemini-3-flash-preview', GEMINI_LITE_FALLBACK_MODELS: '', GEMINI_LITE_MODEL: 'gemini-3.5-flash' });
+    expect(answerWriters({ gemini: twoKeys, chatgpt: null, backups: [], order: ['gemini'] }).map((writer) => writer.name)).toEqual(['gemini-3.5-flash#2', 'gemini-3-flash-preview', 'gemini-3-flash-preview#2']);
   });
 
   it('falls back to a free backup provider when every Gemini model is down, and fits its small prompt', async () => {

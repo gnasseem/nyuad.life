@@ -3,21 +3,20 @@
  * Gemini, so an overloaded or spent Gemini moves the answer to the next model instead of failing. Free tiers are
  * counted per provider, and mostly per model, so every key and every model adds capacity.
  *
- *   GEMINI_EXTRA_KEYS            more Google AI Studio keys (from other projects), each with its own free quota.
  *   GROQ_API_KEY                 console.groq.com: 1,000 requests and 200,000 tokens a day per model, no card.
  *   CLOUDFLARE_API_TOKEN         Workers AI (with CLOUDFLARE_ACCOUNT_ID): 10,000 free neurons a day, about 90 answers.
- *   NVIDIA_API_KEY               build.nvidia.com: about 40 requests a minute, no card.
  *   ZAI_API_KEY                  z.ai: GLM Flash models free, one request at a time.
  *   OPENROUTER_API_KEY           openrouter.ai, models ending in ":free": 50 requests a day in all (1,000 after $10).
  *   MISTRAL_API_KEY              console.mistral.ai "Experiment" plan.
  *   AI_GATEWAY_API_KEY           Vercel AI Gateway: a monthly free credit.
  *   DEEPSEEK_API_KEY             platform.deepseek.com, paid but cheap: about $0.002 an answer. Last, as the safety net.
  *
- * Any key variable may hold several keys separated by commas: each is a separate free quota, tried in turn.
+ * Any key variable may hold several keys separated by commas (GEMINI_API_KEY too, in lib/gemini.ts): each key is
+ * a separate free quota, tried in turn.
  * `<PROVIDER>_MODELS` overrides a provider's answer models and `<PROVIDER>_LITE_MODELS` its models for small calls.
  * `ROR_MODEL_ORDER` (default below) sets which goes first; put `deepseek` first to answer on the paid model.
  */
-import { discoverGeminiModels, geminiConfig, generateJson, generateText, type GeminiConfig, type Message } from './gemini.ts';
+import { discoverGeminiModels, geminiConfig, geminiKeys, generateJson, generateText, keyTag, type GeminiConfig, type Message } from './gemini.ts';
 
 export interface Provider {
   /** Unique per key: "groq", then "groq-2" for a second Groq key. */
@@ -64,8 +63,6 @@ interface Preset {
 // against it at runtime (discoverProviderModels), a model that answers 404 is skipped for hours, and the lists can be
 // replaced from the environment. Groq retired its Llama models for free keys on 2026-08-16.
 const PRESETS: Preset[] = [
-  // More AI Studio keys, through Gemini's OpenAI-compatible endpoint: each Google project has its own free quota.
-  { id: 'gemini2', label: 'Gemini (extra key)', key: 'GEMINI_EXTRA_KEYS', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', models: ['gemini-3.5-flash-lite', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it'], liteModels: ['gemini-3.5-flash-lite', 'gemma-4-26b-a4b-it'], maxPromptChars: 80_000, maxOutputTokens: 2_000, listsModels: false, extra: (model) => (/^gemini/.test(model) ? { reasoning_effort: 'low' } : {}) },
   { id: 'groq', label: 'Groq', key: 'GROQ_API_KEY', baseUrl: 'https://api.groq.com/openai/v1', models: ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b'], liteModels: ['openai/gpt-oss-20b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-120b'], maxPromptChars: 16_000, maxOutputTokens: 1_400, listsModels: true, fallbackPattern: /gpt-oss|qwen/i, extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : /qwen/.test(model) ? { reasoning_effort: 'none' } : {}) },
   {
     id: 'cloudflare',
@@ -83,8 +80,6 @@ const PRESETS: Preset[] = [
     listsModels: false,
     extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}),
   },
-  // NVIDIA's listing names its whole catalogue, not what is hosted for free, so it is not used to drop models.
-  { id: 'nvidia', label: 'NVIDIA', key: 'NVIDIA_API_KEY', baseUrl: 'https://integrate.api.nvidia.com/v1', models: ['nvidia/nemotron-3-super-120b-a12b', 'google/gemma-4-31b-it', 'moonshotai/kimi-k2.6'], liteModels: ['nvidia/nemotron-3.5-lightning-30b-a3b', 'openai/gpt-oss-20b'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: false, extra: (model) => (/nemotron/.test(model) ? { chat_template_kwargs: { enable_thinking: false } } : /gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}) },
   { id: 'zai', label: 'Z.ai', key: 'ZAI_API_KEY', baseUrl: 'https://api.z.ai/api/paas/v4', models: ['glm-4.7-flash'], liteModels: ['glm-4.5-flash', 'glm-4.7-flash'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: false, extra: () => ({ thinking: { type: 'disabled' } }) },
   { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['nvidia/nemotron-3-super-120b-a12b:free', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'google/gemma-4-31b-it:free'], liteModels: ['google/gemma-4-26b-a4b-it:free', 'nvidia/nemotron-3-super-120b-a12b:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: true, fallbackPattern: /:free$/, extra: (model) => (/gpt-oss|nemotron|inkling/.test(model) ? { reasoning: { effort: 'low', exclude: true } } : {}) },
   { id: 'mistral', label: 'Mistral', key: 'MISTRAL_API_KEY', baseUrl: 'https://api.mistral.ai/v1', models: ['mistral-medium-latest', 'mistral-small-latest'], liteModels: ['mistral-small-latest'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: true, fallbackPattern: /^mistral-(medium|small)/i },
@@ -94,7 +89,7 @@ const PRESETS: Preset[] = [
   { id: 'deepseek', label: 'DeepSeek', key: 'DEEPSEEK_API_KEY', baseUrl: 'https://api.deepseek.com', models: ['deepseek-flash', 'deepseek-v4-flash'], liteModels: ['deepseek-flash', 'deepseek-v4-flash'], maxPromptChars: 80_000, maxOutputTokens: 2_000, paid: true, listsModels: true, fallbackPattern: /flash|chat/i },
 ];
 
-export const DEFAULT_ORDER = ['gemini', 'gemini2', 'groq', 'cloudflare', 'nvidia', 'zai', 'openrouter', 'mistral', 'gateway', 'deepseek'];
+export const DEFAULT_ORDER = ['gemini', 'groq', 'cloudflare', 'zai', 'openrouter', 'mistral', 'gateway', 'deepseek'];
 const ALL_IDS = ['gemini', ...PRESETS.map((preset) => preset.id)];
 
 function list(value: string | undefined, fallback: string[]): string[] {
@@ -525,8 +520,10 @@ export async function checkModels(gemini: GeminiConfig | null, backups: Provider
   const ask: Message[] = [{ role: 'user', text: 'Reply with the word OK.' }];
   const jobs: Array<{ name: string; paid?: boolean; run(signal: AbortSignal): Promise<unknown> }> = [];
   if (gemini) {
-    for (const model of new Set([gemini.chatModel, ...gemini.chatFallbacks, ...gemini.liteModels])) {
-      jobs.push({ name: `gemini:${model}`, run: (signal) => generateText(gemini, { model, messages: ask, maxOutputTokens: 64 }, { retries: 0, signal, timeoutMs: 15_000, waitOutQuota: false }) });
+    for (const key of geminiKeys(gemini)) {
+      for (const model of new Set([gemini.chatModel, ...gemini.chatFallbacks, ...gemini.liteModels])) {
+        jobs.push({ name: `gemini:${model}${keyTag(key)}`, run: (signal) => generateText(key, { model, messages: ask, maxOutputTokens: 64 }, { retries: 0, signal, timeoutMs: 15_000, waitOutQuota: false }) });
+      }
     }
   }
   for (const provider of backups) {

@@ -4,7 +4,13 @@
  */
 
 export interface GeminiConfig {
+  /** The key this config calls with: the first of `keys`, or one of them in a config from geminiKeys(). */
   apiKey: string;
+  /**
+   * Every key GEMINI_API_KEY holds (several, separated by commas): each Google project has its own free quota per
+   * model, so each key is more answers a day. Spent or overloaded models are tracked per key.
+   */
+  keys: string[];
   baseUrl: string;
   embedModel: string;
   /** Model that writes answers. */
@@ -41,7 +47,8 @@ function chain(primary: string | undefined, fallbacks: string[] | null, defaults
 
 /** Reads GEMINI_API_KEY and the optional model overrides; returns null when no key is configured. */
 export function geminiConfig(env: NodeJS.ProcessEnv = process.env): GeminiConfig | null {
-  const apiKey = (env.GEMINI_API_KEY ?? env.GOOGLE_API_KEY ?? '').trim();
+  const keys = [...new Set((env.GEMINI_API_KEY ?? env.GOOGLE_API_KEY ?? '').split(/[\s,]+/).filter(Boolean))];
+  const apiKey = keys[0];
   if (!apiKey) return null;
   const baseUrl = (env.GEMINI_BASE_URL ?? 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '');
   // Lists from the environment are taken as written; the defaults are brought up to date with what the key can use.
@@ -51,6 +58,7 @@ export function geminiConfig(env: NodeJS.ProcessEnv = process.env): GeminiConfig
   const lite = chain(env.GEMINI_LITE_MODEL, modelList(env.GEMINI_LITE_FALLBACK_MODELS), knownLite ? withDiscovered(DEFAULT_LITE_MODELS, knownLite, 'lite') : DEFAULT_LITE_MODELS);
   return {
     apiKey,
+    keys,
     baseUrl,
     embedModel: env.GEMINI_EMBED_MODEL?.trim() || DEFAULT_EMBED_MODEL,
     chatModel: chat[0]!,
@@ -59,6 +67,17 @@ export function geminiConfig(env: NodeJS.ProcessEnv = process.env): GeminiConfig
     liteModels: lite,
     dimensions: Number(env.GEMINI_EMBED_DIMENSIONS) || DEFAULT_DIMENSIONS,
   };
+}
+
+/** The config once per key, first key first, for trying a model on every key before giving up on it. */
+export function geminiKeys(cfg: GeminiConfig): GeminiConfig[] {
+  return cfg.keys.length > 1 ? cfg.keys.map((apiKey) => ({ ...cfg, apiKey })) : [cfg];
+}
+
+/** How a key is told apart in the model state and in model names: nothing for the first key, "#2" for the second. */
+export function keyTag(cfg: GeminiConfig): string {
+  const index = cfg.keys.indexOf(cfg.apiKey);
+  return index > 0 ? `#${index + 1}` : '';
 }
 
 /* ---------- What the key can use ---------- */
@@ -144,19 +163,19 @@ export function resetDiscovery(): void {
 
 /* ---------- Which models are worth trying ---------- */
 
-/** Model -> until when to skip it. Per process, so a cold start tries everything once. */
+/** Model (with its key's tag after the first key) -> until when to skip it. Per process, so a cold start tries everything once. */
 const unavailable = new Map<string, number>();
 /** Models that rejected a thinking setting; they are called without one from then on. */
 const noThinking = new Set<string>();
 
-/** The models not marked unavailable, in order; possibly none. */
-export function liveModels(models: string[], now = Date.now()): string[] {
-  return models.filter((model) => (unavailable.get(model) ?? 0) <= now);
+/** The models not marked unavailable on this key (`tag` from keyTag), in order; possibly none. */
+export function liveModels(models: string[], now = Date.now(), tag = ''): string[] {
+  return models.filter((model) => (unavailable.get(model + tag) ?? 0) <= now);
 }
 
 /** The models still worth trying, in order; all of them again when every one is marked unavailable. */
-export function usableModels(models: string[], now = Date.now()): string[] {
-  const live = liveModels(models, now);
+export function usableModels(models: string[], now = Date.now(), tag = ''): string[] {
+  const live = liveModels(models, now, tag);
   return live.length ? live : models;
 }
 
@@ -182,11 +201,11 @@ export function isDailyQuota(error: GeminiError): boolean {
  * Skips a model for a while: hours when it no longer exists, an hour when its daily quota is spent, a minute when it
  * is overloaded (that usually passes quickly), else its retry delay.
  */
-export function markUnavailable(model: string, error: GeminiError, now = Date.now()): void {
+export function markUnavailable(model: string, error: GeminiError, now = Date.now(), tag = ''): void {
   // "limit: 0" is a model with no free tier for this key at all: as good as gone.
   const none = error.status === 429 && /\blimit: ?0\b/.test(error.message);
   const ms = error.status === 404 || none ? 6 * 3_600_000 : isDailyQuota(error) ? 3_600_000 : isOverloaded(error) ? 60_000 : Math.max(10_000, error.retryAfterMs ?? 30_000);
-  unavailable.set(model, now + ms);
+  unavailable.set(model + tag, now + ms);
 }
 
 /** Test hook. */
@@ -304,18 +323,22 @@ interface GenerateResult {
  */
 export async function generateText(cfg: GeminiConfig, params: GenerateParams, options: RequestOptions = {}): Promise<GenerateResult> {
   const models = Array.isArray(params.model) ? params.model : [params.model ?? cfg.chatModel];
-  if (models.length === 1) return generateOnce(cfg, models[0]!, params, options);
+  const keys = geminiKeys(cfg);
+  if (models.length === 1 && keys.length === 1) return generateOnce(cfg, models[0]!, params, options);
+  // Each model on every key before the next model: the same model on a second key is as good as the first.
+  const live = models.flatMap((model) => keys.filter((key) => liveModels([model], Date.now(), keyTag(key)).length).map((key) => [key, model] as const));
+  const tries = live.length ? live : models.flatMap((model) => keys.map((key) => [key, model] as const));
   let lastError: unknown;
-  const usable = usableModels(models);
-  for (const [i, model] of usable.entries()) {
-    // Only the last model retries an overload; before that, the next model is the faster way out.
-    const last = i === usable.length - 1;
+  for (const [i, [key, model]] of tries.entries()) {
+    // Only the last try retries an overload; before that, the next one is the faster way out.
+    const last = i === tries.length - 1;
     try {
-      return await generateOnce(cfg, model, params, { ...options, waitOutQuota: false, retries: last ? options.retries : 0 });
+      return await generateOnce(key, model, params, { ...options, waitOutQuota: false, retries: last ? options.retries : 0 });
     } catch (error) {
       if (!isModelUnavailable(error)) throw error;
-      markUnavailable(model, error);
+      markUnavailable(model, error, Date.now(), keyTag(key));
       lastError = error;
+      if (options.signal?.aborted) break;
     }
   }
   throw lastError;

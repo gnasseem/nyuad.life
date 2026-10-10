@@ -52,8 +52,8 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
 
    | Variable | Needed for |
    | --- | --- |
-   | `GEMINI_API_KEY` | Answers for students not signed in with ChatGPT, question tagging, course summaries. |
-   | `GEMINI_EXTRA_KEYS`, `GROQ_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, `NVIDIA_API_KEY`, `ZAI_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY` | Free backup models for answers when Gemini is overloaded or out of quota (below). Any or all; each variable takes several keys separated by commas. |
+   | `GEMINI_API_KEY` | Answers for students not signed in with ChatGPT, question tagging, course summaries. Several keys from different Google projects, separated by commas, multiply the free quota. |
+   | `GROQ_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY` | Free backup models for answers when Gemini is overloaded or out of quota (below). Any or all; each variable takes several keys separated by commas. |
    | `DEEPSEEK_API_KEY` | Optional paid safety net, about $0.002 an answer: used only when every free model is down (below). |
    | `ROR_ADMIN_NETIDS` | Comma-separated verified administrator NetIDs, for example `gnn9245`. |
    | `RESEND_API_KEY`, `RESEND_FROM`, `SESSION_SECRET` | NYU email login: a verified Resend sender and a 32+ character session secret. |
@@ -77,16 +77,18 @@ search, courses, plan and the board are rate-limited per IP.
 
 Free model tiers can be overloaded (503) or rate-limited (429). Ask moves down a chain before writing any text:
 
-1. Gemini 3.5 Flash-Lite, Gemma 4 31B, Gemma 4 26B and Gemini 3.1 Flash-Lite: each has its own daily quota on one key.
-2. The same models on `GEMINI_EXTRA_KEYS` (AI Studio keys from other Google projects, through Gemini's
-   OpenAI-compatible endpoint), then Groq (gpt-oss 120B, Qwen 3.8 27B, gpt-oss 20B), Cloudflare Workers AI (Gemma 4,
-   about a quarter of Llama's neuron cost), NVIDIA (Nemotron 3 Super, Gemma 4 31B, Kimi), Z.ai (GLM 4.7 Flash),
-   OpenRouter's free models, Mistral and Vercel AI Gateway, for each key that is set. Groq's free tier caps tokens per
-   minute, so its prompts are shortened to fit; a prompt still too long for a provider skips it.
+1. Gemini 3.5 Flash-Lite, Gemma 4 31B, Gemma 4 26B and Gemini 3.1 Flash-Lite: each has its own daily quota, and each
+   is tried on every key in `GEMINI_API_KEY` before the next model. A model spent on one key rests on that key only.
+2. Groq (gpt-oss 120B, Qwen 3.8 27B, gpt-oss 20B), Cloudflare Workers AI (Gemma 4, about a quarter of Llama's neuron
+   cost), Z.ai (GLM 4.7 Flash), OpenRouter's free models, Mistral and Vercel AI Gateway, for each key that is set.
+   Groq's free tier caps tokens per minute, so its prompts are shortened to fit; a prompt still too long for a
+   provider skips it.
 3. DeepSeek, when `DEEPSEEK_API_KEY` is set: paid, but only reached when every free model has failed.
 
-Every key variable takes several keys separated by commas (`GROQ_API_KEY=gsk_a,gsk_b`): free tiers are counted per
-account, so each key is another quota, tried model by model across the keys. Reasoning models are asked to think
+Every key variable takes several keys separated by commas, with no spaces needed (`GEMINI_API_KEY=AIza…1,AIza…2`,
+`GROQ_API_KEY=gsk_a,gsk_b`): free tiers are counted per Google project or per account, so each key is another quota,
+tried model by model across the keys. Two keys from the same Google project or the same account share one quota and
+add nothing. Reasoning models are asked to think
 little or not at all, so answers start quickly. A JSON call (ratings, plan reading, moderation) has one deadline for
 the whole chain, so falling back from model to model cannot outlast the function.
 
@@ -124,7 +126,6 @@ it stands (`answers.chain`).
 | Mistral | "Experiment" plan, phone check | [console.mistral.ai](https://console.mistral.ai) |
 | OpenRouter | `:free` models, 50 requests a day without paying (1,000 a day only after a $10 top-up) | [openrouter.ai/keys](https://openrouter.ai/keys) |
 | Cloudflare | 10,000 neurons a day, about 90 answers on Gemma 4 | [dash.cloudflare.com](https://dash.cloudflare.com) → AI → Workers AI |
-| NVIDIA | about 40 requests a minute, for prototyping | [build.nvidia.com](https://build.nvidia.com) |
 | Z.ai | GLM Flash models free, one request at a time | [z.ai](https://z.ai) |
 
 Opening questions are also cached for six hours (`lib/answer-cache.ts`): the same question asked again, in any case or
@@ -133,7 +134,7 @@ this saves much of the quota. The cache lives in memory and in the board's `guid
 up, so every serverless instance shares it; expired entries are removed.
 
 Settings: `ROR_MODEL_ORDER=groq,gemini` puts a backup first (the default is
-`gemini,gemini2,groq,cloudflare,nvidia,zai,openrouter,mistral,gateway,deepseek`); `ROR_MODEL_DISCOVERY=0` turns the model listing off; `<PROVIDER>_MODELS` and `<PROVIDER>_LITE_MODELS` (for
+`gemini,groq,cloudflare,zai,openrouter,mistral,gateway,deepseek`); `ROR_MODEL_DISCOVERY=0` turns the model listing off; `<PROVIDER>_MODELS` and `<PROVIDER>_LITE_MODELS` (for
 example `GROQ_MODELS`) replace a provider's model lists; `ROR_ANSWER_CACHE=0` turns the cache off. Gemini's own lists
 are `GEMINI_CHAT_MODEL`, `GEMINI_CHAT_FALLBACK_MODELS`, `GEMINI_LITE_MODEL` and `GEMINI_LITE_FALLBACK_MODELS`.
 

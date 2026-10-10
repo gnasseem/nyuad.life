@@ -10,7 +10,7 @@ import { embedderForIndex, type Embedder } from './embeddings.ts';
 import { ChatGPTError, liteText, markChatGPTModelUnusable, streamResponse, usableChatGPTModels, type ChatGPTConfig } from './chatgpt.ts';
 import { abuDhabiDate, baseCode, courseScheduleText, instructorScheduleText, isCourseQuestion, loadCatalog, matchSchedule, searchCatalog, type Catalog } from './courses.ts';
 import { cachedAnswer, saveAnswer } from './answer-cache.ts';
-import { generateJson, generateStream, generateText, isDailyQuota, isModelUnavailable, liveModels, markUnavailable, type GeminiConfig, type GeminiError, type Message } from './gemini.ts';
+import { generateJson, generateStream, generateText, geminiKeys, isDailyQuota, isModelUnavailable, keyTag, liveModels, markUnavailable, type GeminiConfig, type GeminiError, type Message } from './gemini.ts';
 import { ApiError } from './http.ts';
 import { officialCards, officialSourceBlock, retrieveOfficial, type OfficialCorpus } from './official.ts';
 import { screenAsk } from './moderation.ts';
@@ -1092,16 +1092,21 @@ export function answerWriters(writers: Writers, now = Date.now()): AnswerWriter[
     const cfg = writers.gemini;
     const gemini = (models: string[]) => {
       if (!cfg) return;
-      for (const model of strict ? liveModels(models, now) : models) {
-        out.push({
-          name: model,
-          stream: (system, messages, signal, last) => geminiChunks(cfg, model, system, messages, signal, last),
-          failed: (error) => {
-            if (isModelUnavailable(error)) markUnavailable(model, error);
-          },
-          busy: (error) => isModelUnavailable(error),
-          quota: (error) => isModelUnavailable(error) && isDailyQuota(error as GeminiError),
-        });
+      // Each model on every key (GEMINI_API_KEY may hold several) before the next model.
+      for (const model of models) {
+        for (const key of geminiKeys(cfg)) {
+          const tag = keyTag(key);
+          if (strict && !liveModels([model], now, tag).length) continue;
+          out.push({
+            name: model + tag,
+            stream: (system, messages, signal, last) => geminiChunks(key, model, system, messages, signal, last),
+            failed: (error) => {
+              if (isModelUnavailable(error)) markUnavailable(model, error, Date.now(), tag);
+            },
+            busy: (error) => isModelUnavailable(error),
+            quota: (error) => isModelUnavailable(error) && isDailyQuota(error as GeminiError),
+          });
+        }
       }
     };
     const main = cfg ? [...new Set([cfg.chatModel, ...cfg.chatFallbacks])] : [];
