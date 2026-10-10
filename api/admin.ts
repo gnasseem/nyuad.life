@@ -1,5 +1,9 @@
-/** Moderation and model diagnostics for verified accounts on ROR_ADMIN_NETIDS. */
-import { adminConfig, adminEmails, adminSession, emailAdmins, requireAdmin, usageText } from '../lib/admin.ts';
+/**
+ * The admin page, for verified accounts on ROR_ADMIN_NETIDS: how the site is used (op=stats), what the answer models
+ * are doing (models, usage), moderation (bans, audit, remove, unban) and the outage email test.
+ */
+import { adminConfig, adminEmails, adminSession, dashboard, emailAdmins, requireAdmin, usageText } from '../lib/admin.ts';
+import { appUsage } from '../lib/app-usage.ts';
 import { validateNetId } from '../lib/board.ts';
 import { boardStore, type AdminTarget, type BoardStore } from '../lib/board-store.ts';
 import { geminiConfig, geminiKeyProblem } from '../lib/gemini.ts';
@@ -25,6 +29,16 @@ export default route(['GET', 'POST'], async (req, res) => {
   rateLimit(req, 60, 60, 'admin');
   const ip = `ip:${clientKey(clientIp(req))}`;
   switch (op) {
+    case 'stats': {
+      const now = Date.now();
+      const [usage, overview] = await Promise.all([appUsage(30, now), need(store).adminOverview(new Date(now))]);
+      sendJson(res, 200, dashboard(usage, overview, now));
+      return;
+    }
+    case 'audit': {
+      sendJson(res, 200, { audit: await need(store).listAudit(40) });
+      return;
+    }
     case 'models': {
       rateLimit(req, 3, 1, 'admin-models');
       await warmModels(4_000);

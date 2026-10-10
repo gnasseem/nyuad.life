@@ -1,5 +1,7 @@
 /** Small helpers shared by every API route so handlers stay readable and behave the same on Vercel and the dev server. */
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { recordRequest, routeName, saveAppUsage } from './app-usage.ts';
+import { emailSession } from './auth.ts';
 import { saveModelUsage } from './model-usage.ts';
 
 export type ApiRequest = IncomingMessage & {
@@ -98,11 +100,15 @@ export async function readJson<T>(req: ApiRequest): Promise<T> {
   if (req.body !== undefined && req.body !== null && typeof req.body !== 'string') return req.body as T;
   const raw = typeof req.body === 'string' ? req.body : await readText(req);
   if (!raw.trim()) return {} as T;
+  let parsed: T;
   try {
-    return JSON.parse(raw) as T;
+    parsed = JSON.parse(raw) as T;
   } catch {
     throw new ApiError(400, 'Body must be valid JSON.', 'bad_json');
   }
+  // Kept on the request, as Vercel does, so the usage count can name a POST's operation.
+  req.body = parsed;
+  return parsed;
 }
 
 async function readText(req: IncomingMessage): Promise<string> {
@@ -162,6 +168,7 @@ const STORAGE_CODES = new Set(['board_schema_missing', 'board_schema_outdated', 
 /** Wraps a handler with CORS, OPTIONS, method and origin checks, and uniform error JSON. */
 export function route(methods: Array<'GET' | 'POST'>, handler: Handler): Handler {
   return async (req, res) => {
+    const started = Date.now();
     cors(req, res);
     res.setHeader('x-content-type-options', 'nosniff');
     if (req.method === 'OPTIONS') {
@@ -195,9 +202,10 @@ export function route(methods: Array<'GET' | 'POST'>, handler: Handler): Handler
       if (status >= 500) console.error(`[api] ${req.method} ${req.url}:`, error);
       sendJson(res, status >= 400 && status < 600 ? status : 500, { error: code, message });
     } finally {
-      // The model calls this request made, counted in memory, are saved once the response is out, before the
-      // function may be frozen (lib/model-usage.ts).
-      await saveModelUsage();
+      recordRequest({ route: routeName(req), status: res.statusCode, ms: Date.now() - started, person: emailSession(req)?.netId, device: clientKey(clientIp(req)) });
+      // The model calls and the request this made, counted in memory, are saved once the response is out, before the
+      // function may be frozen (lib/model-usage.ts, lib/app-usage.ts).
+      await Promise.all([saveModelUsage(), saveAppUsage()]);
     }
   };
 }

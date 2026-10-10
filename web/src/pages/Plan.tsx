@@ -1,10 +1,10 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { clock, DEFAULT_RULES, highlights, lanes, minutes, normalizeRules, PRIMARY, sectionFits, sessionHalf, solve, WEEKDAYS, type Choice, type Fix, type Option, type Quality, type Rules, type SolverCourse, type Want } from '../../../lib/schedule.ts';
+import { clock, DAY_NAMES, DEFAULT_RULES, highlights, lanes, minutes, normalizeRules, PRIMARY, sectionFits, sessionHalf, solve, WEEKDAYS, type Choice, type Fix, type Option, type Quality, type Rules, type SolverCourse, type Want } from '../../../lib/schedule.ts';
 import { api, ApiError, type CourseRating, type CourseRow, type ProfRating, type Term } from '../api';
 import { Segmented } from '../components/Segmented';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
-import { IconArrow, IconBack, IconBolt, IconCheck, IconChevronRight, IconClose, IconCopy, IconSearch } from '../icons';
+import { IconArrow, IconBack, IconBolt, IconCheck, IconChevronRight, IconClose, IconCopy } from '../icons';
 import { navigate, onLinkClick, useRoute } from '../router';
 import { loadPlan, savePlan, uid, type PlanMessage, type SavedPlan } from '../store';
 
@@ -22,8 +22,7 @@ const SHAPE_HELP: Record<Rules['shape'], string> = {
 };
 const STARTS = ['', '08:30', '09:55', '11:20', '12:45', '13:55', '15:20', '17:00'];
 const ENDS = ['', '09:45', '11:10', '12:35', '14:00', '15:10', '16:50', '18:00', '19:25'];
-const PER_DAY = [0, 1, 2, 3, 4];
-const DAY_LETTER: Record<string, string> = { Mon: 'M', Tue: 'T', Wed: 'W', Thu: 'Th', Fri: 'F', Sat: 'Sa', Sun: 'Su' };
+const MOST_PER_DAY = 4;
 const SHORT: Record<string, string> = { Lecture: 'Lec', Seminar: 'Sem', Recitation: 'Rec', Laboratory: 'Lab', Studio: 'Studio', Workshop: 'Wksp' };
 /** How far a rating counts, by how sure it is: a thin one is pulled toward average. */
 const TRUST: Record<ProfRating['confidence'], number> = { high: 1, medium: 0.8, low: 0.55 };
@@ -44,13 +43,6 @@ function planTerm(terms: Term[]): string {
 function termCode(rows: CourseRow[], code: string): string | null {
   const base = (value: string) => value.replace(/^([A-Z]+-UH \d{4})[A-Z]*$/, '$1');
   return rows.find((row) => row.code === code)?.code ?? rows.find((row) => base(row.code) === base(code))?.code ?? null;
-}
-
-function fold(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '');
 }
 
 /** Which plan this is, by its class numbers, so it can be found again after the list is ranked anew. */
@@ -183,21 +175,12 @@ export function PlanPage() {
   const why = option ? highlights(option, saved.rules, settled).join(' · ') : '';
 
   const setRules = (patch: Partial<Rules>) => update({ rules: { ...saved.rules, ...patch } });
-  const addCode = (code: string) => {
-    if (saved.wants.some((want) => want.codes.length === 1 && want.codes[0] === code)) return;
-    update({ wants: [...saved.wants, { id: uid(), label: '', codes: [code] }] });
-  };
   const removeWant = (id: string) => update({ wants: saved.wants.filter((want) => want.id !== id) });
   const applyFix = (fix: Fix) =>
     update({
       ...(fix.drop ? { wants: saved.wants.filter((want) => want.id !== fix.drop) } : {}),
       ...(fix.rules ? { rules: { ...saved.rules, ...fix.rules } } : {}),
     });
-  const person = (name: string, as: 'prefer' | 'avoid') => {
-    const prefer = saved.rules.prefer.filter((entry) => entry !== name);
-    const avoid = saved.rules.avoid.filter((entry) => entry !== name);
-    setRules(as === 'prefer' ? { prefer: [...prefer, name], avoid } : { prefer, avoid: [...avoid, name] });
-  };
 
   const credits = useMemo(() => {
     if (option) return { low: option.credits, high: option.credits };
@@ -254,7 +237,7 @@ export function PlanPage() {
 
   return (
     <div className="page plan-page">
-      <Sign title="Plan" ar="الجدول" sub="Say what you need or add courses yourself. You get every week that fits, best-rated professors first.">
+      <Sign title="Plan" ar="الجدول" sub="Say what you need. You get every week that fits, best-rated professors first.">
         {terms && terms.length > 0 && (
           <label className="term-pick">
             <span className="sr-only">Semester</span>
@@ -344,118 +327,48 @@ export function PlanPage() {
 
       <div className={`plan${option ? ' has-plan' : ''}`}>
         <fieldset className="plan-side" disabled={reading}>
-          <div className="plan-block">
+          <section className="plan-block" aria-labelledby="plan-courses">
             <div className="plan-block-head">
-              <h2>Courses</h2>
+              <h2 id="plan-courses">Courses</h2>
               {saved.wants.length > 0 && <Load low={credits.low} high={credits.high} />}
             </div>
-            {saved.wants.length > 0 && (
+            {saved.wants.length > 0 ? (
               <div className="wants">
                 {saved.wants.map((want, i) => (
                   <WantRow key={want.id} want={want} color={i} titles={titles} problem={result?.problems.find((problem) => problem.want === want.id)?.text} onRemove={() => removeWant(want.id)} />
                 ))}
               </div>
+            ) : (
+              <p className="plan-empty-note">
+                Tell the assistant what you need, or use <b>Add to a plan</b> on any course in{' '}
+                <a className="link" href="/courses" onClick={onLinkClick}>
+                  Reviews
+                </a>
+                .
+              </p>
             )}
-            <CoursePicker rows={rows?.courses ?? null} taken={new Set(saved.wants.flatMap((want) => want.codes))} onPick={addCode} />
-          </div>
+            {(saved.rules.prefer.length > 0 || saved.rules.avoid.length > 0) && (
+              <div className="chips plan-people" aria-label="Professors you asked for">
+                {saved.rules.prefer.map((name) => (
+                  <button key={`p-${name}`} type="button" className="chip on" onClick={() => setRules({ prefer: saved.rules.prefer.filter((entry) => entry !== name) })} aria-label={`Stop preferring ${name}`}>
+                    With {name} <IconClose />
+                  </button>
+                ))}
+                {saved.rules.avoid.map((name) => (
+                  <button key={`a-${name}`} type="button" className="chip on avoid" onClick={() => setRules({ avoid: saved.rules.avoid.filter((entry) => entry !== name) })} aria-label={`Stop avoiding ${name}`}>
+                    Not {name} <IconClose />
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
 
-          <details className="plan-fold">
-            <summary>
-              <span>Week</span>
-              <small>{rulesSummary(saved.rules) || 'Any time, any day'}</small>
-            </summary>
-            <div className="rules">
-              <label className="rule">
-                <span>No class before</span>
-                <select className="input" value={saved.rules.earliest} onChange={(event) => setRules({ earliest: event.target.value })}>
-                  {[...new Set([...STARTS, saved.rules.earliest])].map((time) => (
-                    <option key={time} value={time}>
-                      {time ? clock(time) : 'Any time'}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="rule">
-                <span>Done by</span>
-                <select className="input" value={saved.rules.latest} onChange={(event) => setRules({ latest: event.target.value })}>
-                  {[...new Set([...ENDS, saved.rules.latest])].map((time) => (
-                    <option key={time} value={time}>
-                      {time ? clock(time) : 'Any time'}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="rule wide">
-                <span id="days-off">Days off</span>
-                <div className="day-toggles" role="group" aria-labelledby="days-off">
-                  {WEEKDAYS.map((day) => {
-                    const off = saved.rules.daysOff.includes(day);
-                    return (
-                      <button key={day} type="button" className={`day-toggle${off ? ' on' : ''}`} aria-pressed={off} aria-label={`${day} off`} onClick={() => setRules({ daysOff: off ? saved.rules.daysOff.filter((entry) => entry !== day) : [...saved.rules.daysOff, day] })}>
-                        {DAY_LETTER[day]}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <label className="rule">
-                <span>Classes a day</span>
-                <select className="input" value={saved.rules.maxPerDay} onChange={(event) => setRules({ maxPerDay: Number(event.target.value) })}>
-                  {PER_DAY.map((most) => (
-                    <option key={most} value={most}>
-                      {most ? `At most ${most}` : 'Any number'}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="rule">
-                <span>Shape</span>
-                <Segmented label="Shape of the week" value={saved.rules.shape} onChange={(shape) => setRules({ shape })} options={SHAPES} />
-              </div>
-              <small className="rule-help wide">{SHAPE_HELP[saved.rules.shape]}</small>
-              <div className="rule wide switches">
-                <Switch on={saved.rules.bestRated} onChange={(bestRated) => setRules({ bestRated })} label="Best-rated professors first">
-                  {saved.rules.bestRated && candidates.length > 0 ? (unread > 0 ? `Reading about ${unread} more…` : rated ? `${rated} of ${candidates.length} rated.` : 'None rated yet.') : 'From what students wrote about them.'}
-                </Switch>
-                <Switch on={saved.rules.noBackToBack} onChange={(noBackToBack) => setRules({ noBackToBack })} label="No back-to-back">
-                  Leave a break between classes.
-                </Switch>
-                <Switch on={saved.rules.waitlisted} onChange={(waitlisted) => setRules({ waitlisted })} label="Include waitlists">
-                  Full sections you could waitlist.
-                </Switch>
-              </div>
-            </div>
-          </details>
-
-          <details className="plan-fold">
-            <summary>
-              <span>Professors</span>
-              <small>{saved.rules.prefer.length || saved.rules.avoid.length ? [saved.rules.prefer.length ? `With ${saved.rules.prefer.length}` : '', saved.rules.avoid.length ? `not ${saved.rules.avoid.length}` : ''].filter(Boolean).join(', ') : 'No preference'}</small>
-            </summary>
-            <div className="rule wide">
-              {(saved.rules.prefer.length > 0 || saved.rules.avoid.length > 0) && (
-                <div className="chips">
-                  {saved.rules.prefer.map((name) => (
-                    <button key={`p-${name}`} type="button" className="chip on" onClick={() => setRules({ prefer: saved.rules.prefer.filter((entry) => entry !== name) })} aria-label={`Stop preferring ${name}`}>
-                      With {name} <IconClose />
-                    </button>
-                  ))}
-                  {saved.rules.avoid.map((name) => (
-                    <button key={`a-${name}`} type="button" className="chip on avoid" onClick={() => setRules({ avoid: saved.rules.avoid.filter((entry) => entry !== name) })} aria-label={`Stop avoiding ${name}`}>
-                      Not {name} <IconClose />
-                    </button>
-                  ))}
-                </div>
-              )}
-              <ProfPicker rows={rows?.courses ?? null} plan={new Set(candidates)} ratings={profRatings} taken={new Set([...saved.rules.prefer, ...saved.rules.avoid])} onPick={person} />
-              <small className="rule-help">With: plans with them come first. Not: they are left out.</small>
-            </div>
-          </details>
+          <WeekFilter rules={saved.rules} onChange={setRules} ratings={saved.rules.bestRated && candidates.length > 0 ? (unread > 0 ? `Reading about ${unread} more professors…` : rated ? `${rated} of ${candidates.length} professors rated.` : 'No professor rated yet.') : 'From what students wrote about them.'} />
         </fieldset>
 
         <div className="plan-main" ref={mainRef}>
           {!rows && !error && <div className="skeleton" style={{ height: 420 }} />}
-          {rows && saved.wants.length === 0 && <WeekGrid option={null} daysOff={saved.rules.daysOff} empty="Add courses, or tell the assistant what you need, to see a week that fits." />}
+          {rows && saved.wants.length === 0 && <WeekGrid option={null} daysOff={saved.rules.daysOff} empty="Tell the assistant what you need to see a week that fits." />}
           {result && result.problems.length > 0 && (
             <>
               <div className="alert warn plan-problems" role="status">
@@ -512,7 +425,7 @@ export function PlanPage() {
   );
 }
 
-const IDEAS = ['Calc, intro to CS and an Arts Core', 'Nothing before 10, Fridays off', 'Add a 7-week Core in the first half', 'No back-to-back classes'];
+const IDEAS = ['Calc, intro to CS and an Arts Core', 'Nothing before 10, Fridays off', 'At most two classes a day', 'No back-to-back classes'];
 
 /** The week's rules in a line, for the folded preferences. */
 function rulesSummary(rules: Rules): string {
@@ -616,6 +529,118 @@ function Load({ low, high }: { low: number; high: number }) {
   );
 }
 
+/**
+ * The week's rules, always in view: a bar of the teaching day with the hours you keep free hatched, the start and end
+ * that set it, the days you want off, how many classes a day, the shape of the week and three switches.
+ */
+function WeekFilter({ rules, onChange, ratings }: { rules: Rules; onChange(patch: Partial<Rules>): void; ratings: string }) {
+  const from = DAY_START;
+  const to = DAY_END;
+  const start = rules.earliest ? minutes(rules.earliest) : from;
+  const end = rules.latest ? minutes(rules.latest) : to;
+  const share = (time: number) => `${((Math.min(to, Math.max(from, time)) - from) / (to - from)) * 100}%`;
+  const changed = rules.earliest || rules.latest || rules.daysOff.length || rules.maxPerDay || rules.shape !== 'any' || rules.noBackToBack || rules.waitlisted || !rules.bestRated;
+  const summary = rulesSummary(rules);
+  return (
+    <section className="plan-block week-filter" aria-labelledby="plan-week">
+      <div className="plan-block-head">
+        <h2 id="plan-week">Your week</h2>
+        {changed ? (
+          <button type="button" className="link-btn small" onClick={() => onChange({ ...DEFAULT_RULES, avoid: rules.avoid, prefer: rules.prefer })}>
+            Reset
+          </button>
+        ) : null}
+      </div>
+      <p className="wf-summary">{summary || 'Any time, any day.'}</p>
+
+      <div className="wf-window" aria-hidden="true">
+        <div className="wf-track">
+          <span className="wf-band" style={{ left: share(start), right: `calc(100% - ${share(end)})` }} />
+          {STARTS.slice(2).map((time) => (
+            <i key={time} style={{ left: share(minutes(time)) }} />
+          ))}
+        </div>
+        <div className="wf-ends">
+          <span>{clock(from)}</span>
+          <span>{clock(to)}</span>
+        </div>
+      </div>
+      <div className="wf-times">
+        <label className="wf-field">
+          <span>Start after</span>
+          <select className="input" value={rules.earliest} onChange={(event) => onChange({ earliest: event.target.value })}>
+            {[...new Set([...STARTS, rules.earliest])].map((time) => (
+              <option key={time} value={time}>
+                {time ? clock(time) : 'Any time'}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="wf-field">
+          <span>Done by</span>
+          <select className="input" value={rules.latest} onChange={(event) => onChange({ latest: event.target.value })}>
+            {[...new Set([...ENDS, rules.latest])].map((time) => (
+              <option key={time} value={time}>
+                {time ? clock(time) : 'Any time'}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="wf-row">
+        <span className="wf-label" id="wf-days">
+          Days on campus
+        </span>
+        <div className="wf-days" role="group" aria-labelledby="wf-days">
+          {WEEKDAYS.map((day) => {
+            const off = rules.daysOff.includes(day);
+            return (
+              <button key={day} type="button" className={`wf-day${off ? ' off' : ''}`} aria-pressed={off} aria-label={`${DAY_NAMES[day]}: ${off ? 'off' : 'on campus'}`} onClick={() => onChange({ daysOff: off ? rules.daysOff.filter((entry) => entry !== day) : [...rules.daysOff, day] })}>
+                <b>{day}</b>
+                <small>{off ? 'Off' : 'On'}</small>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="wf-row wf-inline">
+        <span className="wf-label" id="wf-most">
+          Classes a day
+        </span>
+        <div className="stepper" role="group" aria-labelledby="wf-most">
+          <button type="button" onClick={() => onChange({ maxPerDay: Math.max(0, (rules.maxPerDay || MOST_PER_DAY + 1) - 1) })} disabled={rules.maxPerDay === 1} aria-label="Fewer classes a day">
+            −
+          </button>
+          <output aria-live="polite">{rules.maxPerDay ? `At most ${rules.maxPerDay}` : 'Any'}</output>
+          <button type="button" onClick={() => onChange({ maxPerDay: rules.maxPerDay && rules.maxPerDay < MOST_PER_DAY ? rules.maxPerDay + 1 : 0 })} disabled={rules.maxPerDay === 0} aria-label="More classes a day">
+            +
+          </button>
+        </div>
+      </div>
+
+      <div className="wf-row">
+        <span className="wf-label">Shape</span>
+        <Segmented label="Shape of the week" value={rules.shape} onChange={(shape) => onChange({ shape })} options={SHAPES} />
+        <small className="rule-help">{SHAPE_HELP[rules.shape]}</small>
+      </div>
+
+      <div className="switches">
+        <Switch on={rules.bestRated} onChange={(bestRated) => onChange({ bestRated })} label="Best-rated professors first">
+          {ratings}
+        </Switch>
+        <Switch on={rules.noBackToBack} onChange={(noBackToBack) => onChange({ noBackToBack })} label="No back-to-back">
+          Leave a break between classes.
+        </Switch>
+        <Switch on={rules.waitlisted} onChange={(waitlisted) => onChange({ waitlisted })} label="Include waitlists">
+          Full sections you could waitlist.
+        </Switch>
+      </div>
+    </section>
+  );
+}
+
 function Switch({ on, onChange, label, children }: { on: boolean; onChange(on: boolean): void; label: string; children: ReactNode }) {
   return (
     <button type="button" role="switch" aria-checked={on} className={`switch${on ? ' on' : ''}`} onClick={() => onChange(!on)}>
@@ -654,160 +679,6 @@ function WantRow({ want, color, titles, problem, onRemove }: { want: PlanWant; c
       <button type="button" className="icon-btn" onClick={onRemove} aria-label="Remove">
         <IconClose />
       </button>
-    </div>
-  );
-}
-
-/** A search over the term's courses that adds the one you pick. */
-function CoursePicker({ rows, taken, onPick }: { rows: CourseRow[] | null; taken: Set<string>; onPick(code: string): void }) {
-  const [query, setQuery] = useState('');
-  const [active, setActive] = useState(0);
-  const matches = useMemo(() => {
-    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-    if (!rows || words.length === 0) return [];
-    return rows
-      .filter((row) => !taken.has(row.code) && row.sections.some((section) => section.status !== 'cancelled'))
-      .map((row) => {
-        const code = row.code.toLowerCase().replace(/[^a-z0-9]/g, '');
-        const title = row.title.toLowerCase();
-        let score = 0;
-        for (const word of words) {
-          const hit = (code.includes(word.replace(/[^a-z0-9]/g, '')) ? 3 : 0) + (title.includes(word) ? 2 : 0);
-          if (!hit) return null;
-          score += hit;
-        }
-        return { row, score };
-      })
-      .filter((entry): entry is { row: CourseRow; score: number } => entry !== null)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 6)
-      .map((entry) => entry.row);
-  }, [rows, query, taken]);
-  const pick = (code: string) => {
-    onPick(code);
-    setQuery('');
-    setActive(0);
-  };
-  return (
-    <div className="picker">
-      <div className="search-field">
-        <IconSearch />
-        <input
-          className="input"
-          type="search"
-          value={query}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setActive(0);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowDown') setActive((current) => Math.min(matches.length - 1, current + 1));
-            else if (event.key === 'ArrowUp') setActive((current) => Math.max(0, current - 1));
-            else if (event.key === 'Enter' && matches[active]) pick(matches[active]!.code);
-            else if (event.key === 'Escape') setQuery('');
-            else return;
-            event.preventDefault();
-          }}
-          placeholder="Add a course"
-          aria-label="Add a course"
-          disabled={!rows}
-          role="combobox"
-          aria-expanded={matches.length > 0}
-          aria-controls="picker-list"
-          aria-autocomplete="list"
-        />
-      </div>
-      {matches.length > 0 && (
-        <div className="picker-list" id="picker-list" role="listbox">
-          {matches.map((row, i) => (
-            <button key={row.code} type="button" role="option" aria-selected={i === active} className={i === active ? 'on' : undefined} onMouseEnter={() => setActive(i)} onClick={() => pick(row.code)}>
-              <span className="code">{row.code}</span>
-              <span>{row.title}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** A search over the term's professors, to plan with or without one; the ones who could be in this plan come first. */
-function ProfPicker({ rows, plan, ratings, taken, onPick }: { rows: CourseRow[] | null; plan: Set<string>; ratings: Map<string, ProfRating | null>; taken: Set<string>; onPick(name: string, as: 'prefer' | 'avoid'): void }) {
-  const [query, setQuery] = useState('');
-  const [active, setActive] = useState(0);
-  const people = useMemo(() => {
-    const teaching = new Map<string, Set<string>>();
-    for (const row of rows ?? []) {
-      for (const section of row.sections) {
-        if (section.status === 'cancelled') continue;
-        for (const name of section.instructors) teaching.set(name, (teaching.get(name) ?? new Set()).add(row.code));
-      }
-    }
-    return teaching;
-  }, [rows]);
-  const matches = useMemo(() => {
-    const words = fold(query).split(/[\s,.]+/).filter(Boolean);
-    if (words.length === 0) return [];
-    return [...people.keys()]
-      .filter((name) => !taken.has(name) && words.every((word) => fold(name).includes(word)))
-      .sort((a, b) => Number(plan.has(b)) - Number(plan.has(a)) || (ratings.get(b)?.score ?? 0) - (ratings.get(a)?.score ?? 0) || a.localeCompare(b))
-      .slice(0, 6);
-  }, [people, query, taken, plan, ratings]);
-  const pick = (name: string, as: 'prefer' | 'avoid') => {
-    onPick(name, as);
-    setQuery('');
-    setActive(0);
-  };
-  return (
-    <div className="picker">
-      <div className="search-field">
-        <IconSearch />
-        <input
-          className="input"
-          type="search"
-          value={query}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setActive(0);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowDown') setActive((current) => Math.min(matches.length - 1, current + 1));
-            else if (event.key === 'ArrowUp') setActive((current) => Math.max(0, current - 1));
-            else if (event.key === 'Enter' && matches[active]) pick(matches[active]!, event.shiftKey ? 'avoid' : 'prefer');
-            else if (event.key === 'Escape') setQuery('');
-            else return;
-            event.preventDefault();
-          }}
-          placeholder="Prefer or avoid a professor"
-          aria-label="Prefer or avoid a professor"
-          disabled={!rows}
-        />
-      </div>
-      {matches.length > 0 && (
-        <ul className="picker-list prof-list" aria-label="Professors">
-          {matches.map((name, i) => {
-            const codes = [...(people.get(name) ?? [])];
-            const rating = ratings.get(name);
-            return (
-              <li key={name} className={i === active ? 'on' : undefined} onMouseEnter={() => setActive(i)}>
-                <span className="prof-name">
-                  <b>
-                    {name}
-                    {rating && <span className="prof-score">{rating.score.toFixed(1)}</span>}
-                  </b>
-                  <small>{codes.slice(0, 3).join(', ') + (codes.length > 3 ? '…' : '')}</small>
-                </span>
-                <button type="button" className="btn sm" onClick={() => pick(name, 'prefer')}>
-                  With
-                </button>
-                <button type="button" className="btn sm" onClick={() => pick(name, 'avoid')}>
-                  Not
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
     </div>
   );
 }

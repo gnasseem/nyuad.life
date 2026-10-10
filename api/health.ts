@@ -9,7 +9,7 @@ import { loadOfficial } from '../lib/official.ts';
 import { modelOrder, providersFromEnv } from '../lib/providers.ts';
 import { answerWriters } from '../lib/rag.ts';
 import { rerankerFromEnv } from '../lib/rerank.ts';
-import { loadArchive } from '../lib/store.ts';
+import { archiveMeta, loadArchive } from '../lib/store.ts';
 
 /** The board probe costs two database calls, so its result is kept for a while: five minutes when fine, half a minute when not. */
 let boardProbe: { at: number; result: BoardCheck } | undefined;
@@ -31,6 +31,24 @@ async function boardHealth(board: BoardStore | null): Promise<Record<string, unk
 export default route(['GET'], async (req, res) => {
   const cfg = geminiConfig();
   const board = boardStore();
+  const admin = Boolean(await adminSession(adminConfig(), req).catch(() => null));
+  const built = admin ? null : archiveMeta();
+  if (built) {
+    // Everyone else gets the fields the site reads, from the index's description: no archive to load.
+    const chatgpt = chatgptConfig();
+    const backups = providersFromEnv();
+    const chain = answerWriters({ gemini: cfg, chatgpt: null, backups, order: modelOrder() });
+    const boardState = await boardHealth(board);
+    sendJson(res, 200, {
+      ok: Boolean(cfg || chatgpt || backups.length),
+      archive: { posts: built.meta.posts, newestPost: built.meta.newestPost },
+      embeddings: { semanticSearch: Boolean(built.vectors && built.meta.dimensions > 0 && embedderForIndex(built.meta)) },
+      gemini: { configured: Boolean(cfg) },
+      answers: { available: chain.length > 0 || Boolean(chatgpt) },
+      board: { configured: boardState.configured, ok: boardState.ok, ...(boardState.ok || !boardState.configured ? {} : { problem: 'The board is not available right now. Try again in a few minutes.' }) },
+    });
+    return;
+  }
   let archive: Awaited<ReturnType<typeof loadArchive>> | undefined;
   let archiveError = '';
   try {
@@ -55,7 +73,7 @@ export default route(['GET'], async (req, res) => {
   const chain = answerWriters({ gemini: cfg, chatgpt: null, backups, order }).map((writer) => writer.name);
   const boardState = await boardHealth(board);
   const ok = Boolean(archive && (cfg || chatgpt || backups.length));
-  if (!(await adminSession(adminConfig(), req).catch(() => null))) {
+  if (!admin) {
     sendJson(res, archive ? 200 : 503, {
       ok,
       archive: archive ? { posts: archive.posts.length, newestPost: archive.meta.newestPost } : { error: 'unavailable' },

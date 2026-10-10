@@ -8,8 +8,8 @@ import { Segmented } from '../components/Segmented';
 import { Sign } from '../components/Sign';
 import { AdminRemove, onAdminRemoved } from '../components/AdminRemove';
 import { useApp } from '../context';
-import { formatTime, groupByDay, plural, shortDate, startsIn } from '../format';
-import { IconArrow, IconBag, IconPin, IconPlus, IconQuestions, IconSearch } from '../icons';
+import { formatTime, groupByDay, plural, startsIn } from '../format';
+import { IconArrow, IconBag, IconPin, IconPlus, IconSearch } from '../icons';
 import { useNow } from '../motion';
 import { navigate, type MarketTab } from '../router';
 import { askerKey, loadContact, saveContact } from '../store';
@@ -22,7 +22,6 @@ const TABS: Array<{ id: MarketTab; label: string }> = [
   { id: 'falcons', label: 'Falcons' },
   { id: 'campus', label: 'Campus Dirhams' },
   { id: 'rides', label: 'Rides' },
-  { id: 'lost', label: 'Lost & found' },
 ];
 
 const ITEM_KINDS: Array<{ id: ListingKind; label: string }> = [
@@ -31,18 +30,13 @@ const ITEM_KINDS: Array<{ id: ListingKind; label: string }> = [
   { id: 'free', label: 'Free' },
 ];
 
-const LOST_KINDS: Array<{ id: ListingKind; label: string }> = [
-  { id: 'lost', label: 'Lost' },
-  { id: 'found', label: 'Found' },
-];
-
-const KIND_CLASS: Record<ListingKind, string> = { sell: 'tone-line', want: 'tone-info', free: 'tone-ok', ride: 'tone-slate', lost: 'tone-alert', found: 'tone-ok' };
+const KIND_CLASS: Record<ListingKind, string> = { sell: 'tone-line', want: 'tone-info', free: 'tone-ok', ride: 'tone-slate' };
 
 function tabOf(kind: ListingKind): MarketTab {
-  return kind === 'ride' ? 'rides' : kind === 'lost' || kind === 'found' ? 'lost' : 'items';
+  return kind === 'ride' ? 'rides' : 'items';
 }
 
-/** Things for sale, wanted or free, Falcons and Campus Dirhams, shared rides, and lost and found: what students post to each other. */
+/** Things for sale, wanted or free, Falcons and Campus Dirhams, and shared rides: what students post to each other. */
 export function MarketPage({ tab }: { tab: MarketTab }) {
   const { boardProblem, profile, requestProfile, toast } = useApp();
   const [listings, setListings] = useState<{ listings: Listing[]; mine: Listing[] } | null>(null);
@@ -119,7 +113,7 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
 
   const all = listings?.listings ?? [];
   const mineIds = useMemo(() => new Set((listings?.mine ?? []).map((listing) => listing.id)), [listings]);
-  const defaultKind: ListingKind = tab === 'rides' ? 'ride' : tab === 'lost' ? 'lost' : 'sell';
+  const defaultKind: ListingKind = tab === 'rides' ? 'ride' : 'sell';
   const notReady = listingError instanceof ApiError && listingError.code === 'board_schema_missing';
 
   const currency: OfferCurrency | null = tab === 'falcons' ? 'falcon' : tab === 'campus' ? 'campus' : null;
@@ -134,7 +128,6 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
     if (!listings) return <Loading />;
     const props = { listings: all, mineIds, onClose: (listing: Listing, remove: boolean) => void closeListing(listing, remove), onPost: (kind: ListingKind) => void startPosting({ kind }) };
     if (tab === 'rides') return <RidesTab {...props} />;
-    if (tab === 'lost') return <LostTab {...props} />;
     return <ItemsTab {...props} />;
   })();
 
@@ -154,7 +147,7 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
           ) : (
             !notReady && (
               <button type="button" className="btn primary" onClick={() => void startPosting({ kind: defaultKind })}>
-                <IconPlus /> {tab === 'rides' ? 'Post a ride' : tab === 'lost' ? 'Post lost or found' : 'List something'}
+                <IconPlus /> {tab === 'rides' ? 'Post a ride' : 'List something'}
               </button>
             )
           ))}
@@ -178,7 +171,7 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
       <Modal
         open={composer !== null}
         onClose={() => setComposer(null)}
-        title={composer && 'side' in composer ? `${composer.side === 'buy' ? 'Buy' : 'Sell'} ${CURRENCIES[composer.currency].name}` : composer?.kind === 'ride' ? 'Offer or find a ride' : composer && tabOf(composer.kind) === 'lost' ? 'Lost or found something' : 'New listing'}
+        title={composer && 'side' in composer ? `${composer.side === 'buy' ? 'Buy' : 'Sell'} ${CURRENCIES[composer.currency].name}` : composer?.kind === 'ride' ? 'Offer or find a ride' : 'New listing'}
         width={520}
       >
         {composer &&
@@ -356,7 +349,7 @@ function ListingActions({ listing, mine, onClose }: { listing: Listing; mine: bo
             <span className="dot" /> Yours
           </span>
           <button type="button" className="btn sm" onClick={() => onClose(listing, false)}>
-            {listing.kind === 'lost' || listing.kind === 'found' ? 'Mark returned' : listing.kind === 'ride' ? 'Mark full' : 'Mark done'}
+            {listing.kind === 'ride' ? 'Mark full' : 'Mark done'}
           </button>
           <button type="button" className="btn sm ghost" onClick={() => onClose(listing, true)}>
             Remove
@@ -436,50 +429,6 @@ function RidesTab({ listings, mineIds, onClose, onPost }: TabProps) {
   );
 }
 
-function LostTab({ listings, mineIds, onClose, onPost }: TabProps) {
-  const [kind, setKind] = useState<ListingKind | ''>('');
-  const items = listings.filter((listing) => tabOf(listing.kind) === 'lost');
-  const shown = items.filter((listing) => !kind || listing.kind === kind);
-  if (items.length === 0) {
-    return (
-      <EmptyState icon={<IconQuestions />} title="Nothing lost or found">
-        <button type="button" className="btn" onClick={() => onPost('found')}>
-          I found something
-        </button>
-        <button type="button" className="btn primary" onClick={() => onPost('lost')}>
-          I lost something
-        </button>
-      </EmptyState>
-    );
-  }
-  return (
-    <>
-      <div className="toolbar">
-        <KindFilter kinds={LOST_KINDS} value={kind} counts={countKinds(items)} onChange={setKind} />
-      </div>
-      <div className="items">
-        {shown.map((listing) => (
-          <article key={listing.id} className="item">
-            <div className="item-top">
-              <h3>{listing.title}</h3>
-            </div>
-            <div className="item-meta">
-              <span className={`pill ${KIND_CLASS[listing.kind]}`}>
-                <span className="dot" /> {listing.kind === 'lost' ? 'Lost' : 'Found'}
-                {listing.happensAt ? ` ${shortDate(listing.happensAt)}` : ''}
-              </span>
-              {listing.place && <Place place={listing.place} />}
-              <span>{listing.posterName}</span>
-            </div>
-            {listing.body ? <Details text={listing.body} /> : <span />}
-            <ListingActions listing={listing} mine={mineIds.has(listing.id)} onClose={onClose} />
-          </article>
-        ))}
-      </div>
-    </>
-  );
-}
-
 function localInput(date: Date, withTime: boolean): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -507,7 +456,6 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
   const ready =
     contact.trim().length >= 3 &&
     (kind !== 'sell' || (Number(price) > 0 && /^\d+(?:\.\d{1,2})?$/.test(price))) &&
-    (!['lost', 'found'].includes(kind) || place.trim().length >= 2) &&
     (kind === 'ride' ? place.trim().length >= 2 && destination.trim().length >= 2 && Boolean(when) : title.trim().length >= 3);
 
   const submit = async () => {
@@ -549,7 +497,7 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
       }}
     >
       {group !== 'rides' && (
-        <Segmented<ListingKind> value={kind} onChange={setKind} label="Kind" options={group === 'lost' ? LOST_KINDS : ITEM_KINDS} />
+        <Segmented<ListingKind> value={kind} onChange={setKind} label="Kind" options={ITEM_KINDS} />
       )}
       {kind === 'ride' ? (
         <>
@@ -577,14 +525,14 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
       ) : (
         <>
           <div className="field">
-            <label htmlFor="ls-title">{group === 'lost' ? 'What is it' : 'What'}</label>
+            <label htmlFor="ls-title">What</label>
             <input
               id="ls-title"
               className="input"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               maxLength={100}
-              placeholder={group === 'lost' ? 'Black AirPods case' : kind === 'want' ? 'Desk lamp' : 'Mini fridge'}
+              placeholder={kind === 'want' ? 'Desk lamp' : 'Mini fridge'}
             />
           </div>
           <div className="form-grid">
@@ -596,15 +544,10 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
                   <span className="suffix">AED</span>
                 </div>
               </div>
-            ) : group === 'lost' ? (
-              <div className="field">
-                <label htmlFor="ls-date">When</label>
-                <input id="ls-date" className="input" type="date" value={when} max={localInput(now, false)} onChange={(event) => setWhen(event.target.value)} />
-              </div>
             ) : null}
             <div className="field">
-              <label htmlFor="ls-place">{group === 'lost' ? 'Where' : 'Pickup'}</label>
-              <input id="ls-place" className="input" value={place} onChange={(event) => setPlace(event.target.value)} maxLength={80} placeholder={group === 'lost' ? 'Library, 2nd floor' : 'A2, or any building code'} />
+              <label htmlFor="ls-place">Pickup</label>
+              <input id="ls-place" className="input" value={place} onChange={(event) => setPlace(event.target.value)} maxLength={80} placeholder="A2, or any building code" />
             </div>
           </div>
         </>
@@ -618,7 +561,7 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
           onChange={(event) => setBody(event.target.value)}
           rows={3}
           maxLength={1000}
-          placeholder={kind === 'ride' ? 'Splitting a Careem, back Sunday night' : group === 'lost' ? 'Any detail that helps tell it apart' : 'Condition, size, when you can hand it over'}
+          placeholder={kind === 'ride' ? 'Splitting a Careem, back Sunday night' : 'Condition, size, when you can hand it over'}
         />
       </div>
       <ContactFields kind={contactKind} contact={contact} onKind={setContactKind} onContact={setContact} />

@@ -25,6 +25,7 @@ const loaders = {
   post: () => import('./pages/Post'),
   threads: () => import('./pages/Threads'),
   settings: () => import('./pages/Settings'),
+  admin: () => import('./pages/Admin'),
   welcome: () => import('./components/Welcome'),
 };
 const PlanPage = lazy(() => loaders.plan().then((module) => ({ default: module.PlanPage })));
@@ -36,10 +37,12 @@ const MarketPage = lazy(() => loaders.market().then((module) => ({ default: modu
 const PostPage = lazy(() => loaders.post().then((module) => ({ default: module.PostPage })));
 const ThreadSearch = lazy(() => loaders.threads().then((module) => ({ default: module.ThreadSearch })));
 const SettingsPage = lazy(() => loaders.settings().then((module) => ({ default: module.SettingsPage })));
+const AdminPage = lazy(() => loaders.admin().then((module) => ({ default: module.AdminPage })));
 const Welcome = lazy(() => loaders.welcome().then((module) => ({ default: module.Welcome })));
 
 function prefetchPages(): void {
-  const run = () => Object.values(loaders).forEach((load) => void load().catch(() => undefined));
+  // The admin page is for a handful of people: it loads when opened.
+  const run = () => Object.entries(loaders).forEach(([name, load]) => name !== 'admin' && void load().catch(() => undefined));
   if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(run, { timeout: 4_000 });
   else window.setTimeout(run, 2_000);
 }
@@ -55,7 +58,7 @@ const NAV: Array<{ route: Route; label: string; line: Line; icon: typeof IconAsk
 
 /** The button names what it switches to. */
 const THEME_LABEL: Record<Theme, string> = { light: 'Switch to dark mode', dark: 'Switch to light mode' };
-const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Events', market: 'Market', courses: 'Reviews', professors: 'Professors', threads: 'Threads', post: 'Thread', plan: 'Plan', settings: 'Settings' };
+const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Events', market: 'Market', courses: 'Reviews', professors: 'Professors', threads: 'Threads', post: 'Thread', plan: 'Plan', settings: 'Settings', admin: 'Admin' };
 const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: '' };
 
 function useConversations(): Conversation[] {
@@ -126,7 +129,9 @@ export function App() {
       .then((result) => setAdmin(result.admin))
       .catch(() => setAdmin(false));
   }, []);
-  useEffect(refreshAdmin, [refreshAdmin, profile]);
+  // Asked again when the account changes, not every time the same profile is saved again.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(refreshAdmin, [refreshAdmin, profile?.netId]);
   useEffect(() => {
     void api.auth.me().then((result) => {
       if (result.profile) { saveAccountKey(result.key); setProfileState(result.profile); saveProfile(result.profile); }
@@ -255,6 +260,8 @@ export function App() {
         return <PostPage id={route.id} />;
       case 'settings':
         return <SettingsPage />;
+      case 'admin':
+        return <AdminPage />;
       default:
         return <AskPage resumeId={currentConversation ?? undefined} history={{ open: panelOpen, count: conversations.length, toggle: togglePanel }} />;
     }
@@ -289,7 +296,7 @@ export function App() {
           <LineNav activeIndex={activeIndex} hrefOf={hrefOf} />
           <div className="bar-tools">
             {admin && (
-              <a href="/settings#admin" className="admin-badge" onClick={onLinkClick} title="Admin mode is on">
+              <a href="/admin" className={`admin-badge${route.name === 'admin' ? ' on' : ''}`} onClick={onLinkClick} title="Admin" aria-current={route.name === 'admin' ? 'page' : undefined}>
                 <IconShield /> <span>Admin</span>
               </a>
             )}

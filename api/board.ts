@@ -32,6 +32,7 @@ import {
   type Profile,
   type Question,
 } from '../lib/board.ts';
+import { recordEvent } from '../lib/app-usage.ts';
 import { boardStore, type BoardStore } from '../lib/board-store.ts';
 import { loadCatalog } from '../lib/courses.ts';
 import { detectRedirect } from '../lib/domains.ts';
@@ -76,12 +77,15 @@ export default route(['GET', 'POST'], async (req, res) => {
     await store.rebindProfile(netId, ownerOf(key), key);
     const profile = await store.getProfile(netId);
     setEmailSession(req, res, netId);
+    recordEvent('login');
     sendJson(res, 200, { netId, key, profile: profile ? publicProfile(profile) : null });
     return;
   }
   if (op === 'auth_me') {
     const session = emailSession(req);
     const profile = session && !await store.isBanned(session.netId) ? await store.getProfile(session.netId) : null;
+    // Every visit opens with this: it is when a member was last seen, for the admins' count of active members.
+    if (profile) await seen(store, profile.netId, profile.lastSeenAt);
     sendJson(res, 200, { netId: session?.netId ?? '', key: profile ? session!.key : '', profile: profile ? publicProfile(profile) : null });
     return;
   }
@@ -208,6 +212,7 @@ export default route(['GET', 'POST'], async (req, res) => {
         if (error instanceof ApiError && error.code === 'board_schema_missing') throw new ApiError(503, 'Course reviews are not open yet. Try again soon.', 'reviews_unavailable');
         throw error;
       });
+      recordEvent('review');
       sendJson(res, 200, { review: publicReview(saved, profile.netId) });
       return;
     }
@@ -237,6 +242,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       const existing = await store.getProfile(draft.netId);
       if (existing?.ownerKey && existing.ownerKey !== owner) throw new ApiError(403, NETID_TAKEN, 'netid_taken');
       const profile = await store.upsertProfile(draft, owner);
+      if (!existing) recordEvent('signup');
       sendJson(res, 200, { profile: publicProfile(profile) });
       return;
     }
@@ -259,6 +265,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       if (open.length >= 3) throw new ApiError(400, `You already have three open ${CURRENCY_LABELS[draft.currency]} offers.`, 'too_many_offers');
       await review('offer', `Currency: ${draft.currency}`, `Side: ${draft.side}`, `Amount: ${draft.amount}`, `Rate: ${draft.rate} AED per unit`, `Note: ${draft.note}`);
       const offer = await store.createOffer({ ...draft, posterKey, posterNetId: profile.netId, posterName: profile.name, status: 'open' });
+      recordEvent('offer');
       sendJson(res, 200, { offer: publicOffer(offer) });
       return;
     }
@@ -280,6 +287,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       allow('listing', draft.title, draft.body, draft.place, draft.destination);
       await review('listing', `Kind: ${draft.kind}`, `Title: ${draft.title}`, draft.price !== null ? `Price: ${draft.price} AED` : '', draft.place ? `${draft.kind === 'ride' ? 'From' : 'Place'}: ${draft.place}` : '', draft.destination ? `To: ${draft.destination}` : '', draft.happensAt ? `When: ${localTime(draft.happensAt)}` : '', draft.body ? `Details: ${draft.body}` : '');
       const listing = await store.createListing({ ...draft, posterKey, posterNetId: profile.netId, posterName: profile.name, status: 'open' });
+      recordEvent('listing');
       sendJson(res, 200, { listing: publicListing(listing) });
       return;
     }
@@ -296,7 +304,9 @@ export default route(['GET', 'POST'], async (req, res) => {
       const asker = await requireMember(req, store);
       // The name shown is the asker's own first name or none, never whatever the request says.
       body.name = body.name && asker ? asker.name.split(' ')[0] : '';
-      sendJson(res, 200, await askQuestion(store, body));
+      const asked = await askQuestion(store, body);
+      recordEvent('question');
+      sendJson(res, 200, asked);
       return;
     }
     case 'next': {
@@ -327,6 +337,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       await Promise.all([store.recordEvent({ questionId: question.id, netId: profile.netId, kind: 'answer' }), store.bump(question.id, { answers: 1 }), store.touchProfile(profile.netId, true)]);
       answersMemo = null;
       statsMemo = null;
+      recordEvent('answer');
       sendJson(res, 200, { answer: publicAnswer(answer), answered: profile.answers + 1 });
       return;
     }
@@ -348,6 +359,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       allow('notice', draft.title, draft.body, draft.location, draft.link);
       await review('notice', `Kind: ${draft.kind}`, `Title: ${draft.title}`, draft.startsAt ? `When: ${localTime(draft.startsAt)}` : '', draft.location ? `Where: ${draft.location}` : '', draft.link ? `Link: ${draft.link}` : '', draft.body ? `Details: ${draft.body}` : '');
       const announcement = await store.createAnnouncement({ ...draft, posterKey, posterNetId: profile.netId, posterName: profile.name });
+      recordEvent('event');
       sendJson(res, 200, { announcement: publicAnnouncement(announcement) });
       return;
     }
@@ -380,6 +392,18 @@ async function review(kind: ReviewedKind, ...parts: Array<string | null | undefi
 }
 
 const FEED_PAGE = 30;
+
+/** NetID -> when this instance last marked them seen: once every half hour is plenty for "active today". */
+const seenAt = new Map<string, number>();
+const SEEN_EVERY_MS = 30 * 60_000;
+
+async function seen(store: BoardStore, netId: string, lastSeenAt: string): Promise<void> {
+  const now = Date.now();
+  if (now - (seenAt.get(netId) ?? 0) < SEEN_EVERY_MS || now - Date.parse(lastSeenAt) < SEEN_EVERY_MS) return;
+  seenAt.set(netId, now);
+  if (seenAt.size > 5000) seenAt.clear();
+  await store.touchProfile(netId, false).catch((error: Error) => console.warn('[board] could not mark a member seen:', error.message));
+}
 
 /** The leaderboard and the counts change slowly and are read on every visit: each instance keeps them a minute. */
 let answersMemo: { at: number; answers: Promise<Answer[]> } | null = null;

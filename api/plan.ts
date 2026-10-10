@@ -6,6 +6,7 @@
  *   POST /api/plan { term, text, current?: { wants, rules }, major?, year? }
  *     -> { wants: [{ label, codes }], rules, missing: [] }
  */
+import { recordEvent } from '../lib/app-usage.ts';
 import { baseCode, CORE_SUBJECTS, courseRows, loadCatalog, type CourseRow } from '../lib/courses.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, rateLimit, readJson, route, sendJson } from '../lib/http.ts';
@@ -105,7 +106,7 @@ export default route(['POST'], async (req, res) => {
   if (screened) throw new ApiError(422, screened.reason === 'self_harm' ? screened.reply : 'Describe the courses and times you want.', `blocked_${screened.reason}`);
   const gemini = geminiConfig();
   const backups = providersFromEnv();
-  if (!gemini && backups.length === 0) throw new ApiError(503, 'Planning from a description is off on this server. Add courses below instead.', 'no_model');
+  if (!gemini && backups.length === 0) throw new ApiError(503, 'Planning from a description is off on this server. Add courses from Reviews instead.', 'no_model');
 
   const rows = courseRows(catalog, term).filter((row) => row.sections.some((section) => section.status !== 'cancelled'));
   const student = [collapseWhitespace(String(body.major ?? '')).slice(0, 60), collapseWhitespace(String(body.year ?? '')).slice(0, 20)].filter(Boolean).join(', ');
@@ -126,8 +127,9 @@ export default route(['POST'], async (req, res) => {
     read = await siteJson<Read>(gemini, backups, { system: SYSTEM, prompt, schema: SCHEMA, maxOutputTokens: 4096, timeoutMs: 20_000 });
   } catch (error) {
     console.warn('[plan] could not read the request:', (error as Error).message);
-    throw new ApiError(503, 'Could not read that right now. Try again, or add courses below.', 'busy');
+    throw new ApiError(503, 'Could not read that right now. Try again in a moment.', 'busy');
   }
+  recordEvent('plan');
   sendJson(res, 200, cleanPlan(read, rows));
 });
 

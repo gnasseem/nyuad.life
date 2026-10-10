@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_GROUP_URL, FALCONS_PATH, LOST_PATH, MARKET_PATH, RIDES_PATH, detectRedirect } from './domains.ts';
+import { DEFAULT_GROUP_URL, FALCONS_PATH, MARKET_PATH, RIDES_PATH, detectRedirect } from './domains.ts';
 
 describe('detectRedirect', () => {
   it('sends Falcon-dirham trades to the Falcons page', () => {
@@ -18,12 +18,12 @@ describe('detectRedirect', () => {
     expect(detectRedirect('What are falcons and where can I spend them?', {})).toBeNull();
     expect(detectRedirect('Is the Falcon Team travel agency any good?', {})).toBeNull();
   });
-  it('sends listings, rides and lost-and-found to the market, and live requests to the group', () => {
+  it('sends listings and rides to the market, and lost items and live requests to the group', () => {
     const group = 'https://example.com/group';
     const env = { ROR_GROUP_URL: group };
     expect(detectRedirect('Selling a mini fridge, 150 AED', env)?.link.url).toBe(MARKET_PATH);
     expect(detectRedirect('anyone going to Dubai tonight? can I get a ride', env)?.link.url).toBe(RIDES_PATH);
-    expect(detectRedirect('I lost my airpods in the library yesterday', env)?.link.url).toBe(LOST_PATH);
+    expect(detectRedirect('I lost my airpods in the library yesterday', env)?.link.url).toBe(group);
     expect(detectRedirect('does anyone have an HDMI cable I can borrow right now', env)?.domain).toBe('live');
     expect(detectRedirect('does anyone have an HDMI cable I can borrow right now', env)?.link.url).toBe(group);
     expect(detectRedirect('does anyone have an HDMI cable I can borrow right now', {})?.link.url).toBe(DEFAULT_GROUP_URL);

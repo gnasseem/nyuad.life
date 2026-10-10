@@ -60,6 +60,21 @@ export function resetArchive(): void {
   cached = undefined;
 }
 
+/**
+ * The built index's description and whether its vectors are there, read without loading the archive (a second or two
+ * on a cold start): enough for the health check most visits make. Null when there is no built index.
+ */
+export function archiveMeta(): { meta: IndexMeta; vectors: boolean } | null {
+  const dir = indexDir();
+  const metaFile = path.join(dir, 'meta.json');
+  if (!existsSync(metaFile) || !existsSync(path.join(dir, 'posts.json.gz'))) return null;
+  try {
+    return { meta: JSON.parse(readFileSync(metaFile, 'utf8')) as IndexMeta, vectors: existsSync(path.join(dir, 'vectors.bin')) };
+  } catch {
+    return null;
+  }
+}
+
 async function load(): Promise<Archive> {
   const started = Date.now();
   const dir = indexDir();

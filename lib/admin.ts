@@ -1,7 +1,9 @@
 /** Admin privileges follow verified NYU accounts, checked against the deployment allowlist on every request. */
 import type { IncomingMessage } from 'node:http';
+import type { AppUsageReport, UsageDay } from './app-usage.ts';
 import { emailSession } from './auth.ts';
-import { boardStore } from './board-store.ts';
+import { STANDING_LABELS, standingFor } from './board.ts';
+import { boardStore, type AdminMember, type AdminOverview } from './board-store.ts';
 import { ApiError } from './http.ts';
 import { modelUsage, noteAlert, saveModelUsage, usageDay, type UsageState } from './model-usage.ts';
 import { modelKeys } from './providers.ts';
@@ -100,4 +102,48 @@ export async function alertModelsDown(reason: string, now = Date.now()): Promise
   } catch (error) {
     console.error('[models] could not send the outage email:', (error as Error).message);
   }
+}
+
+/* ---------- The dashboard ---------- */
+
+export interface Dashboard {
+  day: string;
+  members: { total: number; today: number; week: number; month: number };
+  /** Members last seen today, in the last 7 days and the last 30, by Abu Dhabi days. */
+  active: { today: number; week: number; month: number };
+  /** Every day of the window, oldest first: requests, people and what they did, and sign-ups that day. */
+  days: Array<UsageDay & { signups: number }>;
+  routes: AppUsageReport['routes'];
+  hours: number[];
+  shared: boolean;
+  newest: Array<AdminMember & { standing: string }>;
+  majors: Array<{ name: string; n: number }>;
+  standings: Array<{ name: string; n: number }>;
+  board: AdminOverview['counts'];
+}
+
+/** Usage counts and the member list folded into what the admin page shows. */
+export function dashboard(usage: AppUsageReport, overview: AdminOverview, now = Date.now()): Dashboard {
+  const day = usageDay(now);
+  const since = (days: number) => usageDay(now - (days - 1) * 86_400_000);
+  const joined = (member: AdminMember) => usageDay(Date.parse(member.createdAt));
+  const seen = (member: AdminMember) => usageDay(Date.parse(member.lastSeenAt));
+  const members = overview.members;
+  const count = (test: (member: AdminMember) => boolean) => members.filter(test).length;
+  const signups = new Map<string, number>();
+  for (const member of members) signups.set(joined(member), (signups.get(joined(member)) ?? 0) + 1);
+  const tally = (values: string[]) => [...values.reduce((map, value) => map.set(value, (map.get(value) ?? 0) + 1), new Map<string, number>())].map(([name, n]) => ({ name, n })).sort((a, b) => b.n - a.n);
+  return {
+    day,
+    members: { total: members.length, today: count((member) => joined(member) === day), week: count((member) => joined(member) >= since(7)), month: count((member) => joined(member) >= since(30)) },
+    active: { today: count((member) => seen(member) === day), week: count((member) => seen(member) >= since(7)), month: count((member) => seen(member) >= since(30)) },
+    days: usage.days.map((entry) => ({ ...entry, signups: signups.get(entry.day) ?? 0 })),
+    routes: usage.routes,
+    hours: usage.hours,
+    shared: usage.shared,
+    newest: members.slice(0, 12).map((member) => ({ ...member, standing: STANDING_LABELS[standingFor(member.classOf, new Date(now))] })),
+    majors: tally(members.map((member) => member.major)).slice(0, 10),
+    standings: tally(members.map((member) => STANDING_LABELS[standingFor(member.classOf, new Date(now))])),
+    board: overview.counts,
+  };
 }

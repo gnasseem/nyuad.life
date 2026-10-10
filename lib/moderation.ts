@@ -215,7 +215,7 @@ const REVIEW_MESSAGES: Record<Exclude<ReviewReason, 'unreviewed'>, string> = {
   trolling: "This doesn't read like a real post. If it is one, say plainly what it is.",
   fake: "This doesn't look real: check the details (what it is, when, and a place that exists on campus or in the UAE) and try again.",
   impersonation: 'Posts here come from students and student groups. Announcements from a university office belong on its own channels, and posts may not pretend to be someone else.',
-  offtopic: "This doesn't fit here. The event board is for real scheduled NYUAD events; the market is for students' things, rides and lost items.",
+  offtopic: "This doesn't fit here. The event board is for real scheduled NYUAD events; the market is for students' things and rides.",
   harassment: 'This targets or mocks a person. Rephrase it without that to post.',
 };
 const UNREVIEWED = "We couldn't check this post right now, so it hasn't gone up. Try again in a minute.";
@@ -226,7 +226,7 @@ const BELONGS: Record<ReviewedKind, string> = {
   notice:
     'a notice on the campus board: ONLY a real scheduled event for NYUAD students, with a future date and time, a real location or named online platform, and a description of the activity and host. Club meetups, shows, workshops, sports and bake sales are fine. Hiring cleaners, service ads, tutoring offers, job vacancies, deadline reminders, requests and general announcements are not events; reject them as offtopic even when they have a date.',
   listing:
-    'a market post: a student selling, wanting or giving away their own things, sharing a ride, or reporting something lost or found. A student offering a small service of their own (tutoring, haircuts, photography) is fine.',
+    'a market post: a student selling, wanting or giving away their own things, or sharing a ride. A student offering a small service of their own (tutoring, haircuts, photography) is fine.',
   offer: 'the note on an offer to trade Falcon Dirhams or Campus Dirhams for cash between students.',
   question: 'a question one student asks other students about life, courses or anything at NYUAD.',
   answer: "a student answering another student's question. Blunt opinions about a course, an office or how a class is taught are fine.",

@@ -12,10 +12,11 @@ export type Route =
   | { name: 'professors'; nameQuery?: string }
   | { name: 'threads' }
   | { name: 'plan' }
-  | { name: 'settings' };
+  | { name: 'settings' }
+  | { name: 'admin' };
 
-export type MarketTab = 'items' | 'falcons' | 'campus' | 'rides' | 'lost';
-const MARKET_TABS: MarketTab[] = ['items', 'falcons', 'campus', 'rides', 'lost'];
+export type MarketTab = 'items' | 'falcons' | 'campus' | 'rides';
+const MARKET_TABS: MarketTab[] = ['items', 'falcons', 'campus', 'rides'];
 
 export function parseRoute(pathname: string): Route {
   // A malformed escape ("/post/%E0") would throw outside every error boundary and leave a blank page; keep it as typed.
@@ -51,6 +52,8 @@ export function parseRoute(pathname: string): Route {
       return parts[1] ? { name: 'post', id: parts[1] } : { name: 'threads' };
     case 'settings':
       return { name: 'settings' };
+    case 'admin':
+      return { name: 'admin' };
     case 'falcons':
       return { name: 'market', tab: 'falcons' };
     case 'market':
@@ -74,6 +77,8 @@ export function routePath(route: Route): string {
       return `/post/${encodeURIComponent(route.id)}`;
     case 'settings':
       return '/settings';
+    case 'admin':
+      return '/admin';
     case 'market':
       return route.tab === 'items' ? '/market' : `/market/${route.tab}`;
     case 'courses':

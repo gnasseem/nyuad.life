@@ -65,8 +65,9 @@ describe('model usage', () => {
       sent.push({ headers: init.headers as Record<string, string>, body: JSON.parse(String(init.body)) });
       return json(200, { id: 'email' });
     });
-    recordModelCall({ key: 'gemini', provider: 'gemini', hint: '1111', model: 'gemini-3.5-flash-lite', ok: false, status: 503, error: 'Gemini 503: The model is overloaded.' });
     const now = Date.parse('2026-10-10T10:00:00Z');
+    // Counted on the day of the outage, whatever day the test runs.
+    recordModelCall({ key: 'gemini', provider: 'gemini', hint: '1111', model: 'gemini-3.5-flash-lite', ok: false, status: 503, error: 'Gemini 503: The model is overloaded.' }, now);
     await alertModelsDown('Answers are busy right now.', now);
     await alertModelsDown('Answers are busy right now.', now + 60_000);
     expect(sent).toHaveLength(1);

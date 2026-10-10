@@ -192,6 +192,46 @@ export interface UsageReport {
   alerts: { to: string[]; last: { at: string; reason: string } | null };
 }
 
+/** One day of site usage across every server instance (lib/app-usage.ts), with that day's sign-ups. */
+export interface UsageDayStats {
+  day: string;
+  requests: number;
+  errors: number;
+  rejected: number;
+  limited: number;
+  avgMs: number;
+  people: number;
+  devices: number;
+  signups: number;
+  events: Partial<Record<'ask' | 'ask_cached' | 'ask_failed' | 'login' | 'signup' | 'question' | 'answer' | 'review' | 'listing' | 'offer' | 'event' | 'plan' | 'rating', number>>;
+}
+
+export interface AdminMember {
+  netId: string;
+  name: string;
+  major: string;
+  classOf: number;
+  answers: number;
+  createdAt: string;
+  lastSeenAt: string;
+  standing: string;
+}
+
+/** The admin page's numbers (lib/admin.ts dashboard). */
+export interface AdminDashboard {
+  day: string;
+  members: { total: number; today: number; week: number; month: number };
+  active: { today: number; week: number; month: number };
+  days: UsageDayStats[];
+  routes: Array<{ name: string; n: number; err: number; avgMs: number }>;
+  hours: number[];
+  shared: boolean;
+  newest: AdminMember[];
+  majors: Array<{ name: string; n: number }>;
+  standings: Array<{ name: string; n: number }>;
+  board: { questions: number; openQuestions: number; answers: number; reviews: number; listings: number; offers: number; events: number; bans: number };
+}
+
 export type AnnouncementKind = 'event' | 'deadline' | 'opportunity' | 'club' | 'notice';
 
 export interface Announcement {
@@ -229,7 +269,7 @@ export interface Offer {
   createdAt: string;
 }
 
-export type ListingKind = 'sell' | 'want' | 'free' | 'ride' | 'lost' | 'found';
+export type ListingKind = 'sell' | 'want' | 'free' | 'ride';
 
 export interface Listing {
   id: string;
@@ -550,6 +590,9 @@ export const api = {
     models: () => request<{ geminiKeyProblem: string | null; results: ModelCheck[] }>('/api/admin?op=models'),
     usage: () => request<UsageReport>('/api/admin?op=usage'),
     alertTest: () => post<{ ok: true; to: string[] }>('/api/admin', { op: 'alert-test' }),
+    stats: () => request<AdminDashboard>('/api/admin?op=stats'),
+    audit: () => request<{ audit: Array<{ action: string; target: string; createdAt: string }> }>('/api/admin?op=audit'),
+    warm: () => request<{ rated: number; none: number; failed: number; left: number; ms: number }>('/api/courses?op=warm'),
   },
   plan: {
     read: (body: { term: string; text: string; history?: Array<{ role: 'user' | 'assistant'; text: string }>; current: { wants: Array<{ label: string; codes: string[]; sessions?: Array<'71' | '72'> }>; rules: Rules }; major?: string; year?: string }) =>

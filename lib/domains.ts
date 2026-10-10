@@ -1,7 +1,7 @@
 /**
- * Questions the archive should not try to answer, and where to send people instead. Falcon and Campus Dirham trades, listings, rides and
- * lost-and-found are live requests with their own pages in the market; anything else that needs someone right now goes
- * to the group.
+ * Questions the archive should not try to answer, and where to send people instead. Falcon and Campus Dirham trades,
+ * listings and rides are live requests with their own pages in the market; a lost item, and anything else that needs
+ * someone right now, goes to the group.
  */
 
 type OffTopicDomain = 'falcons' | 'campus' | 'listing' | 'ride' | 'lost-found' | 'live';
@@ -18,7 +18,6 @@ export const FALCONS_PATH = '/market/falcons';
 export const CAMPUS_PATH = '/market/campus';
 export const MARKET_PATH = '/market';
 export const RIDES_PATH = '/market/rides';
-export const LOST_PATH = '/market/lost';
 export const DEFAULT_GROUP_URL = 'https://www.facebook.com/groups/nyuad.room.of.requirement';
 
 function groupUrl(env: NodeJS.ProcessEnv = process.env): string {
@@ -67,7 +66,7 @@ export function detectRedirect(question: string, env: NodeJS.ProcessEnv = proces
     return { domain: 'ride', title: 'Find a ride in the market', message: 'Rides are listed by day, with seats and a way to reach the driver.', link: { url: RIDES_PATH, label: 'Open rides' } };
   }
   if (LOST_FOUND.some((pattern) => pattern.test(text))) {
-    return { domain: 'lost-found', title: 'Post it in lost and found', message: 'Say where and when you last had it.', link: { url: LOST_PATH, label: 'Open lost and found' } };
+    return { domain: 'lost-found', title: 'Post it in the group', message: 'Say what it is and where you last had it: people on campus read the group all day.', link: group };
   }
   if (LIVE.some((pattern) => pattern.test(text)) && LIVE_NEED.test(text)) {
     return { domain: 'live', title: 'Ask the group', message: 'This needs someone who can help right now.', link: group };

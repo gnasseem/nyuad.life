@@ -23,17 +23,23 @@ archive browsing, plan reading and contacts to anyone who has not.
 - **Events.** Scheduled campus gatherings with required dates, locations and host details, browsed by day with calendar downloads. Events drop off one day after starting. Service requests and general notices are rejected.
 - **Market.** What the group is mostly used for besides questions: things for sale (up for three weeks), wanted (two)
   or free (one), offers to buy or sell Falcons and Campus Dirhams (two separate balances, each with its own order book;
-  five days), shared rides by day (gone three hours after they leave) and lost and found (three weeks). Contact details
-  are fetched one post at a time, on tap. Ask sends listings, trades, rides and lost items here.
+  five days) and shared rides by day (gone three hours after they leave). Contact details are fetched one post at a
+  time, on tap. Ask sends listings, trades and rides here, and lost items to the group. There is no lost and found: anyone
+  could claim to have found an item and ask its owner to describe it, so it was taken out, and the rows it left in
+  `board_listings` are never served.
 - **Reviews.** Every course in Albert's schedule once, searchable by code, title or professor, filtered by subject, Core
   or rated, and sortable by rating. Picking one shows an AI rating written from the group's threads about it (a score
   out of five, difficulty and workload, what students liked and what they warn about), who teaches it this term, and
   reviews students wrote here: stars, difficulty, workload, when they took it and a line of advice, one per student and
   course. The list shows both scores, read from the cache in one request. Ratings are cached for a month per course,
-  and a course nobody has described for a week, so opening it again costs nothing. Professors are a second tab.
+  and a course nobody has described for a week, so opening it again costs nothing. A daily cron
+  (`/api/cron/warm-ratings`, rewritten to `/api/courses?op=warm`) writes them ahead of time for the term's most
+  discussed courses and their professors, about half a minute's worth a night (admins can run more from the admin
+  page), so students rarely wait for one to be written. Professors are a second tab.
 - **Plan.** A schedule builder after [Horarium](https://github.com/Phoenix-3139/Horarium). Say what you need ("calc,
   intro to CS, any Arts Core, nothing before 10, Fridays off") and a model reads it into courses from the term's real list
-  and rules; or add courses one by one. The browser then finds every combination where no two classes meet at once
+  and rules, or add a course from its page in Reviews; the week's rules (hours, days off, classes a day, shape, breaks,
+  waitlists) are set beside the courses. The browser then finds every combination where no two classes meet at once
   (`lib/schedule.ts`): one section of every component, lectures paired with their own recitation or lab, seven-week
   halves sharing a slot, closed and waitlisted sections only when allowed. Hard rules (hours, days off, classes a day,
   no back-to-back, professors to avoid) always hold; within them plans are ranked by how students rate the professors
@@ -55,6 +61,7 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
    | `GEMINI_API_KEY` | Answers for students not signed in with ChatGPT, question tagging, course summaries. Several keys from different Google projects, separated by commas, multiply the free quota. |
    | `ZAI_API_KEY`, `GROQ_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY` | Free models for answers: Z.ai's GLM first, the rest when Gemini is overloaded or out of quota (below). Any or all; each variable takes several keys separated by commas. |
    | `ROR_ADMIN_NETIDS` | Comma-separated verified administrator NetIDs, for example `gnn9245`. |
+   | `CRON_SECRET` | Lets only Vercel's daily cron warm course ratings (admins can too). Without it the job is open but held to three runs a day. |
    | `RESEND_API_KEY`, `RESEND_FROM`, `SESSION_SECRET` | NYU email login: a verified Resend sender and a 32+ character session secret. |
    | `OPENAI_CLIENT_ID`, `SESSION_SECRET`, `ROR_SITE_URL` | Sign in with ChatGPT: answers on each student's own plan (below). |
    | `VOYAGE_API_KEY` | Semantic search (must be the provider that built the index) and the reranker. |
@@ -70,6 +77,7 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
 
 Routes: `GET /api/health`, `/api/search` (`q=`, `topic=`, `sort=`, `page=`), `/api/post?id=`, `/api/courses` (`term=`,
 `all=1`, `code=`, `code=&rating=1`, `profs=A|B`); `POST /api/ask` (server-sent events), `POST /api/plan`;
+`/api/courses?op=warm` (the nightly rating job, for the cron and admins),
 `GET|POST /api/board` (`op=stats|question|recent|feed|mine|announcements|offers|listings|contact|leaderboard` on GET,
 `profile|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer|listing|listing_done|unlisting` on POST). Ask,
 search, courses, plan and the board are rate-limited per IP.
@@ -82,14 +90,19 @@ Free model tiers can be overloaded (503) or rate-limited (429). Ask moves down a
    already answering someone is passed over at once for the next key, and with every key busy the question goes on
    down the chain; nobody waits for GLM. An open request from another instance comes back as a 429 (code 1302), which
    rests that key for 15 seconds.
-2. Gemini 3.5 Flash-Lite, Gemma 4 31B, Gemma 4 26B and Gemini 3.1 Flash-Lite: each has its own daily quota, and each
-   is tried on every key in `GEMINI_API_KEY` before the next model. A model spent on one key rests on that key only.
-3. Groq (gpt-oss 120B, Qwen 3.8 27B, gpt-oss 20B), Cloudflare Workers AI (Gemma 4, about a quarter of Llama's neuron
-   cost), OpenRouter's free models, Mistral and Vercel AI Gateway, for each key that is set. Groq's free tier caps
+2. Gemini 3.5 Flash-Lite and Gemini 3.1 Flash-Lite: each has its own daily quota, and each is tried on every key in
+   `GEMINI_API_KEY` before the next model. A model spent on one key rests on that key only.
+3. Groq (gpt-oss 120B, Qwen 3.8 27B, gpt-oss 20B), Cloudflare Workers AI (gpt-oss 120B, GLM 4.7 Flash), OpenRouter's
+   free models (Nemotron, gpt-oss), Mistral and Vercel AI Gateway, for each key that is set. Groq's free tier caps
    tokens per minute, so its prompts are shortened to fit; a prompt still too long for a provider skips it.
 
+Gemma is not called anywhere: on Gemini's and OpenRouter's free tiers it accepted requests and never answered, so every
+question waited out a timeout before moving on. Built-in lists leave it out and a listing that offers it as a stand-in
+is ignored; only a model list set in the environment can name it.
+
 Small calls (query rewrites, reranking, moderation, ratings, plan reading) go down the same order, one provider at a
-time, and no provider may take more than its share of the call's time, so a slow one leaves the next a chance.
+time, and no provider may take more than its share of the call's time (12 seconds for a course or professor rating),
+so a slow one leaves the next a chance.
 
 Instances also learn from each other: every couple of minutes each one reads today's usage (below) and rests the
 models and keys that failed elsewhere and have not worked since (a spent Gemini model, a refused key, a retired
@@ -124,7 +137,7 @@ instances never overwrite each other. Rows older than eight days are removed.
 | Groq | about 1,000 requests a day per model, no card | [console.groq.com/keys](https://console.groq.com/keys) |
 | Mistral | "Experiment" plan, phone check | [console.mistral.ai](https://console.mistral.ai) |
 | OpenRouter | `:free` models, 50 requests a day without paying (1,000 a day only after a $10 top-up) | [openrouter.ai/keys](https://openrouter.ai/keys) |
-| Cloudflare | 10,000 neurons a day, about 90 answers on Gemma 4 | [dash.cloudflare.com](https://dash.cloudflare.com) → AI → Workers AI |
+| Cloudflare | 10,000 neurons a day | [dash.cloudflare.com](https://dash.cloudflare.com) → AI → Workers AI |
 | Z.ai | GLM Flash models free, one request at a time | [z.ai](https://z.ai) |
 | Vercel AI Gateway | $5 of credit every 30 days, never charged unless you buy credit | [vercel.com](https://vercel.com) → AI Gateway → API keys |
 
@@ -249,10 +262,26 @@ recovers existing browser-owned posts. Settings includes Log out.
 Set `ROR_ADMIN_NETIDS=gnn9245` on Vercel, or a comma-separated list of NetIDs, and redeploy. An allowlisted user
 gets admin controls after verifying their NYU email and saving their profile. The allowlist is checked on every
 admin request. Removing a NetID from it removes its privileges without waiting for the login session to expire.
-Admins can remove posts, bar or unbar accounts, and check the answer models in Settings. Actions are recorded in
-`admin_audit`. Shared admin codes are no longer accepted.
+Admins can remove posts and bar or unbar accounts from any page; actions are recorded in `admin_audit`. Shared admin
+codes are no longer accepted.
 
-Routes: `GET /api/admin?op=me|bans|models`, `POST /api/admin {op: remove|unban}`.
+The admin page (`/admin`, the Admin badge in the bar) has four tabs:
+
+- **Usage:** members, members active today, sign-ups, requests and Ask answers today on a departure board; active
+  members, sign-ups and requests per day for 30 days; requests by hour today; what students did (Ask answers, cached and
+  failed, questions to students, answers, reviews, plans, ratings, listings, offers, events, logins, sign-ups) today,
+  this week and this month; the busiest routes with their average time and failures; and what is on the board.
+- **Members:** the newest members with when they joined and were last seen, and the spread of majors and years.
+- **Models:** what every model key did today, the model check, writing course ratings now, and the outage email test.
+- **Moderation:** barred accounts and the latest admin actions.
+
+Sign-ups and "last seen" come from `board_profiles` (`created_at`, and `last_seen_at`, which opening the site updates at
+most every half hour). Requests, active members per day and what students did are counted in `lib/app-usage.ts` like the
+model usage: each instance counts in memory and saves its own row per day in `guide_summaries`
+(`app:usage:<day>:<instance>`), at most every 15 seconds, with members and devices kept as short keyed hashes. Rows are
+kept 60 days. No schema change is needed.
+
+Routes: `GET /api/admin?op=me|stats|audit|bans|models|usage`, `POST /api/admin {op: remove|unban|alert-test}`.
 Email routes use `/api/board` operations `auth_send`, `auth_verify`, `auth_me`, and `auth_logout`.
 
 ## Safety

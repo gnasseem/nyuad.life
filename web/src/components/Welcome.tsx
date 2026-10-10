@@ -145,7 +145,6 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
             <>
               <div className="welcome-visual">
                 <div className="welcome-scene" aria-hidden="true">{stop.scene}</div>
-                <span className="welcome-preview">Preview</span>
               </div>
               <div className="welcome-copy">
                 <h2 id="welcome-title" tabIndex={-1}>{stop.title}</h2>
@@ -162,8 +161,8 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
           ) : (
             <div className="welcome-signup">
               <h2 id="welcome-title" tabIndex={-1}>Log in to nyuad.life</h2>
-              <p>{reason || 'Use your NYU email to log in or create an account.'}</p>
-              <ProfileForm onDone={onDone} submitLabel="Get started" />
+              <p>{reason || 'Use your NYU email to log in or create an account. It works on every device.'}</p>
+              <ProfileForm onDone={onDone} submitLabel="Get started" steps />
             </div>
           )}
         </div>
@@ -171,7 +170,6 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
         <div className="welcome-foot">
           {index < last ? (
             <>
-              <div className="welcome-position"><span>{stop?.kicker}</span><span>{index + 1} of {last}</span></div>
               <Progress index={index} total={last} onPick={go} />
               <div className="welcome-actions">
                 <button type="button" className="btn ghost welcome-back" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Back">
@@ -203,7 +201,9 @@ function Progress({ index, total, onPick }: { index: number; total: number; onPi
       <span className="welcome-track" aria-hidden="true" />
       <span className="welcome-train" aria-hidden="true" style={{ left: `calc(${(index / (total - 1)) * 100}% - 5px)` }} />
       {STOPS.map((stop, i) => (
-        <button key={stop.kicker} type="button" aria-current={i === index ? 'step' : undefined} aria-label={`${stop.kicker}, step ${i + 1} of ${total}`} className={`welcome-dot${i <= index ? ' done' : ''}`} data-line={stop.line} style={{ left: `${(i / (total - 1)) * 100}%` }} onClick={() => onPick(i)} />
+        <button key={stop.kicker} type="button" aria-current={i === index ? 'step' : undefined} aria-label={`${stop.kicker}, step ${i + 1} of ${total}`} className={`welcome-dot${i <= index ? ' done' : ''}`} data-line={stop.line} style={{ left: `${(i / (total - 1)) * 100}%` }} onClick={() => onPick(i)}>
+          <span className="welcome-dot-name">{stop.kicker}</span>
+        </button>
       ))}
     </div>
   );

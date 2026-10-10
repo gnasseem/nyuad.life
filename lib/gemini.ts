@@ -31,9 +31,10 @@ export const GEMINI_FREE_TIER = 'a daily quota per model and Google project, res
 // Prefer the free models that answered the production probe. Larger Flash models exhausted their quota or returned
 // overload errors on that key; trying them first kept working models behind a long chain of failures.
 // Each model has its own free daily quota on the same key, so more of them behind the first means more answers a day; a
-// spent one is skipped for hours, so the extra ones cost nothing until they are needed.
-const DEFAULT_CHAT_MODELS = ['gemini-3.5-flash-lite', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-3.1-flash-lite'];
-const DEFAULT_LITE_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemma-4-26b-a4b-it'];
+// spent one is skipped for hours, so the extra ones cost nothing until they are needed. Gemma is left out: on the free
+// tier it accepted requests and then never answered, so every question waited out its timeout before moving on.
+const DEFAULT_CHAT_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
+const DEFAULT_LITE_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
 export const DEFAULT_DIMENSIONS = 768;
 
 function modelList(value: string | undefined): string[] | null {

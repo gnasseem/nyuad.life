@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { api, ApiError, askStream, type Announcement, type FeedQuestion, type Listing, type MarketSummary, type QuestionWithAnswers } from '../api';
+import { api, ApiError, askStream, type Announcement, type FeedQuestion, type Listing, type MarketSummary, type QuestionWithAnswers, type SourceCard } from '../api';
 import { ChatGPTLine, ChatGPTSignIn } from '../components/ChatGPT';
 import { Flap } from '../components/Flap';
 import { RedirectCard } from '../components/RedirectCard';
-import { SourceRow } from '../components/SourceRow';
+import { KIND_LABEL, SourceRow } from '../components/SourceRow';
 import { useApp } from '../context';
-import { formatTime, plural, relativeDate, startsIn } from '../format';
+import { formatDate, formatTime, plural, relativeDate, startsIn } from '../format';
 import { IconArrow, IconCheck, IconChevron, IconCopy, IconPlus, IconSidebar, IconStop } from '../icons';
 import { Markdown } from '../markdown';
 import { useMedia, useNow } from '../motion';
@@ -342,6 +342,7 @@ export function AskPage({ resumeId, history }: Props) {
               <div key={message.id} data-id={message.id} className={`turn model${message.pending && !message.content ? ' pending' : ''}`}>
                 {message.status && <Route status={message.status} />}
                 {message.redirect && <RedirectCard redirect={message.redirect} />}
+                {message.sources && message.sources.length > 0 && !message.redirect && <SourceStrip sources={message.sources} hot={hot?.messageId === message.id ? hot.n : null} onPick={(n) => jumpToSource(message.id, n)} onHover={(n) => setHot(n === null ? null : { messageId: message.id, n })} />}
                 {message.content && (
                   <div className="answer">
                     <Markdown
@@ -435,6 +436,36 @@ export function AskPage({ resumeId, history }: Props) {
       {popover}
     </div>
   );
+}
+
+/**
+ * The sources as stops on a line, above the answer: they arrive before the first word, so the student sees what the
+ * answer rests on while it is written. A stop opens the full list at that source.
+ */
+function SourceStrip({ sources, hot, onPick, onHover }: { sources: SourceCard[]; hot: number | null; onPick(n: number): void; onHover(n: number | null): void }) {
+  return (
+    <div className="source-strip" aria-label={`${plural(sources.length, 'source')}`}>
+      <ol>
+        {sources.map((source) => (
+          <li key={source.n} data-kind={source.kind}>
+            <button type="button" className={hot === source.n ? 'hot' : undefined} onClick={() => onPick(source.n)} onMouseEnter={() => onHover(source.n)} onMouseLeave={() => onHover(null)} title={source.title || source.snippet}>
+              <span className="strip-n">{source.n}</span>
+              <span className="strip-text">
+                <b>{KIND_LABEL[source.kind]}</b>
+                <span>{stripTitle(source)}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** A few words that tell one source from another: its title, else the start of its passage. */
+function stripTitle(source: SourceCard): string {
+  const text = (source.title || source.snippet || source.text || '').replace(/\s+/g, ' ').trim();
+  return text.length > 48 ? `${text.slice(0, 46).trimEnd()}…` : text || (source.date ? formatDate(source.date) : '');
 }
 
 /** The server's current step, with the steps still to come, without inventing a completion percentage. */
@@ -534,13 +565,10 @@ function Home({ composer, historyButton, history, wide, answersOff }: { composer
     <div className="home">
       <section className="hero">
         {historyButton && <div className="hero-tools">{historyButton}</div>}
-        <p className="hero-kicker">
-          {greeting(now)}
-          {profile ? `, ${profile.name.split(' ')[0]}` : ''}
-        </p>
         <h1>Ask anything about NYUAD</h1>
         <p className="hero-sub">
-          Answers from official pages, the Albert schedule{posts > 1000 ? ` and ${(Math.floor(posts / 1000) * 1000).toLocaleString()}+ Room of Requirement threads` : ' and the Room of Requirement'}, with every source linked.
+          {greeting(now)}
+          {profile ? `, ${profile.name.split(' ')[0]}` : ''}. Answers come from official pages, the Albert schedule{posts > 1000 ? ` and ${(Math.floor(posts / 1000) * 1000).toLocaleString()}+ Room of Requirement threads` : ' and the Room of Requirement'}, with every source linked.
         </p>
         {composer}
         {answersOff && <p className="hero-note">Answers are paused right now. Search the group's threads in Reviews meanwhile.</p>}

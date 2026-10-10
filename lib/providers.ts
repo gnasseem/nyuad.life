@@ -65,7 +65,8 @@ interface Preset {
 
 // Newest and strongest first. Providers rename and retire models often: each one with a /models listing is checked
 // against it at runtime (discoverProviderModels), a model that answers 404 is skipped for hours, and the lists can be
-// replaced from the environment. Groq retired its Llama models for free keys on 2026-08-16.
+// replaced from the environment. Groq retired its Llama models for free keys on 2026-08-16. No Gemma anywhere: on the
+// free tiers it took requests and never answered (see NEVER).
 const PRESETS: Preset[] = [
   { id: 'groq', label: 'Groq', key: 'GROQ_API_KEY', baseUrl: 'https://api.groq.com/openai/v1', models: ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b'], liteModels: ['openai/gpt-oss-20b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-120b'], maxPromptChars: 16_000, maxOutputTokens: 1_400, freeTier: 'about 1,000 requests and 200,000 tokens a day per model', listsModels: true, fallbackPattern: /gpt-oss|qwen/i, extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : /qwen/.test(model) ? { reasoning_effort: 'none' } : {}) },
   {
@@ -76,24 +77,26 @@ const PRESETS: Preset[] = [
       const account = (env.CLOUDFLARE_ACCOUNT_ID ?? '').trim();
       return /^[a-f0-9]{32}$/i.test(account) ? `https://api.cloudflare.com/client/v4/accounts/${account}/ai/v1` : null;
     },
-    // Gemma 4 costs about a quarter of the neurons Llama 3.3 did, so the free day lasts about three times longer.
-    models: ['@cf/google/gemma-4-26b-a4b-it', '@cf/openai/gpt-oss-120b', '@cf/zai-org/glm-4.7-flash'],
-    liteModels: ['@cf/zai-org/glm-4.7-flash', '@cf/google/gemma-4-26b-a4b-it'],
+    models: ['@cf/openai/gpt-oss-120b', '@cf/zai-org/glm-4.7-flash'],
+    liteModels: ['@cf/zai-org/glm-4.7-flash', '@cf/openai/gpt-oss-20b'],
     maxPromptChars: 40_000,
     maxOutputTokens: 1_600,
-    freeTier: '10,000 neurons a day, about 90 answers; resets 04:00 Abu Dhabi',
+    freeTier: '10,000 neurons a day; resets 04:00 Abu Dhabi',
     listsModels: false,
     extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}),
   },
   { id: 'zai', label: 'Z.ai', key: 'ZAI_API_KEY', baseUrl: 'https://api.z.ai/api/paas/v4', models: ['glm-4.7-flash'], liteModels: ['glm-4.5-flash', 'glm-4.7-flash'], maxPromptChars: 60_000, maxOutputTokens: 2_000, freeTier: 'GLM Flash models free, one request at a time', concurrency: 1, listsModels: false, extra: () => ({ thinking: { type: 'disabled' } }) },
-  { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['nvidia/nemotron-3-super-120b-a12b:free', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'google/gemma-4-31b-it:free'], liteModels: ['google/gemma-4-26b-a4b-it:free', 'nvidia/nemotron-3-super-120b-a12b:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000, freeTier: '50 requests a day across all :free models', listsModels: true, fallbackPattern: /:free$/, extra: (model) => (/gpt-oss|nemotron|inkling/.test(model) ? { reasoning: { effort: 'low', exclude: true } } : {}) },
+  { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['nvidia/nemotron-3-super-120b-a12b:free', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'openai/gpt-oss-120b:free'], liteModels: ['nvidia/nemotron-3-super-120b-a12b:free', 'openai/gpt-oss-20b:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000, freeTier: '50 requests a day across all :free models', listsModels: true, fallbackPattern: /:free$/, extra: (model) => (/gpt-oss|nemotron|inkling/.test(model) ? { reasoning: { effort: 'low', exclude: true } } : {}) },
   { id: 'mistral', label: 'Mistral', key: 'MISTRAL_API_KEY', baseUrl: 'https://api.mistral.ai/v1', models: ['mistral-medium-latest', 'mistral-small-latest'], liteModels: ['mistral-small-latest'], maxPromptChars: 60_000, maxOutputTokens: 2_000, freeTier: 'Experiment plan', listsModels: true, fallbackPattern: /^mistral-(medium|small)/i },
-  { id: 'gateway', label: 'Vercel AI Gateway', key: 'AI_GATEWAY_API_KEY', baseUrl: 'https://ai-gateway.vercel.sh/v1', models: ['openai/gpt-oss-120b', 'google/gemma-4-31b-it'], liteModels: ['openai/gpt-oss-20b'], maxPromptChars: 80_000, maxOutputTokens: 2_000, freeTier: '$5 of credit every 30 days', listsModels: false, extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}) },
+  { id: 'gateway', label: 'Vercel AI Gateway', key: 'AI_GATEWAY_API_KEY', baseUrl: 'https://ai-gateway.vercel.sh/v1', models: ['openai/gpt-oss-120b'], liteModels: ['openai/gpt-oss-20b'], maxPromptChars: 80_000, maxOutputTokens: 2_000, freeTier: '$5 of credit every 30 days', listsModels: false, extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}) },
 ];
 
 // GLM goes first: free, strong, and a busy key is passed over at once (see atCapacity), so it never holds anyone up.
 export const DEFAULT_ORDER = ['zai', 'gemini', 'groq', 'cloudflare', 'openrouter', 'mistral', 'gateway'];
 const ALL_IDS = ['gemini', ...PRESETS.map((preset) => preset.id)];
+
+/** Models never tried unless an environment list names them: free Gemma accepted requests and then never answered. */
+const NEVER = /gemma/i;
 
 function list(value: string | undefined, fallback: string[]): string[] {
   const items = (value ?? '').split(',').map((item) => item.trim()).filter(Boolean);
@@ -115,7 +118,7 @@ export function refineModels(models: string[], available: Set<string> | null | u
   if (!available || available.size === 0) return models;
   const kept = models.filter((model) => available.has(model));
   if (kept.length) return kept;
-  const alike = pattern ? [...available].filter((model) => pattern.test(model)).sort().reverse().slice(0, 3) : [];
+  const alike = pattern ? [...available].filter((model) => pattern.test(model) && !NEVER.test(model)).sort().reverse().slice(0, 3) : [];
   return alike.length ? alike : models;
 }
 
@@ -619,7 +622,7 @@ async function downTheOrder<T>(
 export async function siteJson<T>(
   gemini: GeminiConfig | null,
   backups: Provider[],
-  params: { system: string; prompt: string; schema: Record<string, unknown>; tier?: 'lite' | 'main'; maxOutputTokens?: number; temperature?: number; timeoutMs?: number },
+  params: { system: string; prompt: string; schema: Record<string, unknown>; tier?: 'lite' | 'main'; maxOutputTokens?: number; temperature?: number; timeoutMs?: number; stepMs?: number },
 ): Promise<T> {
   const temperature = params.temperature ?? 0;
   const maxOutputTokens = params.maxOutputTokens ?? 1024;
@@ -628,11 +631,11 @@ export async function siteJson<T>(
   // The lists this call got were built before the instance knew what the keys can use; the next calls will.
   void warmModels(0).catch(() => undefined);
   // One deadline for the whole chain, so falling back cannot outlast the function's time limit; no provider may take
-  // more than 60% of it, so a slow first one still leaves the next a chance.
+  // more than 60% of it (or `stepMs`), so a slow first one still leaves the next a chance.
   return downTheOrder<T>(
     gemini,
     backups,
-    { totalMs: timeoutMs, stepMs: Math.ceil(timeoutMs * 0.6) },
+    { totalMs: timeoutMs, stepMs: params.stepMs ?? Math.ceil(timeoutMs * 0.6) },
     (cfg, signal) => {
       const model = params.tier === 'main' ? [cfg.chatModel, ...cfg.chatFallbacks] : cfg.liteModels;
       return generateJson<T>(cfg, { model, system: params.system, messages, responseSchema: params.schema, temperature, maxOutputTokens }, { retries: 0, signal, timeoutMs });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api, type CourseDetail, type CourseEntry, type CourseRating, type CourseReview, type ProfRating, type ScoreIndex } from '../api';
 import { AdminRemove } from '../components/AdminRemove';
@@ -6,7 +6,7 @@ import { Segmented } from '../components/Segmented';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
 import { plural, relativeDate } from '../format';
-import { IconClose, IconSearch } from '../icons';
+import { IconClose, IconSearch, IconStar } from '../icons';
 import { useLatest, useMedia, usePresence } from '../motion';
 import { navigate, useRoute } from '../router';
 
@@ -45,7 +45,7 @@ export function CoursesPage({ view, code, professor }: { view: View; code?: stri
   const scores = useScores();
   return (
     <div className="page reviews-page">
-      <Sign title="Reviews" ar="التقييمات" sub="Every course in Albert, rated from what students said in the Room of Requirement and from reviews written here.">
+      <Sign title="Reviews" ar="التقييمات" sub="Every course and professor in Albert, rated from what students said in the Room of Requirement and in reviews here.">
         <Segmented label="Reviews" value={view} onChange={(next) => navigate(next === 'professors' ? { name: 'professors' } : { name: 'courses' }, { replace: true })} options={VIEWS} />
       </Sign>
       {view === 'professors' ? <ProfessorSearch name={professor} scores={scores} /> : <CourseSearch code={code} scores={scores} />}
@@ -239,10 +239,22 @@ function CourseSearch({ code, scores }: { code?: string; scores: ScoreIndex | nu
   );
 }
 
+/** A score as a station roundel: the ring takes the colour of how good it is. */
 function ScoreBadge({ score, label }: { score: number; label: string }) {
   return (
     <span className={`score-badge ${tone(score)}`} title={label} aria-label={label}>
       {score.toFixed(1)}
+    </span>
+  );
+}
+
+/** Five stars filled to a score out of five. */
+function StarRow({ value, size = 14 }: { value: number; size?: number }) {
+  return (
+    <span className="star-row" aria-hidden="true">
+      {[1, 2, 3, 4, 5].map((stop) => (
+        <IconStar key={stop} amount={value - stop + 1} width={size} height={size} />
+      ))}
     </span>
   );
 }
@@ -272,14 +284,19 @@ function CourseItem({ course, scores, selected, onOpen }: { course: CourseEntry;
           {course.core && <span className="tag">Core</span>}
         </span>
         <span className="course-title">{course.title}</span>
-      </span>
-      <span className="course-scores">
-        {ai && <ScoreBadge score={ai.score} label={`Rated ${ai.score.toFixed(1)} from ${plural(ai.basis, 'student')} in the group`} />}
-        {own && (
-          <span className="own-score" title={`${own.avg.toFixed(1)} from ${plural(own.n, 'review')} here`}>
-            ★ {own.avg.toFixed(1)} <small>({own.n})</small>
+        {(ai?.difficulty || ai?.workload || course.people.length > 0) && (
+          <span className="course-sub">
+            {[ai?.difficulty ? HARDNESS[ai.difficulty] : '', ai?.workload ? `${SCALE[ai.workload]!.toLowerCase()} work` : '', course.people.slice(0, 2).join(', ')].filter(Boolean).join(' · ')}
           </span>
         )}
+      </span>
+      <span className="course-scores">
+        {own && (
+          <span className="own-score" title={`${own.avg.toFixed(1)} from ${plural(own.n, 'review')} here`}>
+            <IconStar width={13} height={13} /> {own.avg.toFixed(1)} <small>({own.n})</small>
+          </span>
+        )}
+        {ai && <ScoreBadge score={ai.score} label={`Rated ${ai.score.toFixed(1)} from ${plural(ai.basis, 'student')} in the group`} />}
       </span>
     </a>
   );
@@ -466,9 +483,11 @@ function Rating({ rating }: { rating: CourseRating }) {
       <div className="rating-head">
         <div className={`rating-score ${tone(rating.score)}`} aria-label={`Rated ${rating.score} out of 5`}>
           <b>{rating.score.toFixed(1)}</b>
-          <Stars value={rating.score} />
+          <StarRow value={rating.score} />
         </div>
-        {rating.verdict && <p className="rating-verdict">{rating.verdict}</p>}
+        <div className="rating-copy">
+          {rating.verdict && <p className="rating-verdict">{rating.verdict}</p>}
+        </div>
       </div>
       {(rating.difficulty || rating.workload) && (
         <div className="meters">
@@ -507,16 +526,6 @@ function Rating({ rating }: { rating: CourseRating }) {
   );
 }
 
-function Stars({ value }: { value: number }) {
-  return (
-    <span className="rating-stops" aria-hidden="true">
-      {[1, 2, 3, 4, 5].map((stop) => (
-        <i key={stop} style={{ '--fill': `${Math.round(Math.min(1, Math.max(0, value - stop + 1)) * 100)}%` } as CSSProperties} />
-      ))}
-    </span>
-  );
-}
-
 function Meter({ label, value, word }: { label: string; value: number; word: string }) {
   return (
     <div className="meter" aria-label={`${label}: ${word}`}>
@@ -531,17 +540,25 @@ function Meter({ label, value, word }: { label: string; value: number; word: str
   );
 }
 
+/** While a rating is read or written: the first person to open a course waits for it to be written, once. */
 function RatingLoading() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSlow(true), 2500);
+    return () => window.clearTimeout(timer);
+  }, []);
   return (
-    <div className="rating" aria-busy="true">
+    <div className="rating loading" aria-busy="true">
       <div className="rating-head">
-        <div className="skeleton" style={{ height: 64, width: 120 }} />
+        <div className="skeleton rating-skeleton" />
         <div className="stack" style={{ flex: 1 }}>
           <div className="skeleton" style={{ height: 14, width: '90%' }} />
           <div className="skeleton" style={{ height: 14, width: '70%' }} />
         </div>
       </div>
-      <p className="rating-basis">Reading what students wrote about it…</p>
+      <p className="rating-basis" role="status">
+        <span className="spinner" aria-hidden="true" /> {slow ? 'Nobody has opened this one yet, so its rating is being written from the threads. It is saved for everyone after this.' : 'Reading what students wrote about it…'}
+      </p>
     </div>
   );
 }
@@ -584,13 +601,31 @@ function StudentReviews({ code }: { code: string }) {
   return (
     <section className="detail-section reviews" id="write-review" aria-label="Reviews from students here">
       <div className="reviews-head">
-        <h3>Reviews here</h3>
-        {reviews && reviews.length > 0 && (
-          <span className="muted small">
-            ★ {average.toFixed(1)} from {plural(reviews.length, 'student')}
-          </span>
-        )}
+        <h3>Reviews from students here</h3>
       </div>
+      {reviews && reviews.length > 0 && (
+        <div className="review-summary">
+          <div className="review-average">
+            <b>{average.toFixed(1)}</b>
+            <StarRow value={average} size={15} />
+            <span>{plural(reviews.length, 'review')}</span>
+          </div>
+          <ul className="review-spread" aria-label="How students rated it">
+            {[5, 4, 3, 2, 1].map((stars) => {
+              const n = reviews.filter((review) => review.rating === stars).length;
+              return (
+                <li key={stars}>
+                  <span>{stars}</span>
+                  <span className="spread-bar" aria-hidden="true">
+                    <i style={{ width: `${(n / reviews.length) * 100}%` }} />
+                  </span>
+                  <span className="spread-n">{n}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
       {error && <div className="alert error">{error}</div>}
       {profile && open && (editing || (reviews && !mine)) ? (
         <ReviewForm
@@ -618,9 +653,8 @@ function ReviewCard({ review, onEdit, onRemove }: { review: CourseReview; onEdit
   return (
     <article className={`review-card${review.mine ? ' mine' : ''}`}>
       <div className="review-top">
-        <span className="review-stars" aria-label={`${review.rating} out of 5`}>
-          {'★'.repeat(review.rating)}
-          <span>{'★'.repeat(5 - review.rating)}</span>
+        <span className="review-stars" role="img" aria-label={`${review.rating} out of 5`}>
+          <StarRow value={review.rating} />
         </span>
         {review.difficulty ? <span className="tag">{HARDNESS[review.difficulty]}</span> : null}
         {review.workload ? <span className="tag">{SCALE[review.workload]} work</span> : null}
@@ -695,7 +729,7 @@ function ReviewForm({ code, initial, onSaved, onCancel }: { code: string; initia
                 setOpen(true);
               }}
             >
-              ★
+              <IconStar amount={0} width={24} height={24} />
             </button>
           ))}
         </div>
@@ -710,7 +744,7 @@ function ReviewForm({ code, initial, onSaved, onCancel }: { code: string; initia
         <div className="star-pick" role="radiogroup" aria-label="Your rating">
           {[1, 2, 3, 4, 5].map((stop) => (
             <button key={stop} type="button" role="radio" aria-checked={rating === stop} className={stop <= rating ? 'on' : undefined} aria-label={`${stop} out of 5`} onClick={() => setRating(stop)}>
-              ★
+              <IconStar amount={stop <= rating ? 1 : 0} width={24} height={24} />
             </button>
           ))}
         </div>
@@ -913,9 +947,11 @@ function ProfessorDetail({ name, courses, onClose }: { name: string; courses: st
             <div className="rating-head">
               <div className={`rating-score ${tone(rating.score)}`} aria-label={`Rated ${rating.score} out of 5`}>
                 <b>{rating.score.toFixed(1)}</b>
-                <Stars value={rating.score} />
+                <StarRow value={rating.score} />
               </div>
-              <p className="rating-verdict">{rating.verdict}</p>
+              <div className="rating-copy">
+                <p className="rating-verdict">{rating.verdict}</p>
+              </div>
             </div>
             <p className="rating-basis">
               AI summary of {rating.basis === 1 ? 'one student' : `${rating.basis} students`} in the Room of Requirement{rating.confidence === 'low' ? ', so take it lightly' : ''}.

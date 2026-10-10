@@ -226,3 +226,32 @@ export const IconShield = (p: SVGProps<SVGSVGElement>) => (
     <path d="m9 12 2.2 2.2L15.5 10" />
   </svg>
 );
+/** A star, filled to `amount` (0 to 1) from the left: ratings and review scores. */
+export const IconStar = ({ amount = 1, ...p }: SVGProps<SVGSVGElement> & { amount?: number }) => {
+  const fill = Math.min(1, Math.max(0, amount));
+  const id = `star-${Math.round(fill * 100)}`;
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" {...p}>
+      <defs>
+        <linearGradient id={id}>
+          <stop offset={`${fill * 100}%`} stopColor="currentColor" />
+          <stop offset={`${fill * 100}%`} stopColor="currentColor" stopOpacity="0.22" />
+        </linearGradient>
+      </defs>
+      <path d="m12 3.2 2.6 5.5 6 .8-4.4 4.2 1.1 6-5.3-2.9-5.3 2.9 1.1-6L3.4 9.5l6-.8z" fill={`url(#${id})`} stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+    </svg>
+  );
+};
+export const IconRefresh = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" />
+    <path d="M19.5 4.5v4h-4" />
+  </svg>
+);
+export const IconUsers = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <circle cx="9" cy="8.5" r="3.2" />
+    <path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5" />
+    <path d="M15.5 5.6a3.2 3.2 0 0 1 0 5.8M17.5 14.4c1.6.7 2.6 2.4 3 4.6" />
+  </svg>
+);

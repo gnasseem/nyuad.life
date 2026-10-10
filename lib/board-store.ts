@@ -3,7 +3,7 @@
  * production; an in-memory store for local development and tests. `boardStore()` picks one from the environment.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { ENOUGH_ANSWERS, type Announcement, type Answer, type BoardEvent, type CourseReview, type EventKind, type Listing, type Offer, type Profile, type Question, type Standing } from './board.ts';
+import { ENOUGH_ANSWERS, isListingKind, type Announcement, type Answer, type BoardEvent, type CourseReview, type EventKind, type Listing, type Offer, type Profile, type Question, type Standing } from './board.ts';
 import { ApiError } from './http.ts';
 import { supabaseConfig, type SupabaseConfig } from './supabase.ts';
 
@@ -100,6 +100,31 @@ export interface BoardStore {
   adminDelete(type: AdminTarget, id: string): Promise<Record<string, unknown> | null>;
   /** Keeps a record of what an admin did. Best effort: a missing table is not an error. */
   recordAudit(entry: { action: string; target: string; snapshot?: unknown; ip: string }): Promise<void>;
+  /** The newest admin actions, for the admin page. */
+  listAudit(limit: number): Promise<AuditEntry[]>;
+  /** For the admins' dashboard: every member with when they joined and were last seen, newest first, and board counts. */
+  adminOverview(now: Date): Promise<AdminOverview>;
+}
+
+export interface AuditEntry {
+  action: string;
+  target: string;
+  createdAt: string;
+}
+
+export interface AdminMember {
+  netId: string;
+  name: string;
+  major: string;
+  classOf: number;
+  answers: number;
+  createdAt: string;
+  lastSeenAt: string;
+}
+
+export interface AdminOverview {
+  members: AdminMember[];
+  counts: { questions: number; openQuestions: number; answers: number; reviews: number; listings: number; offers: number; events: number; bans: number };
 }
 
 export type AdminTarget = 'question' | 'answer' | 'notice' | 'listing' | 'offer' | 'review';
@@ -266,7 +291,7 @@ export class MemoryBoardStore implements BoardStore {
   }
   async getContact(type: 'offer' | 'listing', id: string, now: Date): Promise<Pick<Offer, 'contactKind' | 'contact'> | null> {
     const found = type === 'offer' ? this.offers.get(id) : this.listings.get(id);
-    if (!found || found.status !== 'open' || Date.parse(found.expiresAt) <= now.getTime()) return null;
+    if (!found || found.status !== 'open' || Date.parse(found.expiresAt) <= now.getTime() || ('kind' in found && !isListingKind(found.kind))) return null;
     return { contactKind: found.contactKind, contact: found.contact };
   }
   async listOffersByPoster(posterKey: string): Promise<Offer[]> {
@@ -285,10 +310,10 @@ export class MemoryBoardStore implements BoardStore {
     return created;
   }
   async listListings(now: Date): Promise<Listing[]> {
-    return [...this.listings.values()].filter((listing) => listing.status === 'open' && Date.parse(listing.expiresAt) > now.getTime()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return [...this.listings.values()].filter((listing) => isListingKind(listing.kind) && listing.status === 'open' && Date.parse(listing.expiresAt) > now.getTime()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
   async listListingsByPoster(posterKey: string): Promise<Listing[]> {
-    return [...this.listings.values()].filter((listing) => listing.posterKey === posterKey).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return [...this.listings.values()].filter((listing) => isListingKind(listing.kind) && listing.posterKey === posterKey).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
   async closeListing(id: string, posterKey: string, remove: boolean): Promise<boolean> {
     const listing = this.listings.get(id);
@@ -357,6 +382,26 @@ export class MemoryBoardStore implements BoardStore {
   }
   async listBans(): Promise<Ban[]> {
     return [...this.bans.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  async listAudit(limit: number): Promise<AuditEntry[]> {
+    return [...this.audit].reverse().slice(0, limit).map(({ action, target, createdAt }) => ({ action, target, createdAt }));
+  }
+  async adminOverview(now: Date): Promise<AdminOverview> {
+    const live = (expiresAt: string) => Date.parse(expiresAt) > now.getTime();
+    const stats = await this.stats();
+    return {
+      members: [...this.profiles.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(memberFrom),
+      counts: {
+        questions: this.questions.size,
+        openQuestions: stats.open,
+        answers: this.answers.length,
+        reviews: this.reviews.size,
+        listings: [...this.listings.values()].filter((listing) => isListingKind(listing.kind) && listing.status === 'open' && live(listing.expiresAt)).length,
+        offers: [...this.offers.values()].filter((offer) => offer.status === 'open' && live(offer.expiresAt)).length,
+        events: [...this.announcements.values()].filter((entry) => live(entry.expiresAt)).length,
+        bans: this.bans.size,
+      },
+    };
   }
   async adminDelete(type: AdminTarget, id: string): Promise<Record<string, unknown> | null> {
     if (type === 'question') {
@@ -472,6 +517,8 @@ type Row = Record<string, unknown>;
 
 /** Ids are uuid columns: anything else would make Postgres answer 400 instead of "not found". */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The listing kinds still served; the table's check constraint also allows the retired lost and found. */
+const LISTED_KINDS = 'sell,want,free,ride';
 /** Everything about a question but its embedding (a thousand floats): only the answer engine reads that. */
 const QUESTION_COLUMNS = 'select=id,text,summary,topics,courses,majors,years,asker_key,asker_name,status,views,skips,answers,created_at,updated_at';
 
@@ -675,7 +722,7 @@ export class SupabaseBoardStore implements BoardStore {
   async getContact(type: 'offer' | 'listing', id: string, now: Date): Promise<Pick<Offer, 'contactKind' | 'contact'> | null> {
     if (!UUID.test(id)) return null;
     const table = type === 'offer' ? 'board_offers' : 'board_listings';
-    const rows = await this.select(table, `id=eq.${enc(id)}&status=eq.open&expires_at=gt.${enc(now.toISOString())}&select=contact_kind,contact&limit=1`);
+    const rows = await this.select(table, `id=eq.${enc(id)}&status=eq.open&expires_at=gt.${enc(now.toISOString())}${type === 'listing' ? `&kind=in.(${LISTED_KINDS})` : ''}&select=contact_kind,contact&limit=1`);
     return rows[0] ? { contactKind: String(rows[0].contact_kind) as Offer['contactKind'], contact: String(rows[0].contact) } : null;
   }
   async listOffersByPoster(posterKey: string): Promise<Offer[]> {
@@ -710,10 +757,10 @@ export class SupabaseBoardStore implements BoardStore {
     return listingFrom(rows[0]!);
   }
   async listListings(now: Date): Promise<Listing[]> {
-    return (await this.select('board_listings', `status=eq.open&expires_at=gt.${enc(now.toISOString())}&order=created_at.desc&limit=400`)).map(listingFrom);
+    return (await this.select('board_listings', `status=eq.open&kind=in.(${LISTED_KINDS})&expires_at=gt.${enc(now.toISOString())}&order=created_at.desc&limit=400`)).map(listingFrom);
   }
   async listListingsByPoster(posterKey: string): Promise<Listing[]> {
-    return (await this.select('board_listings', `poster_key=eq.${enc(posterKey)}&order=created_at.desc&limit=50`)).map(listingFrom);
+    return (await this.select('board_listings', `poster_key=eq.${enc(posterKey)}&kind=in.(${LISTED_KINDS})&order=created_at.desc&limit=50`)).map(listingFrom);
   }
   async closeListing(id: string, posterKey: string, remove: boolean): Promise<boolean> {
     if (!UUID.test(id)) return false;
@@ -816,6 +863,36 @@ export class SupabaseBoardStore implements BoardStore {
   async recordAudit(entry: { action: string; target: string; snapshot?: unknown; ip: string }): Promise<void> {
     await this.write('POST', 'admin_audit', { action: entry.action, target: entry.target, snapshot: entry.snapshot ?? null, ip: entry.ip }, 'return=minimal').catch((error) => console.warn('[admin] could not write the audit log (run supabase/schema.sql again?):', (error as Error).message));
   }
+  async listAudit(limit: number): Promise<AuditEntry[]> {
+    const rows = await this.select('admin_audit', `select=action,target,created_at&order=created_at.desc&limit=${Math.min(200, limit)}`).catch(() => []);
+    return rows.map((row) => ({ action: String(row.action), target: String(row.target ?? ''), createdAt: String(row.created_at) }));
+  }
+  async adminOverview(now: Date): Promise<AdminOverview> {
+    const live = enc(now.toISOString());
+    const [members, stats, questions, reviews, listings, offers, events, bans] = await Promise.all([
+      this.select('board_profiles', 'select=net_id,name,major,class_of,answers,created_at,last_seen_at&order=created_at.desc&limit=10000'),
+      this.stats(),
+      this.count('board_questions', ''),
+      this.count('course_reviews', ''),
+      this.count('board_listings', `status=eq.open&kind=in.(${LISTED_KINDS})&expires_at=gt.${live}`),
+      this.count('board_offers', `status=eq.open&expires_at=gt.${live}`),
+      this.count('board_announcements', `expires_at=gt.${live}`),
+      this.listBans().catch(() => []),
+    ]);
+    return {
+      members: members.map((row) => memberFrom(profileFrom(row))),
+      counts: { questions, openQuestions: stats.open, answers: stats.answers, reviews, listings, offers, events, bans: bans.length },
+    };
+  }
+  /** How many rows match, from PostgREST's count header, without reading them; 0 when the table is missing. */
+  private async count(table: string, filter: string): Promise<number> {
+    try {
+      const response = await fetch(`${this.cfg.url}/rest/v1/${table}?select=*${filter ? `&${filter}` : ''}`, { method: 'HEAD', headers: this.headers('count=exact'), signal: AbortSignal.timeout(8_000) });
+      return Number(/\/(\d+)$/.exec(response.headers.get('content-range') ?? '')?.[1] ?? 0);
+    } catch {
+      return 0;
+    }
+  }
   private headers(prefer?: string): Record<string, string> {
     const headers: Record<string, string> = { apikey: this.cfg.serviceKey, authorization: `Bearer ${this.cfg.serviceKey}`, 'content-type': 'application/json' };
     if (prefer) headers.prefer = prefer;
@@ -874,6 +951,10 @@ function profileFrom(row: Row): Profile {
     lastSeenAt: String(row.last_seen_at),
     ownerKey: 'owner_key' in row ? ((row.owner_key as string | null) ?? null) : undefined,
   };
+}
+
+function memberFrom(profile: Profile): AdminMember {
+  return { netId: profile.netId, name: profile.name, major: profile.major, classOf: profile.classOf, answers: profile.answers, createdAt: profile.createdAt, lastSeenAt: profile.lastSeenAt };
 }
 
 function offerFrom(row: Row): Offer {

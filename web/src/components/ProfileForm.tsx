@@ -14,7 +14,21 @@ const MAJORS = [
 ];
 
 /** Name, NetID, major and year. Used as the sign-up step every new visitor goes through, and to edit them later. */
-export function ProfileForm({ onDone, submitLabel = 'Save' }: { onDone(profile: Profile): void; submitLabel?: string }) {
+/** The three steps of signing up, shown above the form when `steps` is set. */
+function Steps({ at }: { at: 0 | 1 | 2 }) {
+  return (
+    <ol className="auth-steps" aria-label={`Step ${at + 1} of 3`}>
+      {['Email', 'Code', 'Your details'].map((label, i) => (
+        <li key={label} className={i < at ? 'done' : i === at ? 'now' : undefined} aria-current={i === at ? 'step' : undefined}>
+          <span>{i + 1}</span>
+          {label}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+export function ProfileForm({ onDone, submitLabel = 'Save', steps = false }: { onDone(profile: Profile): void; submitLabel?: string; steps?: boolean }) {
   const { profile, setProfile } = useApp();
   const years = classYears();
   const [name, setName] = useState(profile?.name ?? '');
@@ -70,6 +84,7 @@ export function ProfileForm({ onDone, submitLabel = 'Save' }: { onDone(profile: 
   };
   if (!verified) return (
     <form className="stack auth-form" onSubmit={(event) => void login(event)}>
+      {steps && <Steps at={sent ? 1 : 0} />}
       <p className="muted">Log in or create an account with your NYU email. Your account works on every device.</p>
       <div className="field">
         <label htmlFor="pf-email">NYU email</label>
@@ -78,7 +93,7 @@ export function ProfileForm({ onDone, submitLabel = 'Save' }: { onDone(profile: 
       {sent && <div className="field">
         <label htmlFor="pf-code">Verification code</label>
         <input id="pf-code" className="input otp-input" value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required autoFocus />
-        <p className="small muted">Check your inbox and spam folder. The code expires in 10 minutes.</p>
+        <p className="small muted">Sent to {email}. Check your inbox and spam folder; the code expires in 10 minutes.</p>
       </div>}
       {error && <div className="alert error" role="alert">{error}</div>}
       <button type="submit" className="btn primary" disabled={saving}>{saving ? 'Please wait…' : sent ? 'Verify and log in' : 'Send verification code'}</button>
@@ -95,6 +110,7 @@ export function ProfileForm({ onDone, submitLabel = 'Save' }: { onDone(profile: 
   );
   return (
     <form className="stack" style={{ gap: 14 }} onSubmit={(event) => void submit(event)}>
+      {steps && <Steps at={2} />}
       <div className="form-grid">
         <div className="field">
           <label htmlFor="pf-name">Name</label>

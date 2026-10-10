@@ -11,12 +11,17 @@
  *                                                  newly written; the rest come back in `pending` to ask again
  *   GET /api/courses?ratings=1                     every score written so far, and students' own review averages,
  *                                                  for the course and professor lists
+ *   GET /api/courses?op=warm                       writes ratings ahead of time for the term's most discussed courses
+ *                                                  and their professors (the daily cron at /api/cron/warm-ratings, or
+ *                                                  an administrator)
  */
+import { adminConfig, adminSession } from '../lib/admin.ts';
+import { recordEvent } from '../lib/app-usage.ts';
 import { boardStore } from '../lib/board-store.ts';
 import { allCourses, courseHistory, courseRows, displayName, loadCatalog, termOrder, type Catalog } from '../lib/courses.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, queryString, rateLimit, route, sendJson, type ApiRequest } from '../lib/http.ts';
-import { requireMember } from '../lib/identity.ts';
+import { limitDurably, requireMember } from '../lib/identity.ts';
 import { normalizeCode } from '../lib/html.ts';
 import { loadOfficial, type OfficialCorpus, type OfficialDoc } from '../lib/official.ts';
 import { providersFromEnv, siteJson } from '../lib/providers.ts';
@@ -35,6 +40,10 @@ export default route(['GET'], async (req, res) => {
   const term = queryString(req, 'term').trim();
   const profs = queryString(req, 'profs');
 
+  if (queryString(req, 'op') === 'warm' || /\/cron\/warm-ratings/.test(req.url ?? '')) {
+    sendJson(res, 200, await warmRatings(req, catalog));
+    return;
+  }
   if (profs) {
     sendJson(res, 200, await profRatings(req, catalog, profs));
     return;
@@ -45,11 +54,12 @@ export default route(['GET'], async (req, res) => {
   }
   if (code) {
     const normalized = normalizeCode(code);
-    const official = await loadOfficial().catch(() => null);
+    const wantsRating = Boolean(queryString(req, 'rating'));
+    // The cached rating is looked up while the bulletin loads: most ratings are read, not written.
+    const [official, known] = await Promise.all([loadOfficial().catch(() => null), wantsRating ? savedRating(normalized) : Promise.resolve(undefined)]);
     // Ratings cost embedding and model calls and are cached per code: only real courses get them.
     if (!catalog.byCode.has(normalized) && !bulletinEntry(official, normalized)) throw new ApiError(404, 'No course with that code.', 'not_found');
-    if (queryString(req, 'rating')) {
-      const known = await savedRating(normalized);
+    if (wantsRating) {
       // Writing a rating costs a search and a model call: a few a minute per person, so walking every code cannot spend
       // the day's model quota. Reading one already written is free.
       if (known === undefined) {
@@ -121,7 +131,7 @@ async function courseThreads(archive: Archive, catalog: Catalog, official: Offic
   if (cached && Date.now() - cached.at < THREAD_TTL_MS) return cached.hits;
   const title = titleOf(catalog, official, code);
   const mentioned = new Set([...(archive.byCourse.get(code) ?? []), ...(archive.byCourse.get(bareCode(code)) ?? [])]);
-  const retrieval = await retrieve(archive, `${title} ${bareCode(code)}`.trim(), { k: 48 });
+  const retrieval = await retrieve(archive, `${title} ${bareCode(code)}`.trim(), { k: 36 });
   const titleWords = [...new Set(tokenize(title.replace(/\bintroduction to\b/gi, 'intro').replace(/\bcomputer science\b/gi, 'CS').replace(/\bcalculus\b/gi, 'calc')))];
   const namesCourse = (hit: Hit) => {
     const post = archive.posts[hit.post]!;
@@ -133,7 +143,8 @@ async function courseThreads(archive: Archive, catalog: Catalog, official: Offic
   let judged = false;
   if (reranker && hits.length && title) {
     try {
-      const documents = hits.map((hit) => truncate(`${formatDate(archive.posts[hit.post]!.date)}. ${collapseWhitespace(archive.chunks[hit.chunk]!.text)}`, 2000));
+      // Shorter passages rerank faster, and the opening of a thread says what it is about.
+      const documents = hits.map((hit) => truncate(`${formatDate(archive.posts[hit.post]!.date)}. ${collapseWhitespace(archive.chunks[hit.chunk]!.text)}`, 1400));
       const scores = await reranker.rerank(`What students say about the NYU Abu Dhabi course ${code} ${title}`, documents, { timeoutMs: 8_000 });
       hits = hits.map((hit, i) => ({ ...hit, score: scores[i]! })).filter((hit) => hit.score >= 0.35 || mentioned.has(hit.post)).sort((a, b) => b.score - a.score);
       judged = true;
@@ -271,8 +282,10 @@ async function courseRating(archive: Archive, official: OfficialCorpus | null, c
       schema: RATING_SCHEMA,
       tier: 'main',
       temperature: 0.2,
-      maxOutputTokens: 2048,
-      timeoutMs: 25_000,
+      maxOutputTokens: 1200,
+      // A provider that has not answered in 12 seconds is passed over: the next one is usually quicker than waiting.
+      timeoutMs: 30_000,
+      stepMs: 12_000,
     });
     rating = cleanRating(result, cards, gemini?.chatModel ?? backups[0]?.models[0] ?? '');
   } catch (error) {
@@ -281,6 +294,7 @@ async function courseRating(archive: Archive, official: OfficialCorpus | null, c
     throw new ApiError(503, 'The rating could not be written right now.', 'busy');
   }
   if (!rating) return none();
+  recordEvent('rating');
   hot.set(key, rating);
   await store?.putSummary(key, rating).catch((error) => console.warn('[courses] could not cache the rating:', (error as Error).message));
   return rating;
@@ -580,7 +594,8 @@ async function profRating(archive: Archive, teacher: Teacher): Promise<SavedProf
       tier: 'main',
       temperature: 0.2,
       maxOutputTokens: 512,
-      timeoutMs: 25_000,
+      timeoutMs: 30_000,
+      stepMs: 12_000,
     });
     rating = cleanProf(result, threads, gemini?.chatModel ?? backups[0]?.models[0] ?? '');
   }
@@ -648,4 +663,68 @@ async function scoreIndex(catalog: Catalog): Promise<ScoreIndex> {
   for (const [code, entry] of sums) index.students[code] = { n: entry.n, avg: Math.round((entry.total / entry.n) * 10) / 10 };
   scoreCache = { at: Date.now(), index };
   return index;
+}
+
+/* ---------- Writing ratings ahead of time ---------- */
+
+/**
+ * How long one run keeps starting new ratings, and how many it writes at once. A rating started late can take its
+ * full 30 seconds, and the function has 60 in all; each one is saved as soon as it is written.
+ */
+const WARM_MS = 32_000;
+const WARM_PARALLEL = 3;
+
+/**
+ * Writes ratings for the term's courses that have none yet, the most discussed first, then for the professors who teach
+ * them, so that opening a course in Reviews reads a rating instead of waiting for one. Runs once a day from the cron in
+ * vercel.json and when an administrator asks; anyone else is refused (or, without CRON_SECRET, held to three runs a day).
+ */
+async function warmRatings(req: ApiRequest, catalog: Catalog) {
+  const secret = process.env.CRON_SECRET ?? '';
+  const viaCron = Boolean(secret) && req.headers.authorization === `Bearer ${secret}`;
+  if (!viaCron && !(await adminSession(adminConfig(), req))) {
+    if (secret) throw new ApiError(403, 'Only the daily job and administrators can warm ratings.', 'forbidden');
+    await limitDurably(boardStore(), 'warm-ratings', 3, 86_400, 'Ratings were already warmed three times today.');
+  }
+  const store = boardStore();
+  if (!store || (!geminiConfig() && providersFromEnv().length === 0)) throw new ApiError(503, 'Ratings are off on this server.', 'no_model');
+  const started = Date.now();
+  const [archive, official, courseRowsSaved, profRowsSaved] = await Promise.all([
+    loadArchive(),
+    loadOfficial().catch(() => null),
+    store.listSummaryFields(ratingKey(''), ['none']).catch(() => []),
+    store.listSummaryFields(profKey(''), ['none']).catch(() => []),
+  ]);
+  const freshKeys = (rows: typeof courseRowsSaved, ttl: (none: boolean) => number) => new Set(rows.filter((row) => Date.now() - Date.parse(row.createdAt) < ttl(Boolean(row.fields.none))).map((row) => row.key));
+  const ratedCourses = freshKeys(courseRowsSaved, (none) => (none ? RATING_NONE_TTL_MS : RATING_TTL_MS));
+  const ratedProfs = freshKeys(profRowsSaved, (none) => (none ? PROF_NONE_TTL_MS : PROF_TTL_MS));
+  const mentions = (code: string) => (archive.byCourse.get(code)?.length ?? 0) + (bareCode(code) !== code ? (archive.byCourse.get(bareCode(code))?.length ?? 0) : 0);
+  const rows = courseRows(catalog, catalog.current).sort((a, b) => mentions(b.code) - mentions(a.code));
+  const courses = rows.map((row) => row.code).filter((code) => !ratedCourses.has(ratingKey(code)));
+  const index = teachers(catalog);
+  const names = [...new Set(rows.flatMap((row) => row.sections.filter((section) => section.component !== 'Recitation' && section.component !== 'Laboratory').flatMap((section) => section.instructors)))];
+  const people = names.map((name) => index.get(foldName(name))).filter((teacher): teacher is Teacher => Boolean(teacher) && !ratedProfs.has(profKey(teacher!.name)));
+  const jobs: Array<() => Promise<'rated' | 'none'>> = [
+    ...courses.map((code) => async () => ((await courseRating(archive, official, catalog, code)) ? 'rated' as const : 'none' as const)),
+    ...people.map((teacher) => async () => ('none' in (await profRating(archive, teacher)) ? 'none' as const : 'rated' as const)),
+  ];
+  const done = { rated: 0, none: 0, failed: 0 };
+  let next = 0;
+  let failedInARow = 0;
+  // Three failures in a row mean the models are down or spent: the rest waits for tomorrow.
+  const worker = async () => {
+    while (next < jobs.length && Date.now() - started < WARM_MS && failedInARow < 3) {
+      const job = jobs[next++]!;
+      try {
+        done[await job()]++;
+        failedInARow = 0;
+      } catch (error) {
+        done.failed++;
+        failedInARow++;
+        console.warn('[courses] warming a rating failed:', (error as Error).message);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: WARM_PARALLEL }, worker));
+  return { ...done, left: Math.max(0, jobs.length - next), ms: Date.now() - started };
 }

@@ -565,10 +565,16 @@ export function summarizeMarket(offers: Offer[], currency: OfferCurrency = 'falc
   };
 }
 
-/* ---------- Market: things for sale, wanted or free, shared rides, and lost and found ---------- */
+/* ---------- Market: things for sale, wanted or free, and shared rides ---------- */
 
-const LISTING_KINDS = ['sell', 'want', 'free', 'ride', 'lost', 'found'] as const;
+// Lost and found was taken out: anyone could claim to have found an item and ask its owner to describe it. Rows of
+// those kinds still in the database are never served (isListingKind).
+const LISTING_KINDS = ['sell', 'want', 'free', 'ride'] as const;
 export type ListingKind = (typeof LISTING_KINDS)[number];
+
+export function isListingKind(kind: unknown): kind is ListingKind {
+  return LISTING_KINDS.includes(kind as ListingKind);
+}
 
 export interface Listing {
   id: string;
@@ -577,11 +583,11 @@ export interface Listing {
   body: string;
   /** Asking price in AED for sell, budget for want; null when not given, 0 for free. */
   price: number | null;
-  /** Pickup spot, where something was lost or found, or where a ride leaves from. */
+  /** Pickup spot, or where a ride leaves from. */
   place: string;
   /** Where a ride goes. */
   destination: string;
-  /** When a ride leaves, or when something was lost or found. */
+  /** When a ride leaves. */
   happensAt?: string;
   /** People a ride has room for. */
   seats: number | null;
@@ -596,7 +602,7 @@ export interface Listing {
 }
 
 /** Days a listing stays up. Rides drop off three hours after they leave. */
-const LISTING_DAYS: Record<Exclude<ListingKind, 'ride'>, number> = { sell: 21, want: 14, free: 7, lost: 21, found: 21 };
+const LISTING_DAYS: Record<Exclude<ListingKind, 'ride'>, number> = { sell: 21, want: 14, free: 7 };
 const RIDE_GRACE_MS = 3 * 3_600_000;
 const PRICE_MAX = 100_000;
 
@@ -633,9 +639,7 @@ export function validateListing(body: Record<string, unknown>, now = new Date())
     // A ride stays listed until RIDE_GRACE_MS after it leaves; one that would drop off within the hour has left.
     if (kind === 'ride' && parsed + RIDE_GRACE_MS < now.getTime() + 3_600_000) throw new ApiError(400, 'That time has passed.', 'past_date');
     if (kind === 'ride' && parsed > now.getTime() + 60 * 86_400_000) throw new ApiError(400, 'Rides can be posted up to two months ahead.', 'far_date');
-    if ((kind === 'lost' || kind === 'found') && parsed > now.getTime() + 3_600_000) throw new ApiError(400, 'That date is in the future.', 'future_date');
-    if ((kind === 'lost' || kind === 'found') && parsed < now.getTime() - 90 * 86_400_000) throw new ApiError(400, 'Lost and found is for the last three months.', 'past_date');
-    if (kind === 'ride' || kind === 'lost' || kind === 'found') happensAt = new Date(parsed).toISOString();
+    if (kind === 'ride') happensAt = new Date(parsed).toISOString();
   }
   if (kind === 'ride' && !happensAt) throw new ApiError(400, 'Say when the ride leaves.', 'bad_date');
 
@@ -646,7 +650,6 @@ export function validateListing(body: Record<string, unknown>, now = new Date())
   }
 
   if (kind === 'sell' && (price === null || price <= 0)) throw new ApiError(400, 'Set a positive asking price in AED, or choose Free.', 'bad_price');
-  if ((kind === 'lost' || kind === 'found') && !place) throw new ApiError(400, 'Say where the item was lost or found.', 'bad_location');
   const { contactKind, contact } = validateContact(body);
   const expiresAt = kind === 'ride' ? new Date(Date.parse(happensAt!) + RIDE_GRACE_MS).toISOString() : new Date(now.getTime() + LISTING_DAYS[kind] * 86_400_000).toISOString();
   return { kind, title, body: text, price, place, destination, happensAt, seats, contactKind, contact, expiresAt };

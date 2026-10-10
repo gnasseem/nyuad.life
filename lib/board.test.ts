@@ -361,9 +361,9 @@ describe('the market', () => {
     expect(() => validateListing({ kind: 'ride', place: 'Campus', destination: 'Dubai', happensAt: '2026-09-01T10:00:00Z', ...contact }, now)).toThrow();
     expect(() => validateListing({ kind: 'ride', place: 'Campus', destination: 'Dubai', happensAt: '2026-10-02T10:00:00Z', seats: 40, ...contact }, now)).toThrow();
 
-    const lost = validateListing({ kind: 'lost', title: 'AirPods', place: 'Library', happensAt: '2026-09-28', ...contact }, now);
-    expect(lost.happensAt).toBe('2026-09-28T00:00:00.000Z');
-    expect(() => validateListing({ kind: 'found', title: 'Keys', happensAt: '2026-12-01', ...contact }, now)).toThrow();
+    // Lost and found is gone: neither kind can be posted.
+    expect(() => validateListing({ kind: 'lost', title: 'AirPods', place: 'Library', happensAt: '2026-09-28', ...contact }, now)).toThrow();
+    expect(() => validateListing({ kind: 'found', title: 'Keys', place: 'Library', ...contact }, now)).toThrow();
   });
 
   it('keeps listings in the memory store and lets only the poster close them', async () => {
@@ -427,4 +427,27 @@ it('batches large question feeds to keep database request URLs within proxy limi
     expect(requests).toHaveLength(4);
     expect(requests.every((url) => url.length < 4000)).toBe(true);
   } finally { vi.unstubAllGlobals(); }
+});
+
+describe('the admin page', () => {
+  it('counts members, sign-ups and active members by Abu Dhabi day, and keeps lost and found out of the counts', async () => {
+    const { dashboard } = await import('./admin.ts');
+    const store = new MemoryBoardStore();
+    await store.upsertProfile({ netId: 'abc1234', name: 'Sara Ali', major: 'Computer Science', classOf: 2028 });
+    await store.upsertProfile({ netId: 'xyz9876', name: 'Omar K', major: 'Economics', classOf: 2027 });
+    const base = { body: '', price: null, place: 'Library', destination: '', seats: null, contactKind: 'phone' as const, contact: '+971501234567', posterKey: 'key-1234567', posterNetId: 'abc1234', posterName: 'Sara', status: 'open' as const, expiresAt: '2030-01-01T00:00:00Z' };
+    await store.createListing({ ...base, kind: 'want', title: 'Desk lamp' });
+    // A row left from before lost and found was removed.
+    await store.createListing({ ...base, kind: 'lost' as never, title: 'AirPods' });
+    expect((await store.listListings(now)).map((listing) => listing.title)).toEqual(['Desk lamp']);
+    const overview = await store.adminOverview(new Date());
+    expect(overview.counts.listings).toBe(1);
+    const at = Date.now();
+    const days = [{ day: new Date(at + 4 * 3_600_000).toISOString().slice(0, 10), requests: 9, errors: 0, rejected: 0, limited: 0, avgMs: 20, people: 2, devices: 3, events: { ask: 4 } }];
+    const view = dashboard({ days, routes: [], hours: Array(24).fill(0), shared: true }, overview, at);
+    expect(view.members).toEqual({ total: 2, today: 2, week: 2, month: 2 });
+    expect(view.active.today).toBe(2);
+    expect(view.days.at(-1)).toMatchObject({ signups: 2, requests: 9 });
+    expect(view.majors.map((major) => major.name).sort()).toEqual(['Computer Science', 'Economics']);
+  });
 });

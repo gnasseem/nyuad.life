@@ -1,4 +1,5 @@
 import { alertModelsDown } from '../lib/admin.ts';
+import { recordEvent } from '../lib/app-usage.ts';
 import { boardStore } from '../lib/board-store.ts';
 import { addCookies, chatgptConfig, ChatGPTError, freshSession, readSession, sessionCookies } from '../lib/chatgpt.ts';
 import { geminiConfig } from '../lib/gemini.ts';
@@ -54,23 +55,29 @@ export default route(['POST'], async (req, res) => {
   const backups = providersFromEnv();
   if (!chatgpt && chatgptCfg && (chatgptCfg.required || (!cfg && backups.length === 0))) throw new ApiError(401, 'Connect your ChatGPT account to ask. Answers run on your own plan.', 'chatgpt_required');
   if (!chatgpt && !cfg && backups.length === 0) throw new ApiError(503, 'No model key is set on the server (GEMINI_API_KEY, GROQ_API_KEY, …).', 'no_model');
-  const archive = await loadArchive();
-  const official = await loadOfficial().catch((error) => {
-    console.warn('[ask] official pages could not be loaded:', (error as Error).message);
-    return null;
-  });
+  // Both are read from disk once per instance; on a cold start they load side by side.
+  const [archive, official] = await Promise.all([
+    loadArchive(),
+    loadOfficial().catch((error) => {
+      console.warn('[ask] official pages could not be loaded:', (error as Error).message);
+      return null;
+    }),
+  ]);
   const board = boardStore();
   // Saving the answer to the cache happens after the student has it; the function stays up until it is done.
   const deferred: Array<Promise<unknown>> = [];
   const defer = (work: Promise<unknown>) => void deferred.push(work.catch(() => undefined));
   const noteFailure = (error: unknown) => {
-    if (error instanceof ApiError && MODELS_DOWN.has(error.code)) defer(alertModelsDown(error.message));
+    if (!(error instanceof ApiError) || !MODELS_DOWN.has(error.code)) return;
+    recordEvent('ask_failed');
+    defer(alertModelsDown(error.message));
   };
 
   if (!request.stream) {
     try {
       const result = await ask(archive, cfg, request, {}, undefined, { board, official, deadline, chatgpt, backups, defer });
       console.info(`[ask] model=${result.model} cached=${Boolean(result.cached)} truncated=${Boolean(result.truncated)} sources=${result.sources.length}`);
+      recordEvent(result.cached ? 'ask_cached' : 'ask');
       sendJson(res, 200, result);
     } catch (error) {
       noteFailure(error);
@@ -103,6 +110,7 @@ export default route(['POST'], async (req, res) => {
       { board, official, deadline, chatgpt, backups, defer },
     );
     console.info(`[ask] model=${result.model} cached=${Boolean(result.cached)} truncated=${Boolean(result.truncated)} sources=${result.sources.length}`);
+    recordEvent(result.cached ? 'ask_cached' : 'ask');
     sse.send('done', { model: result.model, confidence: result.confidence, truncated: result.truncated ?? false, cached: result.cached ?? false, retrieval: result.retrieval });
   } catch (error) {
     noteFailure(error);
