@@ -10,11 +10,11 @@ import { embedderForIndex, type Embedder } from './embeddings.ts';
 import { ChatGPTError, liteText, markChatGPTModelUnusable, streamResponse, usableChatGPTModels, type ChatGPTConfig } from './chatgpt.ts';
 import { abuDhabiDate, baseCode, courseScheduleText, instructorScheduleText, isCourseQuestion, loadCatalog, matchSchedule, searchCatalog, type Catalog } from './courses.ts';
 import { cachedAnswer, saveAnswer } from './answer-cache.ts';
-import { generateJson, generateStream, generateText, geminiKeys, isDailyQuota, isModelUnavailable, keyTag, liveModels, markUnavailable, type GeminiConfig, type GeminiError, type Message } from './gemini.ts';
+import { generateJson, generateStream, geminiKeys, isDailyQuota, isModelUnavailable, keyTag, liveModels, markUnavailable, type GeminiConfig, type GeminiError, type Message } from './gemini.ts';
 import { ApiError } from './http.ts';
 import { officialCards, officialSourceBlock, retrieveOfficial, type OfficialCorpus } from './official.ts';
 import { screenAsk } from './moderation.ts';
-import { liteChat, markFailed, modelOrder, ProviderError, providersFromEnv, streamChat, usable, type Provider } from './providers.ts';
+import { atCapacity, markFailed, modelOrder, ProviderError, providersFromEnv, siteText, streamChat, usable, type Provider } from './providers.ts';
 import { rerankerFromEnv, type Reranker } from './rerank.ts';
 import { bm25Query, denseQuery, fuse, type Hit } from './search.ts';
 import type { Archive } from './store.ts';
@@ -738,26 +738,9 @@ export interface Writers {
   order: string[];
 }
 
-/** The site's Gemini, then the backups, for a small call; throws when none of them answers. */
-async function liteWithSiteModels(writers: Writers, system: string, prompt: string, options: { maxOutputTokens: number; temperature: number; timeoutMs: number }): Promise<string> {
-  const geminiFirst = writers.order.indexOf('gemini') <= 0;
-  const viaGemini = async () => {
-    const cfg = writers.gemini!;
-    return (await generateText(cfg, { model: cfg.liteModels, temperature: options.temperature, maxOutputTokens: options.maxOutputTokens, system, messages: [{ role: 'user', text: prompt }] }, { retries: 0, timeoutMs: options.timeoutMs })).text;
-  };
-  const viaBackups = () => liteChat(writers.backups, { system, messages: [{ role: 'user', text: prompt }], temperature: options.temperature, maxOutputTokens: options.maxOutputTokens, timeoutMs: options.timeoutMs });
-  const steps = [writers.gemini ? viaGemini : null, writers.backups.length ? viaBackups : null].filter((step): step is () => Promise<string> => step !== null);
-  if (!geminiFirst) steps.reverse();
-  let lastError: unknown = new Error('No model is set up.');
-  for (const step of steps) {
-    try {
-      const text = await step();
-      if (text.trim()) return text;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError;
+/** The site's models in ROR_MODEL_ORDER, for a small call; throws when none of them answers. */
+function liteWithSiteModels(writers: Writers, system: string, prompt: string, options: { maxOutputTokens: number; temperature: number; timeoutMs: number }): Promise<string> {
+  return siteText(writers.gemini, writers.backups, { system, prompt, ...options });
 }
 
 const REWRITE_SYSTEM =
@@ -1080,6 +1063,8 @@ interface AnswerWriter {
   busy(error: unknown): boolean;
   /** Whether a failure means the day's free quota is spent, rather than a passing overload. */
   quota(error: unknown): boolean;
+  /** Whether its key is busy with as many requests as it takes at once (Z.ai's free GLM: one), right now. */
+  full?(): boolean;
 }
 
 /**
@@ -1125,6 +1110,7 @@ export function answerWriters(writers: Writers, now = Date.now()): AnswerWriter[
           failed: (error) => markFailed(provider, model, error),
           busy: (error) => !(error instanceof ProviderError) || error.status === 429 || error.status === 413 || error.status >= 500,
           quota: (error) => error instanceof ProviderError && error.status === 429 && /day|quota|credits/i.test(error.message),
+          full: () => atCapacity(provider),
         });
       }
     }
@@ -1157,6 +1143,9 @@ async function writeAnswer(writers: Writers, system: string, prompt: (maxChars?:
   for (let i = 0; i < chain.length; i++) {
     const writer = chain[i]!;
     const last = i === chain.length - 1;
+    // A key already answering someone else is passed over at once rather than waited on (asked now, not when the chain
+    // was built: the student before may have just finished).
+    if (!last && writer.full?.()) continue;
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     signal?.addEventListener('abort', onAbort, { once: true });

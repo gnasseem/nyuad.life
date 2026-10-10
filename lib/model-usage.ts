@@ -213,6 +213,12 @@ async function rowsByDay(now: number): Promise<{ days: Map<string, UsageRow[]>; 
   return { days, shared };
 }
 
+/** Today's counts per key and model across every instance, so one instance can rest what another found spent. */
+export async function todaysUsage(now = Date.now()): Promise<UsageRow[]> {
+  const { days } = await rowsByDay(now);
+  return mergeRows(days.get(usageDay(now)) ?? []);
+}
+
 /** Today's counts per key and model, with each one's state, and the week's totals per key. */
 export async function modelUsage(keys: ModelKey[], now = Date.now()): Promise<UsageReport> {
   const day = usageDay(now);

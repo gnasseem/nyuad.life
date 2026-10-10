@@ -53,7 +53,7 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
    | Variable | Needed for |
    | --- | --- |
    | `GEMINI_API_KEY` | Answers for students not signed in with ChatGPT, question tagging, course summaries. Several keys from different Google projects, separated by commas, multiply the free quota. |
-   | `GROQ_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, `ZAI_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY` | Free backup models for answers when Gemini is overloaded or out of quota (below). Any or all; each variable takes several keys separated by commas. |
+   | `ZAI_API_KEY`, `GROQ_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY` | Free models for answers: Z.ai's GLM first, the rest when Gemini is overloaded or out of quota (below). Any or all; each variable takes several keys separated by commas. |
    | `ROR_ADMIN_NETIDS` | Comma-separated verified administrator NetIDs, for example `gnn9245`. |
    | `RESEND_API_KEY`, `RESEND_FROM`, `SESSION_SECRET` | NYU email login: a verified Resend sender and a 32+ character session secret. |
    | `OPENAI_CLIENT_ID`, `SESSION_SECRET`, `ROR_SITE_URL` | Sign in with ChatGPT: answers on each student's own plan (below). |
@@ -78,12 +78,22 @@ search, courses, plan and the board are rate-limited per IP.
 
 Free model tiers can be overloaded (503) or rate-limited (429). Ask moves down a chain before writing any text:
 
-1. Gemini 3.5 Flash-Lite, Gemma 4 31B, Gemma 4 26B and Gemini 3.1 Flash-Lite: each has its own daily quota, and each
+1. Z.ai's GLM 4.7 Flash, on each key in `ZAI_API_KEY`. Its free tier takes one request at a time per key, so a key
+   already answering someone is passed over at once for the next key, and with every key busy the question goes on
+   down the chain; nobody waits for GLM. An open request from another instance comes back as a 429 (code 1302), which
+   rests that key for 15 seconds.
+2. Gemini 3.5 Flash-Lite, Gemma 4 31B, Gemma 4 26B and Gemini 3.1 Flash-Lite: each has its own daily quota, and each
    is tried on every key in `GEMINI_API_KEY` before the next model. A model spent on one key rests on that key only.
-2. Groq (gpt-oss 120B, Qwen 3.8 27B, gpt-oss 20B), Cloudflare Workers AI (Gemma 4, about a quarter of Llama's neuron
-   cost), Z.ai (GLM 4.7 Flash), OpenRouter's free models, Mistral and Vercel AI Gateway, for each key that is set.
-   Groq's free tier caps tokens per minute, so its prompts are shortened to fit; a prompt still too long for a
-   provider skips it.
+3. Groq (gpt-oss 120B, Qwen 3.8 27B, gpt-oss 20B), Cloudflare Workers AI (Gemma 4, about a quarter of Llama's neuron
+   cost), OpenRouter's free models, Mistral and Vercel AI Gateway, for each key that is set. Groq's free tier caps
+   tokens per minute, so its prompts are shortened to fit; a prompt still too long for a provider skips it.
+
+Small calls (query rewrites, reranking, moderation, ratings, plan reading) go down the same order, one provider at a
+time, and no provider may take more than its share of the call's time, so a slow one leaves the next a chance.
+
+Instances also learn from each other: every couple of minutes each one reads today's usage (below) and rests the
+models and keys that failed elsewhere and have not worked since (a spent Gemini model, a refused key, a retired
+model), from when the failure happened, so a fresh instance does not spend its first questions finding out again.
 
 Every key variable takes several keys separated by commas, with no spaces needed (`GEMINI_API_KEY=AIza…1,AIza…2`,
 `GROQ_API_KEY=gsk_a,gsk_b`): free tiers are counted per Google project or per account, so each key is another quota,
@@ -123,8 +133,8 @@ punctuation, is answered from the cache with no model call. Registration-week qu
 this saves much of the quota. The cache lives in memory and in the board's `guide_summaries` table when Supabase is set
 up, so every serverless instance shares it; expired entries are removed.
 
-Settings: `ROR_MODEL_ORDER=groq,gemini` puts a backup first (the default is
-`gemini,groq,cloudflare,zai,openrouter,mistral,gateway`); `ROR_MODEL_DISCOVERY=0` turns the model listing off; `<PROVIDER>_MODELS` and `<PROVIDER>_LITE_MODELS` (for
+Settings: `ROR_MODEL_ORDER=gemini,zai` puts Gemini before GLM (the default is
+`zai,gemini,groq,cloudflare,openrouter,mistral,gateway`); `ROR_MODEL_DISCOVERY=0` turns the model listing off; `<PROVIDER>_MODELS` and `<PROVIDER>_LITE_MODELS` (for
 example `GROQ_MODELS`) replace a provider's model lists; `ROR_ANSWER_CACHE=0` turns the cache off. Gemini's own lists
 are `GEMINI_CHAT_MODEL`, `GEMINI_CHAT_FALLBACK_MODELS`, `GEMINI_LITE_MODEL` and `GEMINI_LITE_FALLBACK_MODELS`.
 

@@ -12,7 +12,7 @@ import { answerKey, resetAnswerCache } from './answer-cache.ts';
 import { MemoryBoardStore } from './board-store.ts';
 import { geminiConfig, resetModelState } from './gemini.ts';
 import { buildIndex } from './indexer.ts';
-import { markFailed, ProviderError, providersFromEnv, resetProviderState, ThinkFilter, usable, type Provider } from './providers.ts';
+import { atCapacity, markFailed, modelOrder, ProviderError, providersFromEnv, resetProviderState, streamChat, ThinkFilter, usable, type Provider } from './providers.ts';
 import { answerWriters, ask } from './rag.ts';
 import { loadArchive, resetArchive, type Archive } from './store.ts';
 
@@ -124,6 +124,11 @@ function groq(models = ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'], maxPr
   return { id: 'groq', family: 'groq', label: 'Groq', baseUrl: backupUrl, apiKey: 'groq-key', models, liteModels: ['llama-3.1-8b-instant'], maxPromptChars, maxOutputTokens: 1_600, freeTier: '' };
 }
 
+/** A Z.ai key: free GLM, one request at a time. */
+function zai(id: string): Provider {
+  return { ...groq(['glm-4.7-flash']), id, family: 'zai', label: 'Z.ai', liteModels: ['glm-4.5-flash'], concurrency: 1 };
+}
+
 const context = { catalog: null, reranker: null, cache: false } as const;
 
 describe('the answer model chain', () => {
@@ -181,6 +186,34 @@ describe('the answer model chain', () => {
     );
     expect(error).toMatchObject({ code: 'busy' });
     expect(error!.message).not.toMatch(/gemini|503/i);
+  });
+
+  it('tries GLM first, passes over a GLM key that is answering someone else, and falls to Gemini when both are', async () => {
+    const [first, second] = [zai('zai'), zai('zai-2')];
+    expect(answerWriters({ gemini: geminiConfig(), chatgpt: null, backups: [groq(), first], order: modelOrder() }).map((writer) => writer.name).slice(0, 2)).toEqual(['zai:glm-4.7-flash', 'gemini-3.5-flash']);
+    const ask1 = () => ask(archive, geminiConfig()!, { question: 'best calculus professor?', stream: true }, {}, undefined, { ...context, backups: [first, second] });
+    const busy = (provider: Provider) => streamChat(provider, 'glm-4.7-flash', { system: 's', messages: [{ role: 'user', text: 'another student' }] });
+
+    const one = busy(first);
+    await one.next();
+    expect(atCapacity(first)).toBe(true);
+    expect((await ask1()).model).toBe('zai-2:glm-4.7-flash');
+
+    const two = busy(second);
+    await two.next();
+    expect((await ask1()).model).toBe('gemini-3.5-flash');
+
+    await one.return(undefined);
+    await two.return(undefined);
+    expect([atCapacity(first), atCapacity(second)]).toEqual([false, false]);
+    expect((await ask1()).model).toBe('zai:glm-4.7-flash');
+  });
+
+  it("rests a GLM key for seconds when another instance's request is open on it", () => {
+    const provider = zai('zai');
+    markFailed(provider, 'glm-4.7-flash', new ProviderError('Z.ai 429: Your current API concurrency is too high (code 1302)', 429), 1_000);
+    expect(usable(provider, ['glm-4.7-flash'], 2_000)).toEqual([]);
+    expect(usable(provider, ['glm-4.7-flash'], 17_000)).toEqual(['glm-4.7-flash']);
   });
 
   it('answers with backups alone when there is no Gemini key', async () => {
