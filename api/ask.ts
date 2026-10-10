@@ -1,3 +1,4 @@
+import { alertModelsDown } from '../lib/admin.ts';
 import { boardStore } from '../lib/board-store.ts';
 import { addCookies, chatgptConfig, ChatGPTError, freshSession, readSession, sessionCookies } from '../lib/chatgpt.ts';
 import { geminiConfig } from '../lib/gemini.ts';
@@ -13,6 +14,8 @@ export const config = { maxDuration: 60 };
 
 /** Vercel stops the function at 60 s from the request, cold start included; the answer has to end before that. */
 const DEADLINE_MS = 54_000;
+/** Errors that mean every model in the chain failed: the administrators are emailed (lib/admin.ts). */
+const MODELS_DOWN = new Set(['quota', 'busy', 'model_error']);
 
 export default route(['POST'], async (req, res) => {
   const deadline = Date.now() + DEADLINE_MS;
@@ -60,12 +63,21 @@ export default route(['POST'], async (req, res) => {
   // Saving the answer to the cache happens after the student has it; the function stays up until it is done.
   const deferred: Array<Promise<unknown>> = [];
   const defer = (work: Promise<unknown>) => void deferred.push(work.catch(() => undefined));
+  const noteFailure = (error: unknown) => {
+    if (error instanceof ApiError && MODELS_DOWN.has(error.code)) defer(alertModelsDown(error.message));
+  };
 
   if (!request.stream) {
-    const result = await ask(archive, cfg, request, {}, undefined, { board, official, deadline, chatgpt, backups, defer });
-    console.info(`[ask] model=${result.model} cached=${Boolean(result.cached)} truncated=${Boolean(result.truncated)} sources=${result.sources.length}`);
-    sendJson(res, 200, result);
-    await Promise.all(deferred);
+    try {
+      const result = await ask(archive, cfg, request, {}, undefined, { board, official, deadline, chatgpt, backups, defer });
+      console.info(`[ask] model=${result.model} cached=${Boolean(result.cached)} truncated=${Boolean(result.truncated)} sources=${result.sources.length}`);
+      sendJson(res, 200, result);
+    } catch (error) {
+      noteFailure(error);
+      throw error;
+    } finally {
+      await Promise.all(deferred);
+    }
     return;
   }
 
@@ -93,6 +105,7 @@ export default route(['POST'], async (req, res) => {
     console.info(`[ask] model=${result.model} cached=${Boolean(result.cached)} truncated=${Boolean(result.truncated)} sources=${result.sources.length}`);
     sse.send('done', { model: result.model, confidence: result.confidence, truncated: result.truncated ?? false, cached: result.cached ?? false, retrieval: result.retrieval });
   } catch (error) {
+    noteFailure(error);
     if (!(error instanceof ApiError) || error.status >= 500) console.error('[ask]', error);
     // Only our own errors are worded for students; anything else ("Gemini 503: …") stays in the log.
     const message = error instanceof ApiError ? error.message : 'Something went wrong while answering. Try again in a moment.';

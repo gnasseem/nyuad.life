@@ -63,8 +63,10 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
 
 3. Deploy. `GET /api/health` reports what is active: the whole report (model chain, index, database) to an
    administrator's session, and only what the site itself needs to everyone else. In Settings, admin mode's "Check models" sends one tiny request
-   to every model and shows what each one said: the quickest way to tell a wrong key from a spent quota. `board.ok` comes from a real probe of the database and
-   `board.problem` says what is wrong when it is false.
+   to every model and shows what each one said: the quickest way to tell a wrong key from a spent quota. "Model keys"
+   below it shows what every key did today across all instances (calls that worked and failed per model, the last
+   error, and the requests left when the provider says, as Groq does), its free tier, and the week's totals. `board.ok`
+   comes from a real probe of the database and `board.problem` says what is wrong when it is false.
 
 Routes: `GET /api/health`, `/api/search` (`q=`, `topic=`, `sort=`, `page=`), `/api/post?id=`, `/api/courses` (`term=`,
 `all=1`, `code=`, `code=&rating=1`, `profs=A|B`); `POST /api/ask` (server-sent events), `POST /api/plan`;
@@ -97,8 +99,14 @@ and drops the ones it cannot. A model that answers "no free tier"
 
 A model that failed rests for a while (a minute when overloaded, an hour when its day's quota is spent, hours when it
 no longer exists), and one that has not started writing within 25 seconds is skipped while there is time for the next.
-If every model is down, the student is told answers are busy and offered a retry. `GET /api/health` shows the chain as
-it stands (`answers.chain`).
+If every model is down, the student is told answers are busy and offered a retry, and every NetID on
+`ROR_ADMIN_NETIDS` gets an email at its NYU address (through Resend, the login sender) saying what each key did today;
+at most one every three hours. Settings has a button to send a test. `GET /api/health` shows the chain as it stands
+(`answers.chain`).
+
+Every model call is counted in `lib/model-usage.ts`: each instance keeps its counts in memory and saves them after
+each response as its own row in `guide_summaries` (`models:usage:<day>:<instance>`), so no schema change is needed and
+instances never overwrite each other. Rows older than eight days are removed.
 
 | Provider | Free tier, roughly (they change) | Key |
 | --- | --- | --- |

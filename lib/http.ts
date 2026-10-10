@@ -1,5 +1,6 @@
 /** Small helpers shared by every API route so handlers stay readable and behave the same on Vercel and the dev server. */
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { saveModelUsage } from './model-usage.ts';
 
 export type ApiRequest = IncomingMessage & {
   query?: Record<string, string | string[] | undefined>;
@@ -193,6 +194,10 @@ export function route(methods: Array<'GET' | 'POST'>, handler: Handler): Handler
       if (storage) console.error(`[api] ${req.method} ${req.url}: ${(error as Error).message}`);
       if (status >= 500) console.error(`[api] ${req.method} ${req.url}:`, error);
       sendJson(res, status >= 400 && status < 600 ? status : 500, { error: code, message });
+    } finally {
+      // The model calls this request made, counted in memory, are saved once the response is out, before the
+      // function may be frozen (lib/model-usage.ts).
+      await saveModelUsage();
     }
   };
 }

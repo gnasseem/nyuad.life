@@ -158,6 +158,40 @@ export interface ModelCheck {
   error?: string;
 }
 
+/** working | not used today | key refused | day's quota spent | rate limited | model retired | overloaded | failing */
+export type UsageState = 'ok' | 'idle' | 'refused' | 'spent' | 'limited' | 'gone' | 'overloaded' | 'failing';
+
+export interface ModelUsage {
+  model: string;
+  state: UsageState;
+  ok: number;
+  failed: number;
+  lastOkAt: string | null;
+  lastErrorAt: string | null;
+  lastError: string | null;
+  remaining: number | null;
+  limit: number | null;
+}
+
+export interface KeyUsage {
+  key: string;
+  label: string;
+  hint: string;
+  freeTier: string;
+  state: UsageState;
+  ok: number;
+  failed: number;
+  week: { ok: number; failed: number };
+  models: ModelUsage[];
+}
+
+export interface UsageReport {
+  day: string;
+  keys: KeyUsage[];
+  shared: boolean;
+  alerts: { to: string[]; last: { at: string; reason: string } | null };
+}
+
 export type AnnouncementKind = 'event' | 'deadline' | 'opportunity' | 'club' | 'notice';
 
 export interface Announcement {
@@ -514,6 +548,8 @@ export const api = {
     bans: () => request<{ bans: Array<{ netId: string; reason: string; createdAt: string }> }>('/api/admin?op=bans'),
     unban: (netId: string) => post<{ ok: true }>('/api/admin', { op: 'unban', netId }),
     models: () => request<{ geminiKeyProblem: string | null; results: ModelCheck[] }>('/api/admin?op=models'),
+    usage: () => request<UsageReport>('/api/admin?op=usage'),
+    alertTest: () => post<{ ok: true; to: string[] }>('/api/admin', { op: 'alert-test' }),
   },
   plan: {
     read: (body: { term: string; text: string; history?: Array<{ role: 'user' | 'assistant'; text: string }>; current: { wants: Array<{ label: string; codes: string[]; sessions?: Array<'71' | '72'> }>; rules: Rules }; major?: string; year?: string }) =>

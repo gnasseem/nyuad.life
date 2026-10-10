@@ -5,6 +5,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { ENOUGH_ANSWERS, type Announcement, type Answer, type BoardEvent, type CourseReview, type EventKind, type Listing, type Offer, type Profile, type Question, type Standing } from './board.ts';
 import { ApiError } from './http.ts';
+import { supabaseConfig, type SupabaseConfig } from './supabase.ts';
 
 interface BoardStats {
   open: number;
@@ -402,31 +403,6 @@ function sortAnnouncements(entries: Announcement[]): Announcement[] {
 }
 
 /* ---------- Supabase (PostgREST) ---------- */
-
-interface SupabaseConfig {
-  url: string;
-  serviceKey: string;
-}
-
-export function supabaseConfig(env: NodeJS.ProcessEnv = process.env): SupabaseConfig | null {
-  const url = normalizeSupabaseUrl(env.SUPABASE_URL ?? '');
-  const serviceKey = (env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SERVICE_KEY ?? '').trim().replace(/^["']|["']$/g, '');
-  return url && serviceKey ? { url, serviceKey } : null;
-}
-
-/**
- * Turns whatever was pasted into SUPABASE_URL into the REST origin: the project URL as given, the dashboard URL of
- * the project, a URL with /rest/v1 already on the end, or a bare project ref all become https://<ref>.supabase.co.
- */
-export function normalizeSupabaseUrl(raw: string): string {
-  let value = raw.trim().replace(/^["']|["']$/g, '');
-  if (!value) return '';
-  const dashboard = /supabase\.com\/dashboard\/project\/([a-z0-9]{20})/i.exec(value);
-  if (dashboard) return `https://${dashboard[1]!.toLowerCase()}.supabase.co`;
-  if (/^[a-z0-9]{20}$/i.test(value)) return `https://${value.toLowerCase()}.supabase.co`;
-  if (!/^https?:\/\//i.test(value)) value = `https://${value}`;
-  return value.replace(/\/+$/, '').replace(/\/rest\/v1$/i, '').replace(/\/+$/, '');
-}
 
 /** Which role a Supabase key carries: legacy keys are JWTs with a role claim, new keys say it in their prefix. */
 export function keyRole(key: string): 'service_role' | 'anon' | 'unknown' {

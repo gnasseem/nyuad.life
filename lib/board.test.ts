@@ -165,7 +165,7 @@ describe('MemoryBoardStore', () => {
 
 describe('SupabaseBoardStore', () => {
   it('turns whatever was pasted into SUPABASE_URL into the REST origin', async () => {
-    const { normalizeSupabaseUrl, supabaseConfig } = await import('./board-store.ts');
+    const { normalizeSupabaseUrl, supabaseConfig } = await import('./supabase.ts');
     expect(normalizeSupabaseUrl('https://abcdefghijklmnopqrst.supabase.co/')).toBe('https://abcdefghijklmnopqrst.supabase.co');
     expect(normalizeSupabaseUrl('https://abcdefghijklmnopqrst.supabase.co/rest/v1/')).toBe('https://abcdefghijklmnopqrst.supabase.co');
     expect(normalizeSupabaseUrl('https://supabase.com/dashboard/project/abcdefghijklmnopqrst/settings/api')).toBe('https://abcdefghijklmnopqrst.supabase.co');

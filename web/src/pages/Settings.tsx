@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { api, ApiError, type ModelCheck } from '../api';
+import { api, ApiError, type ModelCheck, type UsageReport, type UsageState } from '../api';
 import { GROUP_URL } from '../brand';
 import { ChatGPTSignIn } from '../components/ChatGPT';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
-import { plural, standingLabel } from '../format';
+import { plural, relativeDate, standingLabel } from '../format';
 import { IconExternal, IconShield } from '../icons';
 import { clearConversations, forgetDevice, loadConversations, onConversationsChange, type Theme } from '../store';
 
@@ -231,6 +231,43 @@ export function SettingsPage() {
   );
 }
 
+const USAGE_LABEL: Record<UsageState, string> = {
+  ok: 'Working',
+  idle: 'Not used today',
+  refused: 'Key refused',
+  spent: "Today's quota used up",
+  limited: 'Rate limited',
+  gone: 'Model retired',
+  overloaded: 'Overloaded',
+  failing: 'Failing',
+};
+
+/** How a number of keys in one state is told in the summary: "3 working", "1 refused". */
+const USAGE_SUMMARY: Record<UsageState, string> = {
+  ok: 'working',
+  idle: 'not used today',
+  refused: 'refused',
+  spent: 'out of quota today',
+  limited: 'rate limited',
+  gone: 'on retired models',
+  overloaded: 'overloaded',
+  failing: 'failing',
+};
+
+/** "4 keys: 3 working, 1 refused." */
+function usageSummary(usage: UsageReport): string {
+  if (!usage.keys.length) return 'No model keys are set on the server.';
+  const states = Object.keys(USAGE_SUMMARY) as UsageState[];
+  const parts = states.map((state) => [usage.keys.filter((key) => key.state === state).length, state] as const).filter(([count]) => count > 0).map(([count, state]) => `${count} ${USAGE_SUMMARY[state]}`);
+  return `${plural(usage.keys.length, 'key')}: ${parts.join(', ')}. Counted since midnight in Abu Dhabi.`;
+}
+
+/** "12 ok · 3 failed · 987 of 1,000 left today" */
+function callCounts(row: { ok: number; failed: number; remaining?: number | null; limit?: number | null }): string {
+  const left = row.limit != null ? ` · ${(row.remaining ?? 0).toLocaleString()} of ${row.limit.toLocaleString()} left today` : row.remaining != null ? ` · ${row.remaining.toLocaleString()} left today` : '';
+  return `${row.ok} ok · ${row.failed} failed${left}`;
+}
+
 /** Moderation controls and model checks for verified administrators. */
 function AdminSection() {
   const { admin, toast } = useApp();
@@ -238,6 +275,9 @@ function AdminSection() {
   const [checks, setChecks] = useState<{ geminiKeyProblem: string | null; results: ModelCheck[] } | null>(null);
   const [checking, setChecking] = useState(false);
   const [bans, setBans] = useState<Array<{ netId: string; reason: string; createdAt: string }> | null>(null);
+  const [usage, setUsage] = useState<UsageReport | null>(null);
+  const [loadingUsage, setLoadingUsage] = useState(false);
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     api.admin
@@ -253,6 +293,35 @@ function AdminSection() {
       .then((result) => setBans(result.bans))
       .catch(() => setBans([]));
   }, [admin]);
+
+  const loadUsage = async () => {
+    setLoadingUsage(true);
+    try {
+      setUsage(await api.admin.usage());
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not read the model usage.');
+    } finally {
+      setLoadingUsage(false);
+    }
+  };
+
+  useEffect(() => {
+    if (admin) void loadUsage();
+    else setUsage(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [admin]);
+
+  const testAlert = async () => {
+    setTesting(true);
+    try {
+      const result = await api.admin.alertTest();
+      toast(`Test email sent to ${result.to.join(', ')}`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not send the test email.');
+    } finally {
+      setTesting(false);
+    }
+  };
 
   useEffect(() => {
     if (window.location.hash === '#admin') document.getElementById('admin')?.scrollIntoView({ block: 'start' });
@@ -314,6 +383,63 @@ function AdminSection() {
                 ))}
               </div>
             )}
+            <div className="settings-row">
+              <div className="text">
+                <b>Model keys</b>
+                <span>{usage ? usageSummary(usage) : 'What each key did today: calls that worked, calls that failed and why, and what is left of its quota.'}</span>
+              </div>
+              <button type="button" className="btn sm" onClick={() => void loadUsage()} disabled={loadingUsage}>
+                {loadingUsage ? <span className="spinner" /> : null} Refresh
+              </button>
+            </div>
+            {usage && usage.keys.length > 0 && (
+              <div className="model-checks">
+                {!usage.shared && <p className="muted small">The database could not be read: these counts are from one server instance only.</p>}
+                {usage.keys.map((key) => (
+                  <div key={`${key.key}-${key.hint}`} className="model-key">
+                    <div className={`model-check head ${key.state}`}>
+                      <span className="dot" />
+                      <b>{key.label}</b>
+                      <span className="hint">…{key.hint}</span>
+                      <span className="state">{USAGE_LABEL[key.state]}</span>
+                      <span className="ms">{callCounts(key)}</span>
+                      <span className="why">
+                        {key.state === 'refused' ? `${(key.models.find((model) => model.state === 'refused')?.lastError ?? 'The provider refused this key').replace(/\.?$/, '.')} Replace the key. ` : ''}
+                        Free tier: {key.freeTier}. This week: {key.week.ok} ok, {key.week.failed} failed.
+                      </span>
+                    </div>
+                    {/* A refused key fails the same way on every model: the reason above is enough. */}
+                    {key.state !== 'refused' && key.models.map((model) => (
+                      <div key={model.model} className={`model-check sub ${model.state}`}>
+                        <span className="dot" />
+                        <b>{model.model}</b>
+                        <span className="state">{USAGE_LABEL[model.state]}</span>
+                        <span className="ms">{callCounts(model)}</span>
+                        {model.state !== 'ok' && model.state !== 'idle' && model.lastError && (
+                          <span className="why">
+                            {model.lastErrorAt ? `${relativeDate(model.lastErrorAt)}: ` : ''}
+                            {model.lastError}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="settings-row">
+              <div className="text">
+                <b>Outage email</b>
+                <span>
+                  {usage?.alerts.to.length
+                    ? `Sent to ${usage.alerts.to.join(', ')} when every model fails a student's question, at most once every 3 hours. ${usage.alerts.last ? `Last sent ${relativeDate(usage.alerts.last.at)}.` : 'None sent yet.'}`
+                    : 'Sent to the administrators when every model fails a student\'s question.'}
+                </span>
+              </div>
+              <button type="button" className="btn sm ghost" onClick={() => void testAlert()} disabled={testing}>
+                {testing ? <span className="spinner" /> : null} Send a test
+              </button>
+            </div>
             <div className="settings-row">
               <div className="text">
                 <b>Barred from posting</b>

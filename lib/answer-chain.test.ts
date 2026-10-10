@@ -121,7 +121,7 @@ beforeEach(() => {
 });
 
 function groq(models = ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'], maxPromptChars = 20_000): Provider {
-  return { id: 'groq', family: 'groq', label: 'Groq', baseUrl: backupUrl, apiKey: 'groq-key', models, liteModels: ['llama-3.1-8b-instant'], maxPromptChars, maxOutputTokens: 1_600 };
+  return { id: 'groq', family: 'groq', label: 'Groq', baseUrl: backupUrl, apiKey: 'groq-key', models, liteModels: ['llama-3.1-8b-instant'], maxPromptChars, maxOutputTokens: 1_600, freeTier: '' };
 }
 
 const context = { catalog: null, reranker: null, cache: false } as const;

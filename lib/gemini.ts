@@ -2,6 +2,7 @@
  * Minimal Gemini Developer API client over fetch (no SDK), covering the three calls this app needs:
  * batch embeddings, JSON-mode generation and SSE streaming generation. Retries 429/5xx with backoff.
  */
+import { recordModelCall } from './model-usage.ts';
 
 export interface GeminiConfig {
   /** The key this config calls with: the first of `keys`, or one of them in a config from geminiKeys(). */
@@ -25,6 +26,8 @@ export interface GeminiConfig {
 }
 
 export const DEFAULT_EMBED_MODEL = 'gemini-embedding-001';
+/** For the admins' usage view. Google resets the free tier at midnight Pacific, 11:00 or 12:00 in Abu Dhabi. */
+export const GEMINI_FREE_TIER = 'a daily quota per model and Google project, reset at midnight Pacific';
 // Prefer the free models that answered the production probe. Larger Flash models exhausted their quota or returned
 // overload errors on that key; trying them first kept working models behind a long chain of failures.
 // Each model has its own free daily quota on the same key, so more of them behind the first means more answers a day; a
@@ -498,10 +501,12 @@ async function fetchWithRetry(cfg: GeminiConfig, path: string, body: unknown, op
         signal: controller.signal,
       });
       if (response.ok) {
+        record(cfg, path);
         streaming = true;
         return response;
       }
       const error = await toError(response);
+      record(cfg, path, error);
       if (!error.retryable || attempt >= retries || (error.status === 429 && options.waitOutQuota === false)) throw error;
       await sleep(error.retryAfterMs ?? backoff(attempt), options.signal);
     } catch (thrown) {
@@ -510,9 +515,10 @@ async function fetchWithRetry(cfg: GeminiConfig, path: string, body: unknown, op
         await sleep(thrown.retryAfterMs ?? backoff(attempt), options.signal);
       } else if (options.signal?.aborted) {
         throw new GeminiError('Request cancelled.', 499);
-      } else if (attempt >= retries) {
-        throw new GeminiError(`Gemini request failed: ${(thrown as Error).message}`, 503);
       } else {
+        const failure = controller.signal.aborted ? new GeminiError(`Gemini timed out after ${timeoutMs / 1000}s.`, 504) : new GeminiError(`Gemini request failed: ${(thrown as Error).message}`, 503);
+        record(cfg, path, failure);
+        if (attempt >= retries) throw failure;
         await sleep(backoff(attempt), options.signal);
       }
     } finally {
@@ -521,6 +527,22 @@ async function fetchWithRetry(cfg: GeminiConfig, path: string, body: unknown, op
     }
     attempt++;
   }
+}
+
+/** Counts one call for the admins' usage view. A daily-quota error says the day's limit ("limit: 20"), so it is kept. */
+function record(cfg: GeminiConfig, path: string, error?: GeminiError): void {
+  const index = (cfg.keys ?? []).indexOf(cfg.apiKey);
+  const limit = error && isDailyQuota(error) ? /\blimit: ?(\d+)/.exec(error.message)?.[1] : undefined;
+  recordModelCall({
+    key: index > 0 ? `gemini-${index + 1}` : 'gemini',
+    provider: 'gemini',
+    hint: cfg.apiKey.slice(-4),
+    model: /^models\/([^:]+)/.exec(path)?.[1] ?? path,
+    ok: !error,
+    status: error?.status,
+    error: error?.message,
+    ...(limit ? { remaining: 0, limit: Number(limit) } : {}),
+  });
 }
 
 async function toError(response: Response): Promise<GeminiError> {

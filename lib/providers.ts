@@ -15,7 +15,8 @@
  * `<PROVIDER>_MODELS` overrides a provider's answer models and `<PROVIDER>_LITE_MODELS` its models for small calls.
  * `ROR_MODEL_ORDER` (default below) sets which goes first.
  */
-import { discoverGeminiModels, geminiConfig, geminiKeys, generateJson, generateText, keyTag, type GeminiConfig, type Message } from './gemini.ts';
+import { discoverGeminiModels, GEMINI_FREE_TIER, geminiConfig, geminiKeys, generateJson, generateStream, keyTag, type GeminiConfig, type Message } from './gemini.ts';
+import { recordModelCall, type ModelKey } from './model-usage.ts';
 
 export interface Provider {
   /** Unique per key: "groq", then "groq-2" for a second Groq key. */
@@ -35,6 +36,8 @@ export interface Provider {
    */
   maxPromptChars: number;
   maxOutputTokens: number;
+  /** The free tier in a few words, for the admins' usage view. */
+  freeTier: string;
 }
 
 interface Preset {
@@ -47,6 +50,7 @@ interface Preset {
   liteModels: string[];
   maxPromptChars: number;
   maxOutputTokens: number;
+  freeTier: string;
   /** Whether GET /models lists what the key can use; when it does, names it does not list are dropped. */
   listsModels: boolean;
   /** When the provider lists none of the default models (they were renamed), the listed ones to use instead. */
@@ -59,7 +63,7 @@ interface Preset {
 // against it at runtime (discoverProviderModels), a model that answers 404 is skipped for hours, and the lists can be
 // replaced from the environment. Groq retired its Llama models for free keys on 2026-08-16.
 const PRESETS: Preset[] = [
-  { id: 'groq', label: 'Groq', key: 'GROQ_API_KEY', baseUrl: 'https://api.groq.com/openai/v1', models: ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b'], liteModels: ['openai/gpt-oss-20b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-120b'], maxPromptChars: 16_000, maxOutputTokens: 1_400, listsModels: true, fallbackPattern: /gpt-oss|qwen/i, extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : /qwen/.test(model) ? { reasoning_effort: 'none' } : {}) },
+  { id: 'groq', label: 'Groq', key: 'GROQ_API_KEY', baseUrl: 'https://api.groq.com/openai/v1', models: ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b'], liteModels: ['openai/gpt-oss-20b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-120b'], maxPromptChars: 16_000, maxOutputTokens: 1_400, freeTier: 'about 1,000 requests and 200,000 tokens a day per model', listsModels: true, fallbackPattern: /gpt-oss|qwen/i, extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : /qwen/.test(model) ? { reasoning_effort: 'none' } : {}) },
   {
     id: 'cloudflare',
     label: 'Cloudflare',
@@ -73,13 +77,14 @@ const PRESETS: Preset[] = [
     liteModels: ['@cf/zai-org/glm-4.7-flash', '@cf/google/gemma-4-26b-a4b-it'],
     maxPromptChars: 40_000,
     maxOutputTokens: 1_600,
+    freeTier: '10,000 neurons a day, about 90 answers; resets 04:00 Abu Dhabi',
     listsModels: false,
     extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}),
   },
-  { id: 'zai', label: 'Z.ai', key: 'ZAI_API_KEY', baseUrl: 'https://api.z.ai/api/paas/v4', models: ['glm-4.7-flash'], liteModels: ['glm-4.5-flash', 'glm-4.7-flash'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: false, extra: () => ({ thinking: { type: 'disabled' } }) },
-  { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['nvidia/nemotron-3-super-120b-a12b:free', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'google/gemma-4-31b-it:free'], liteModels: ['google/gemma-4-26b-a4b-it:free', 'nvidia/nemotron-3-super-120b-a12b:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: true, fallbackPattern: /:free$/, extra: (model) => (/gpt-oss|nemotron|inkling/.test(model) ? { reasoning: { effort: 'low', exclude: true } } : {}) },
-  { id: 'mistral', label: 'Mistral', key: 'MISTRAL_API_KEY', baseUrl: 'https://api.mistral.ai/v1', models: ['mistral-medium-latest', 'mistral-small-latest'], liteModels: ['mistral-small-latest'], maxPromptChars: 60_000, maxOutputTokens: 2_000, listsModels: true, fallbackPattern: /^mistral-(medium|small)/i },
-  { id: 'gateway', label: 'Vercel AI Gateway', key: 'AI_GATEWAY_API_KEY', baseUrl: 'https://ai-gateway.vercel.sh/v1', models: ['openai/gpt-oss-120b', 'google/gemma-4-31b-it'], liteModels: ['openai/gpt-oss-20b'], maxPromptChars: 80_000, maxOutputTokens: 2_000, listsModels: false, extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}) },
+  { id: 'zai', label: 'Z.ai', key: 'ZAI_API_KEY', baseUrl: 'https://api.z.ai/api/paas/v4', models: ['glm-4.7-flash'], liteModels: ['glm-4.5-flash', 'glm-4.7-flash'], maxPromptChars: 60_000, maxOutputTokens: 2_000, freeTier: 'GLM Flash models free, one request at a time', listsModels: false, extra: () => ({ thinking: { type: 'disabled' } }) },
+  { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['nvidia/nemotron-3-super-120b-a12b:free', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'google/gemma-4-31b-it:free'], liteModels: ['google/gemma-4-26b-a4b-it:free', 'nvidia/nemotron-3-super-120b-a12b:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000, freeTier: '50 requests a day across all :free models', listsModels: true, fallbackPattern: /:free$/, extra: (model) => (/gpt-oss|nemotron|inkling/.test(model) ? { reasoning: { effort: 'low', exclude: true } } : {}) },
+  { id: 'mistral', label: 'Mistral', key: 'MISTRAL_API_KEY', baseUrl: 'https://api.mistral.ai/v1', models: ['mistral-medium-latest', 'mistral-small-latest'], liteModels: ['mistral-small-latest'], maxPromptChars: 60_000, maxOutputTokens: 2_000, freeTier: 'Experiment plan', listsModels: true, fallbackPattern: /^mistral-(medium|small)/i },
+  { id: 'gateway', label: 'Vercel AI Gateway', key: 'AI_GATEWAY_API_KEY', baseUrl: 'https://ai-gateway.vercel.sh/v1', models: ['openai/gpt-oss-120b', 'google/gemma-4-31b-it'], liteModels: ['openai/gpt-oss-20b'], maxPromptChars: 80_000, maxOutputTokens: 2_000, freeTier: '$5 of credit every 30 days', listsModels: false, extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}) },
 ];
 
 export const DEFAULT_ORDER = ['gemini', 'groq', 'cloudflare', 'zai', 'openrouter', 'mistral', 'gateway'];
@@ -163,6 +168,15 @@ export function modelOrder(env: NodeJS.ProcessEnv = process.env): string[] {
   return [...new Set([...chosen, ...DEFAULT_ORDER])];
 }
 
+/** Every model key the server has, Gemini's first, with the models each is asked for: for the admins' usage view. */
+export function modelKeys(gemini: GeminiConfig | null = geminiConfig(), providers: Provider[] = providersFromEnv()): ModelKey[] {
+  const fromGemini = gemini
+    ? gemini.keys.map((key, i) => ({ key: i ? `gemini-${i + 1}` : 'gemini', provider: 'gemini', label: i ? `Gemini ${i + 1}` : 'Gemini', hint: key.slice(-4), models: [...new Set([gemini.chatModel, ...gemini.chatFallbacks, ...gemini.liteModels])], freeTier: GEMINI_FREE_TIER }))
+    : [];
+  const fromProviders = providers.map((provider) => ({ key: provider.id, provider: provider.family, label: provider.label, hint: provider.apiKey.slice(-4), models: [...new Set([...provider.models, ...provider.liteModels])], freeTier: provider.freeTier }));
+  return [...fromGemini, ...fromProviders];
+}
+
 /** Every provider with a key set, one per key, in the configured order. */
 export function providersFromEnv(env: NodeJS.ProcessEnv = process.env): Provider[] {
   const order = modelOrder(env);
@@ -187,6 +201,7 @@ export function providersFromEnv(env: NodeJS.ProcessEnv = process.env): Provider
       liteModels,
       maxPromptChars: preset.maxPromptChars,
       maxOutputTokens: preset.maxOutputTokens,
+      freeTier: preset.freeTier,
     }));
   }).sort((a, b) => order.indexOf(a.family) - order.indexOf(b.family));
 }
@@ -298,18 +313,42 @@ async function post(provider: Provider, model: string, params: ChatParams, strea
     response = await send(true);
   } catch (error) {
     if (params.signal?.aborted) throw new ProviderError('Request cancelled.', 499);
-    throw new ProviderError(`${provider.label} could not be reached: ${(error as Error).message}`, 503);
+    const failure = new ProviderError(`${provider.label} could not be reached: ${(error as Error).message}`, 503);
+    record(provider, model, failure);
+    throw failure;
   }
-  if (response.ok) return response;
+  if (response.ok) return record(provider, model, response);
   let failure = await toError(provider, response);
   // A model that does not take the reasoning setting is called once more without it, and without it from then on.
   if (failure.status === 400 && /reasoning|thinking|chat_template|unrecognized|unknown (?:field|parameter)/i.test(failure.message) && Object.keys(reasoning(provider, model)).length) {
     noReasoning.add(`${provider.id}:${model}`);
     response = await send(false);
-    if (response.ok) return response;
+    if (response.ok) return record(provider, model, response);
     failure = await toError(provider, response);
   }
+  record(provider, model, failure);
   throw failure;
+}
+
+/**
+ * Counts one call for the admins' usage view, with the day's requests left when the provider sends them (Groq's
+ * x-ratelimit-*-requests headers count the day). Returns the response, so a success can be passed straight on.
+ */
+function record<T extends Response | ProviderError>(provider: Provider, model: string, outcome: T): T {
+  const header = (name: string) => (outcome instanceof Response ? outcome.headers.get(`x-ratelimit-${name}-requests-day`) ?? outcome.headers.get(`x-ratelimit-${name}-requests`) : null);
+  const remaining = Number(header('remaining') ?? NaN);
+  const limit = Number(header('limit') ?? NaN);
+  recordModelCall({
+    key: provider.id,
+    provider: provider.family,
+    hint: provider.apiKey.slice(-4),
+    model,
+    ok: outcome instanceof Response,
+    ...(outcome instanceof ProviderError ? { status: outcome.status, error: outcome.message } : {}),
+    ...(Number.isFinite(remaining) ? { remaining } : {}),
+    ...(Number.isFinite(limit) ? { limit } : {}),
+  });
+  return outcome;
 }
 
 async function toError(provider: Provider, response: Response): Promise<ProviderError> {
@@ -513,7 +552,11 @@ export async function checkModels(gemini: GeminiConfig | null, backups: Provider
   if (gemini) {
     for (const key of geminiKeys(gemini)) {
       for (const model of new Set([gemini.chatModel, ...gemini.chatFallbacks, ...gemini.liteModels])) {
-        jobs.push({ name: `gemini:${model}${keyTag(key)}`, run: (signal) => generateText(key, { model, messages: ask, maxOutputTokens: 64 }, { retries: 0, signal, timeoutMs: 15_000, waitOutQuota: false }) });
+        // Streamed, because generateText would try every key in turn and report the first key's result for each.
+        const run = async (signal: AbortSignal) => {
+          for await (const _event of generateStream(key, { model, messages: ask, maxOutputTokens: 64 }, { retries: 0, signal, timeoutMs: 15_000, waitOutQuota: false }));
+        };
+        jobs.push({ name: `gemini:${model}${keyTag(key)}`, run });
       }
     }
   }

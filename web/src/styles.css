@@ -957,6 +957,12 @@ a.mini:hover .mini-what { color: var(--line-ink); }
 .model-check b { font: 650 13px/1.3 var(--sign); font-stretch: 92%; overflow-wrap: anywhere; }
 .model-check .ms { margin-left: auto; color: var(--ink-3); font: 650 12px/1 var(--sign); font-variant-numeric: tabular-nums; }
 .model-check .why { flex-basis: 100%; padding-left: 17px; color: var(--ink-3); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.model-check .state, .model-check .hint { color: var(--ink-3); font-size: 12px; }
+.model-check.idle .dot { --tone: var(--rule-2); }
+.model-check:is(.spent, .limited, .overloaded) .dot { --tone: var(--amber); }
+.model-check:is(.refused, .gone, .failing) .state { color: var(--scarlet-ink); font-weight: 650; }
+.model-key + .model-key { margin-top: 6px; }
+.model-check.sub { padding-left: 17px; border-top-style: dashed; }
 
 /* Single-column grids must not widen to a child's unbreakable line (a long nowrap title, for one). */
 .rail, .rail-block, .lb, .agenda, .agenda-items, .topic-list, .conv-main, .md > div, .split > div { grid-template-columns: minmax(0, 1fr); }

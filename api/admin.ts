@@ -1,11 +1,12 @@
 /** Moderation and model diagnostics for verified accounts on ROR_ADMIN_NETIDS. */
-import { adminConfig, adminSession, requireAdmin } from '../lib/admin.ts';
+import { adminConfig, adminEmails, adminSession, emailAdmins, requireAdmin, usageText } from '../lib/admin.ts';
 import { validateNetId } from '../lib/board.ts';
 import { boardStore, type AdminTarget, type BoardStore } from '../lib/board-store.ts';
 import { geminiConfig, geminiKeyProblem } from '../lib/gemini.ts';
 import { ApiError, clientIp, clientKey, queryString, rateLimit, readJson, route, sendJson } from '../lib/http.ts';
 import { ownerOf } from '../lib/identity.ts';
-import { checkModels, providersFromEnv, warmModels } from '../lib/providers.ts';
+import { lastAlert, modelUsage, saveModelUsage } from '../lib/model-usage.ts';
+import { checkModels, modelKeys, providersFromEnv, warmModels } from '../lib/providers.ts';
 import { collapseWhitespace } from '../lib/text.ts';
 
 const TARGETS: AdminTarget[] = ['question', 'answer', 'notice', 'listing', 'offer', 'review'];
@@ -30,6 +31,21 @@ export default route(['GET', 'POST'], async (req, res) => {
       const gemini = geminiConfig();
       const results = await checkModels(gemini, providersFromEnv());
       sendJson(res, 200, { geminiKeyProblem: geminiKeyProblem(gemini), results });
+      return;
+    }
+    case 'usage': {
+      // What every key did today across instances, this instance's latest calls included.
+      await saveModelUsage();
+      const [usage, alert] = await Promise.all([modelUsage(modelKeys()), lastAlert().catch(() => null)]);
+      sendJson(res, 200, { ...usage, alerts: { to: adminEmails(cfg), last: alert } });
+      return;
+    }
+    case 'alert-test': {
+      if (req.method !== 'POST') break;
+      rateLimit(req, 3, 3 / 60, 'admin-alert-test');
+      const usage = await usageText();
+      await emailAdmins('nyuad.life: test of the outage email', `This is a test. When every answer model fails a question, an email like this one is sent, with what each key did today:\n\n${usage}`, `models-test-${Date.now()}`);
+      sendJson(res, 200, { ok: true, to: adminEmails(cfg) });
       return;
     }
     case 'bans': {
