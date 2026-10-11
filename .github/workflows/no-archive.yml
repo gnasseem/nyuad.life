@@ -1,0 +1,28 @@
+# Fails when the group archive or anything built from it lands in a commit. The posts and the search index hold
+# students' names and words; they live in the private Blob store (scripts/archive.ts), never in git.
+name: Keep the archive out of git
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Look for archive files in the tree and its history
+        run: |
+          pattern='^data/(posts[^/]*\.jsonl[^/]*|index/.*|scrape-state\.json|removed\.json)$'
+          found="$( { git ls-tree -r --name-only HEAD; git log --format= --name-only HEAD; } | grep -E "$pattern" | sort -u || true)"
+          if [ -n "$found" ]; then
+            echo "::error::These archive paths are in a commit. Take them out of history; they belong in the Blob store:"
+            echo "$found"
+            exit 1
+          fi
+          echo "No archive files in the tree or its history."
