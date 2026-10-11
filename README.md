@@ -50,6 +50,25 @@ archive browsing, plan reading and contacts to anyone who has not.
 
 Everything is TypeScript in one repository: `api/` and `lib/` are Vercel serverless functions, `web/` is a Vite and
 React app, `scripts/` holds the scraper, the crawler and the indexer, and `supabase/schema.sql` is the board schema.
+The group archive and its search index are not in the repository (see "Data and privacy").
+
+## Data and privacy
+
+- **Where the data comes from.** The archive is posts and comments from the Room of Requirement, the NYU Abu Dhabi
+  student Facebook group, read by `scripts/scrape.ts` from the group as a member sees it. Official pages
+  (`data/official.jsonl`) and the Albert class schedule (`data/classes.jsonl`) are public university pages and stay in
+  the repository.
+- **Where it is kept.** The posts (`posts.jsonl`) and the search index built from them live in a private Vercel Blob
+  store, never in git; the build pulls the index from there. Phone numbers and personal email addresses are taken out
+  before anything is served.
+- **Who sees it.** Only signed-in NYU Abu Dhabi students: an account needs a code sent to a `@nyu.edu` address, and
+  the API refuses answers and archive browsing to anyone without one.
+- **Removing your posts.** Email gnn9245@nyu.edu from your NYU address with a link to the post, or ask for everything
+  you wrote, and it is taken out within a week. Removals are kept in `removed.json` in the private store (post ids and
+  author names): `npm run archive -- pull posts`, add the entry to `data/removed.json`
+  (`{"posts": ["<id>"], "authors": ["<name>"]}`), `npm run archive -- push removed`, then run the index workflow and
+  deploy. A listed author's posts and comments are left out of every index from then on, even when the scraper reads
+  them again.
 
 ## Deploy
 
@@ -65,6 +84,7 @@ React app, `scripts/` holds the scraper, the crawler and the indexer, and `supab
    | `RESEND_API_KEY`, `RESEND_FROM`, `SESSION_SECRET` | NYU email login: a verified Resend sender and a 32+ character session secret. |
    | `OPENAI_CLIENT_ID`, `SESSION_SECRET`, `ROR_SITE_URL` | Sign in with ChatGPT: answers on each student's own plan (below). |
    | `VOYAGE_API_KEY` | Semantic search (must be the provider that built the index) and the reranker. |
+   | `BLOB_READ_WRITE_TOKEN` | The private Blob store holding the archive and its index, which the build pulls. Connecting a private Blob store to the project sets it. |
    | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | The board: questions, notices, offers, listings, course summaries. |
    | `ROR_GROUP_URL` | Where listings and rides are sent. Defaults to the group. |
 
@@ -184,7 +204,13 @@ npm run scrape                  # later: only new posts and threads whose commen
 The login is kept in `.scraper-profile/`. Progress is saved every few minutes and on Ctrl+C, and the next run resumes.
 `--all-time` searches a few common words per month back to `--from` (default `2010-01`); months already done are
 skipped, `--restart-feed` forgets them. Other options: `--max-posts N`, `--no-comments`, `--only-comments`,
-`--delay 2`, `--chrome`, `--debug`. Commit `data/posts.jsonl` when a run finishes.
+`--delay 2`, `--chrome`, `--debug`.
+
+The archive is not in git: it lives in the project's private Vercel Blob store. `vercel env pull --global-config
+~/.vercel-nyuad` writes the store's `BLOB_READ_WRITE_TOKEN` to `.env.local`; then `npm run archive -- pull posts` before
+a scrape and `npm run archive -- push posts` after it (a file with fewer posts than the store's is refused without
+`--force`). The scraper will not start without `data/posts.jsonl` unless given `--new-archive`. `npm run scrape:publish`
+does all of it: pulls, scrapes new comments, pushes, runs the index workflow, deploys and checks production.
 
 ## Scrape Albert
 
@@ -212,12 +238,18 @@ embeds what is left.
 | Cloudflare Workers AI | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 | Gemini | `GEMINI_API_KEY` |
 
-Automatic: add the key as a repository secret. Every push to `main` that changes `data/posts.jsonl` or `lib/` runs
-`.github/workflows/index.yml`, which embeds only the chunks that changed and commits `data/index/`. The same key must
-be set on Vercel so questions can be embedded.
+Automatic: add the key and `BLOB_READ_WRITE_TOKEN` as repository secrets. Every push to `main` that changes `lib/`,
+and every `npm run scrape:publish`, runs `.github/workflows/index.yml`, which pulls the posts and the last index from
+the Blob store, embeds only the chunks that changed and pushes the new index back. The build (`npm run build`) pulls
+the index from the store into `data/index/`, so the next deploy serves it. The same embedding key must be set on Vercel
+so questions can be embedded.
 
-Manual: `cp .env.example .env`, add the key, `npm run index`, commit `data/index/`. Options: `--provider`, `--fresh`,
-`--limit 300`, `--no-embed`.
+Manual: `cp .env.example .env`, add the key, `npm run archive -- pull posts`, `npm run index`, `npm run archive -- push
+index`. Options: `--provider`, `--fresh`, `--limit 300`, `--no-embed`.
+
+Nothing built from the posts may be committed: `.gitignore` leaves out `data/posts*.jsonl`, `data/index/`,
+`data/removed.json` and `data/scrape-state.json`, and `.github/workflows/no-archive.yml` fails any push or pull request
+whose tree or history holds one of them.
 
 ## The board
 
