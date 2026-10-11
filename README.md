@@ -3,7 +3,9 @@
 Answers for NYU Abu Dhabi students, cited from 13,000+ student forum threads, official university pages and the class
 schedule. Live at **[nyuad.life](https://nyuad.life)** (NYU sign-in required).
 
-[![The nyuad.life tour: Ask, Plan, Reviews and Questions](docs/tour.gif)](https://nyuad.life)
+[![nyuad.life answering a question with cited sources, then building a week of classes](docs/demo.gif)](https://nyuad.life)
+
+<sub>Forum snippets and a person's name are blurred: the archive is only for signed-in students.</sub>
 
 ## What it does
 
