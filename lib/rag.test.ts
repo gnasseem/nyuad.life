@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { gatherSources, matchesPerson, personName, safeRewrite, parseConfidence, poolHoursAnswer, searchQueries, systemPrompt } from './rag.ts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { gatherSources, matchesPerson, normalizeCitations, peopleIndex, personName, safeRewrite, parseConfidence, poolHoursAnswer, searchQueries, sourcesBlock, systemPrompt } from './rag.ts';
 import type { OfficialCorpus } from './official.ts';
 import type { Archive } from './store.ts';
 import { buildBm25 } from './search.ts';
@@ -90,4 +90,85 @@ it('keeps current deadline evidence official even when old threads rank highly',
   const archive = { posts: [post], chunks: [chunk], chunkPost: new Int32Array([0]), postChunk: new Int32Array([0]), postPosition: new Map([['old', 0]]), byCourse: new Map(), vectors: emptyTable(0), bm25: buildBm25([chunk.text]), meta: { model: 'none' } } as unknown as Archive;
   const result = await gatherSources(archive, 'Registration deadlines for Fall 2026?', 'Registration deadlines for Fall 2026?', { cfg: null, official: null, catalog: null, board: null, reranker: { name: 'always-perfect', rerank: async (_q, texts) => texts.map(() => 1) } });
   expect(result.cards).toEqual([]);
+});
+
+describe('personName', () => {
+  it('does not read campus phrases or a title-cased rewrite as a person', () => {
+    for (const phrase of ['New York University Abu Dhabi calculus instructor this semester', 'Fall Break Dates NYU Abu Dhabi', 'NYUAD Fall 2026 Add/Drop Deadline', 'Interactive Media major requirements', 'Grading Basis Change deadline', 'Data Structures professor reviews', 'What about Spring Semester?', 'Is Professor Smith strict?']) {
+      expect(personName(phrase), phrase).toBeNull();
+    }
+  });
+  it('finds people the schedule or faculty pages know, inside a longer question too', () => {
+    const known = peopleIndex(['Nizar Demni', 'Yves Le Jan']);
+    expect(personName('Is Nizar Demni a good professor?', known)).toBe('Nizar Demni');
+    expect(personName('what about nizar demni', known)).toBe('nizar demni');
+    expect(personName('how is Yves Le Jan as a teacher', known)).toBe('Yves Le Jan');
+    expect(personName('Data Structures with Nizar Demni workload', known)).toBe('Nizar Demni');
+    expect(personName('Is Nizar Demni a good professor?')).toBeNull();
+  });
+});
+
+it('reads the citation styles free models write', () => {
+  expect(normalizeCitations('Fall break is 23 Oct [Source 1] and the 30th 【2】.')).toBe('Fall break is 23 Oct [1] and the 30th [2].');
+  expect(normalizeCitations('See [sources 1, 3] and [2; 4] and [1-3].')).toBe('See [1, 3] and [2, 4] and [1, 2, 3].');
+  expect(normalizeCitations('A range too wide stays [1-20].')).toBe('A range too wide stays [1-20].');
+});
+
+/** The registrar's calendar page and the one passage the search index holds of it. */
+function calendarCorpus(): OfficialCorpus {
+  const doc = {
+    id: 'cal', url: 'https://nyuad.nyu.edu/en/academics/undergraduate/academic-calendar.html', title: 'Undergraduate Academic Calendar', section: 'academics', breadcrumbs: [], fetchedAt: '2026-10-11T00:00:00.000Z',
+    text: '2026-2027. All registration deadlines are 4pm UAE time.',
+    sections: [
+      { title: 'Fall Semester 1', text: '| Aug 31 (Mon) | First day of classes\n| Sep 11 (Fri) | Add/drop deadline for 14-week courses (4pm deadline)\n| Oct 23-25 (Fri-Sun) | No classes: Fall Break\n| Sep 4 (Fri) | Add/drop deadline for 7-week courses\n| Oct 2 (Fri) | Withdrawal deadline for 7-week courses' },
+      { title: 'Fall Semester 2', text: '| Oct 26 (Mon) | Classes resume\n| Oct 30 (Fri) | Add/drop deadline for 7-week courses (4pm deadline)\n| Nov 20 (Fri) | Withdrawal deadline for 14-week courses\n| Dec 14 (Mon) | Last day of classes\n| Dec 16-22 (Wed-Tue) | Final exams\n| Dec 23 (Wed) | Winter break begins' },
+    ],
+  };
+  const chunk = { id: 'cal#1', postId: 'cal', n: 1, text: 'Undergraduate Academic Calendar (Academics, official NYUAD page) · Fall Semester 1\n| Sep 11 (Fri) | Add/drop deadline for 14-week courses', hash: 'cal' };
+  return { docs: [doc], chunks: [chunk], chunkDoc: new Int32Array([0]), docPosition: new Map([['cal', 0]]), vectors: emptyTable(0), bm25: buildBm25([chunk.text]), bySection: new Map(), byCode: new Map(), meta: { model: 'none', dimensions: 0 } } as unknown as OfficialCorpus;
+}
+
+describe('the academic calendar as a source', () => {
+  afterEach(() => vi.useRealTimers());
+  const empty = { posts: [], chunks: [], chunkPost: new Int32Array(), postChunk: new Int32Array(), postPosition: new Map(), byCourse: new Map(), vectors: emptyTable(0), bm25: buildBm25([]), meta: { model: 'none', dimensions: 0 } } as unknown as Archive;
+
+  it('leads a deadline question with dated rows, the next one marked as coming up', async () => {
+    vi.useFakeTimers({ now: new Date('2026-10-11T08:00:00Z'), toFake: ['Date'] });
+    const result = await gatherSources(empty, 'when is the add drop deadline', 'NYUAD Fall 2026 Add/Drop Deadline', { cfg: null, official: calendarCorpus(), catalog: null, reranker: null, board: null });
+    expect(result.cards).toHaveLength(1);
+    expect(result.cards[0]).toMatchObject({ n: 1, kind: 'official', title: 'Undergraduate Academic Calendar 2026–2027' });
+    const block = sourcesBlock(empty, result.cards, result.entries);
+    expect(block).toMatch(/\[1\] Official NYUAD undergraduate academic calendar 2026–2027/);
+    expect(block).toMatch(/Fri, 30 Oct 2026 \(in 19 days\): Add\/drop deadline for 7-week courses/);
+    expect(block).toMatch(/Fri, 11 Sept? 2026 \(passed\)/);
+  });
+
+  it('is left out of questions that are not about a date', async () => {
+    vi.useFakeTimers({ now: new Date('2026-10-11T08:00:00Z'), toFake: ['Date'] });
+    const result = await gatherSources(empty, 'is add drop stressful', 'is add drop stressful', { cfg: null, official: calendarCorpus(), catalog: null, reranker: null, board: null });
+    expect(result.cards.some((card) => card.title.includes('2026–2027'))).toBe(false);
+  });
+});
+
+it('keeps an official page that clears its own bar even when a thread scores higher', async () => {
+  const post = { id: 'thread', url: 'https://example.com', author: 'Student', date: '2026-10-01', text: 'What is the withdrawal policy? I want to withdraw from a class.', comments: [], courses: [], topics: [] };
+  const chunk = { id: 'thread#1', postId: 'thread', n: 1, text: 'Student\nWhat is the withdrawal policy? I want to withdraw from a class.', hash: 'x' };
+  const archive = { posts: [post], chunks: [chunk], chunkPost: new Int32Array([0]), postChunk: new Int32Array([0]), postPosition: new Map([['thread', 0]]), byCourse: new Map(), vectors: emptyTable(0), bm25: buildBm25([chunk.text]), meta: { model: 'none' } } as unknown as Archive;
+  const doc = { id: 'policy', title: 'Academic Policies', url: 'https://nyuad.nyu.edu/en/academics/registrar/academic-policies.html', section: 'policies', text: 'Withdrawal policy: a course dropped after add/drop shows a W.', fetchedAt: new Date().toISOString() };
+  const page = { id: 'policy#1', postId: 'policy', n: 1, text: 'Academic Policies (Policies, official NYUAD page) · Withdrawal\nWithdrawal policy: a course dropped after add/drop shows a W on the transcript.', hash: 'p' };
+  const official = { docs: [doc], chunks: [page], chunkDoc: new Int32Array([0]), docPosition: new Map([['policy', 0]]), vectors: emptyTable(0), bm25: buildBm25([page.text]), bySection: new Map(), meta: { model: 'none', dimensions: 0 } } as unknown as OfficialCorpus;
+  // The thread repeats the question word for word; the page answers it.
+  const reranker = { name: 'fixed', rerank: async (_q: string, texts: string[]) => texts.map((text) => (text.includes('I want to withdraw') ? 0.95 : 0.5)) };
+  const result = await gatherSources(archive, 'what is the withdrawal policy', 'what is the withdrawal policy', { cfg: null, official, catalog: null, reranker, board: null });
+  expect(result.cards.map((card) => card.kind)).toEqual(['official', 'archive']);
+  expect(sourcesBlock(archive, result.cards, result.entries)).toContain('Withdrawal: Withdrawal policy: a course dropped after add/drop shows a W');
+});
+
+it('does not empty the sources when the rewrite reads like a name', async () => {
+  const doc = { id: 'calc', title: 'Mathematics', url: 'https://nyuad.nyu.edu/en/academics/mathematics.html', section: 'majors', text: 'Calculus instructors this semester are listed in Albert.', fetchedAt: new Date().toISOString() };
+  const page = { id: 'calc#1', postId: 'calc', n: 1, text: 'Mathematics (Majors, official NYUAD page)\nCalculus instructors this semester are listed in Albert.', hash: 'c' };
+  const official = { docs: [doc], chunks: [page], chunkDoc: new Int32Array([0]), docPosition: new Map([['calc', 0]]), vectors: emptyTable(0), bm25: buildBm25([page.text]), bySection: new Map(), meta: { model: 'none', dimensions: 0 } } as unknown as OfficialCorpus;
+  const archive = { posts: [], chunks: [], chunkPost: new Int32Array(), postChunk: new Int32Array(), postPosition: new Map(), byCourse: new Map(), vectors: emptyTable(0), bm25: buildBm25([]), meta: { model: 'none', dimensions: 0 } } as unknown as Archive;
+  const result = await gatherSources(archive, 'who teaches calculus this semester', 'New York University Abu Dhabi calculus instructor this semester', { cfg: null, official, catalog: null, reranker: { name: 'fixed', rerank: async (_q, texts) => texts.map(() => 0.8) }, board: null });
+  expect(result.cards).toHaveLength(1);
 });

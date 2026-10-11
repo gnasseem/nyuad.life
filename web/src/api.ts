@@ -614,7 +614,7 @@ interface AskHandlers {
   onRedirect?(redirect: Redirect): void;
   onSources?(sources: SourceCard[]): void;
   onDelta?(text: string): void;
-  onDone?(info: { model: string; confidence: Confidence | null; truncated: boolean }): void;
+  onDone?(info: { answer?: string; model: string; confidence: Confidence | null; truncated: boolean }): void;
 }
 
 /**
@@ -662,7 +662,8 @@ export async function askStream(question: string, history: ChatTurn[], handlers:
       case 'done':
         finished = true;
         truncated = payload.truncated === true;
-        handlers.onDone?.({ model: String(payload.model ?? ''), confidence: (payload.confidence as Confidence | null) ?? null, truncated });
+        if (typeof payload.answer === 'string' && payload.answer) answer = payload.answer;
+        handlers.onDone?.({ answer: typeof payload.answer === 'string' && payload.answer ? payload.answer : undefined, model: String(payload.model ?? ''), confidence: (payload.confidence as Confidence | null) ?? null, truncated });
         break;
       case 'error':
         streamError = new ApiError(500, String(payload.code ?? 'stream_error'), String(payload.message ?? 'The answer failed.'));

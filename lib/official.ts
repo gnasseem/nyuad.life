@@ -238,8 +238,12 @@ interface OfficialHit {
   score: number;
 }
 
-/** Hybrid search over official pages, grouped to one best chunk per page. `vector` is reused when the caller embedded the query already. */
-export async function retrieveOfficial(corpus: OfficialCorpus, query: string, options: { k?: number; vector?: Float32Array; embedder?: Embedder | null; section?: OfficialSection; filter?: (doc: OfficialDoc) => boolean } = {}): Promise<{ hits: OfficialHit[]; terms: string[] }> {
+/**
+ * Hybrid search over official pages: the best `k` pages, each with its best chunk, or its best `perDoc` chunks (a
+ * calendar or policy page answers different questions in different sections). `vector` is reused when the caller
+ * embedded the query already.
+ */
+export async function retrieveOfficial(corpus: OfficialCorpus, query: string, options: { k?: number; perDoc?: number; vector?: Float32Array; embedder?: Embedder | null; section?: OfficialSection; filter?: (doc: OfficialDoc) => boolean } = {}): Promise<{ hits: OfficialHit[]; terms: string[] }> {
   const terms = tokenize(query);
   const k = options.k ?? 8;
   if (corpus.chunks.length === 0) return { hits: [], terms };
@@ -263,15 +267,15 @@ export async function retrieveOfficial(corpus: OfficialCorpus, query: string, op
   const perChunk = new Map<number, number>();
   lexical.forEach(({ row }, rank) => perChunk.set(row, (perChunk.get(row) ?? 0) + 1 / (60 + rank + 1)));
   dense.forEach(({ row }, rank) => perChunk.set(row, (perChunk.get(row) ?? 0) + 1 / (60 + rank + 1)));
-  const perDoc = new Map<number, OfficialHit>();
+  const byDoc = new Map<number, OfficialHit[]>();
   for (const [chunk, score] of perChunk) {
     const doc = corpus.chunkDoc[chunk]!;
     if (options.section && corpus.docs[doc]!.section !== options.section) continue;
     if (options.filter && !options.filter(corpus.docs[doc]!)) continue;
-    const current = perDoc.get(doc);
-    if (!current || score > current.score) perDoc.set(doc, { doc, chunk, score });
+    byDoc.set(doc, [...(byDoc.get(doc) ?? []), { doc, chunk, score }]);
   }
-  return { hits: [...perDoc.values()].sort((a, b) => b.score - a.score).slice(0, k), terms };
+  const pages = [...byDoc.values()].map((hits) => hits.sort((a, b) => b.score - a.score)).sort((a, b) => b[0]!.score - a[0]!.score);
+  return { hits: pages.slice(0, k).flatMap((hits) => hits.slice(0, Math.max(1, options.perDoc ?? 1))), terms };
 }
 
 export function officialCards(corpus: OfficialCorpus, hits: OfficialHit[], terms: string[], startAt: number): SourceCard[] {
@@ -297,11 +301,28 @@ export function officialCards(corpus: OfficialCorpus, hits: OfficialHit[], terms
   });
 }
 
-/** How an official page is rendered inside the model's sources block. */
+/**
+ * The passages of one page that matched, in the order the page has them, each under its own heading ("Fall Semester 2:
+ * …") instead of the page title every chunk repeats.
+ */
+export function officialPassages(corpus: OfficialCorpus, chunks: number[]): string {
+  return [...new Set(chunks)]
+    .sort((a, b) => a - b)
+    .map((row) => {
+      const doc = corpus.docs[corpus.chunkDoc[row]!]!;
+      const [header = '', ...body] = corpus.chunks[row]!.text.split('\n');
+      const heading = header.startsWith(doc.title) ? header.slice(doc.title.length).replace(/^\s*\([^)]*official NYUAD page\)\s*(?:·\s*)?/, '') : header;
+      const text = collapseWhitespace(body.join(' '));
+      return heading ? `${heading}: ${text}` : text;
+    })
+    .join('\n');
+}
+
+/** How an official page is rendered inside the model's sources block: its matching passages, else the whole page. */
 export function officialSourceBlock(corpus: OfficialCorpus, card: SourceCard, chunkText?: string): string {
   const doc = corpus.docs[corpus.docPosition.get(card.postId)!]!;
-  const body = chunkText ? collapseWhitespace(chunkText) : collapseWhitespace(doc.text);
-  return [`[${card.n}] Official NYUAD page (${SECTION_LABELS[doc.section]}): ${doc.title} · ${doc.url} · fetched ${card.date}`, truncate(body, 3000)].join('\n');
+  const body = chunkText ? chunkText.split('\n').map(collapseWhitespace).join('\n') : collapseWhitespace(doc.text);
+  return [`[${card.n}] Official NYUAD page (${SECTION_LABELS[doc.section]}): ${doc.title} · ${doc.url} · fetched ${card.date}`, truncate(body, 4500)].join('\n');
 }
 
 /* ---------- Building the index ---------- */

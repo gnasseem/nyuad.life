@@ -111,7 +111,8 @@ export default route(['POST'], async (req, res) => {
     );
     console.info(`[ask] model=${result.model} cached=${Boolean(result.cached)} truncated=${Boolean(result.truncated)} sources=${result.sources.length}`);
     recordEvent(result.cached ? 'ask_cached' : 'ask');
-    sse.send('done', { model: result.model, confidence: result.confidence, truncated: result.truncated ?? false, cached: result.cached ?? false, retrieval: result.retrieval });
+    // The answer as checked: citations tidied, unsupported ones dropped, or the "couldn't find" reply when nothing was cited.
+    sse.send('done', { answer: result.answer, model: result.model, confidence: result.confidence, truncated: result.truncated ?? false, cached: result.cached ?? false, retrieval: result.retrieval });
   } catch (error) {
     noteFailure(error);
     if (!(error instanceof ApiError) || error.status >= 500) console.error('[ask]', error);

@@ -137,7 +137,8 @@ export function AskPage({ resumeId, history }: Props) {
             onRedirect: (redirect) => patchMessage(modelMessage.id, { redirect, status: undefined }),
             onSources: (sources) => patchMessage(modelMessage.id, { sources }),
             onDelta: (text) => patchMessage(modelMessage.id, (message) => ({ content: message.content + text, status: undefined })),
-            onDone: ({ confidence }) => patchMessage(modelMessage.id, (message) => ({ confidence, content: stripConfidence(message.content) })),
+            // The server sends the answer as it checked it; an older server sends none, and the streamed text stands.
+            onDone: ({ answer, confidence }) => patchMessage(modelMessage.id, (message) => ({ confidence, content: answer ?? stripConfidence(message.content) })),
           },
           controller.signal,
         );

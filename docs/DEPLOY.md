@@ -257,8 +257,13 @@ records, account widgets and student directories are excluded. Refresh and reind
 stale pages are not treated as evidence for a current deadline. No credentials are sent to the deployed app.
 
 Retrieval preserves full names and course codes during query rewriting, searches the original and expanded queries,
-filters person matches before ranking, and reranks all source kinds with backup models when needed. Keyword
-fallbacks require meaningful term coverage. Current official policy and deadline evidence comes before anecdotes.
+filters person matches before ranking, and reranks all source kinds with backup models when needed. A phrase counts
+as a person only when the question asks for one ("who is…", "Professor…") or the class schedule or a faculty page
+names them, so a title-cased rewrite ("Fall Break Dates") filters nothing out. Each official page brings up to three
+matching passages, held to the best official score rather than the threads'. Keyword fallbacks require meaningful term
+coverage. Current official policy and deadline evidence comes before anecdotes: a date or deadline question gets the
+academic calendar's rows (`lib/calendar.ts`) as its first source, each with its weekday and year and marked passed or
+coming up.
 Unanswered board questions enter the first feed page even when older and get priority, then major/year matches.
 
 Accounts use a six-digit code sent to `netid@nyu.edu` through Resend. Set `RESEND_API_KEY`,
