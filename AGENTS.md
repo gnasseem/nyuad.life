@@ -6,3 +6,5 @@
   `--global-config` to every `vercel` command here (`vercel env ls`, `vercel logs`, …).
 - Always deploy after a commit. Do not stop at the commit.
 - Never push unless the user asks.
+- Every commit is authored by George Nasseem <georgenasseem@gmail.com>. Claude is never author or co-author: no
+  `Co-Authored-By` trailers, no "Generated with" lines.
