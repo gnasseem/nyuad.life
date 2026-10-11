@@ -1,17 +1,16 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { api, ApiError, askStream, type Announcement, type FeedQuestion, type Listing, type MarketSummary, type QuestionWithAnswers, type SourceCard } from '../api';
-import { ChatGPTLine, ChatGPTSignIn } from '../components/ChatGPT';
-import { Flap } from '../components/Flap';
+import { ApiError, askStream, type SourceCard } from '../api';
+import { ChatGPTSignIn } from '../components/ChatGPT';
 import { RedirectCard } from '../components/RedirectCard';
 import { KIND_LABEL, SourceRow } from '../components/SourceRow';
 import { useApp } from '../context';
-import { formatDate, formatTime, plural, relativeDate, startsIn } from '../format';
+import { formatDate, plural } from '../format';
 import { IconArrow, IconCheck, IconChevron, IconCopy, IconPlus, IconSidebar, IconStop } from '../icons';
 import { Markdown } from '../markdown';
-import { useMedia, useNow } from '../motion';
+import { useMedia } from '../motion';
 import { navigate, onLinkClick } from '../router';
-import { askerKey, loadConversations, loadSeenAnswers, saveConversation, saveSeenAnswers, setActiveConversation, toHistory, uid, type Conversation, type Message } from '../store';
+import { loadConversations, saveConversation, setActiveConversation, toHistory, uid, type Conversation, type Message } from '../store';
 
 interface Props {
   resumeId?: string;
@@ -309,7 +308,7 @@ export function AskPage({ resumeId, history }: Props) {
   );
 
   if (empty) {
-    return <Home composer={composer} historyButton={historyButton} history={history} wide={wide} answersOff={Boolean(health && !(health.answers?.available ?? health.gemini.configured) && !chatgpt?.available)} />;
+    return <Home composer={composer} historyButton={historyButton} answersOff={Boolean(health && !(health.answers?.available ?? health.gemini.configured) && !chatgpt?.available)} />;
   }
 
   return (
@@ -484,433 +483,28 @@ function Route({ status }: { status: string }) {
   );
 }
 
-const PROMPTS = ['How does course registration work?', 'When is the add/drop deadline?', 'How do I get to Dubai from campus?', 'What are the pool hours?'];
+const PROMPTS = ['When is the add/drop deadline?', 'How do I get to Dubai?', 'Which dining hall is open latest?'];
 
-interface HomeData {
-  notices: Announcement[] | null;
-  rides: Listing[] | null;
-  listings: number;
-  markets: Array<{ currency: 'falcon' | 'campus'; label: string; summary: MarketSummary }>;
-  feed: FeedQuestion[] | null;
-  mine: QuestionWithAnswers[];
-}
-
-function useHomeData(): HomeData & { refreshFeed(): void } {
-  const { boardProblem, profile } = useApp();
-  const [data, setData] = useState<HomeData>({ notices: null, rides: null, listings: 0, markets: [], feed: null, mine: [] });
-  const set = useCallback((patch: Partial<HomeData>) => setData((current) => ({ ...current, ...patch })), []);
-  const refreshFeed = useCallback(() => {
-    api.board
-      .feed()
-      .then((result) => set({ feed: result.questions }))
-      .catch(() => set({ feed: [] }));
-  }, [set]);
-  useEffect(() => {
-    if (boardProblem) return;
-    api.board
-      .announcements()
-      .then((result) => set({ notices: result.announcements }))
-      .catch(() => set({ notices: [] }));
-    api.board
-      .listings(askerKey())
-      .then((result) => {
-        const now = Date.now();
-        set({
-          rides: result.listings.filter((listing) => listing.kind === 'ride' && listing.happensAt && Date.parse(listing.happensAt) > now - 30 * 60_000).sort((a, b) => a.happensAt!.localeCompare(b.happensAt!)),
-          listings: result.listings.filter((listing) => listing.kind !== 'ride').length,
-        });
-      })
-      .catch(() => set({ rides: [] }));
-    api.board
-      .offers(askerKey())
-      .then((result) => {
-        const markets = result.markets ?? { falcon: result.market, campus: undefined };
-        set({
-          markets: [
-            { currency: 'falcon' as const, label: 'Falcons', summary: markets.falcon },
-            { currency: 'campus' as const, label: 'Campus Dirhams', summary: markets.campus! },
-          ].filter((entry) => entry.summary && entry.summary.open > 0),
-        });
-      })
-      .catch(() => set({ markets: [] }));
-    refreshFeed();
-  }, [boardProblem, set, refreshFeed]);
-  useEffect(() => {
-    if (boardProblem || !profile) return;
-    api.board
-      .mine()
-      .then((result) => set({ mine: result.questions }))
-      .catch(() => set({ mine: [] }));
-  }, [boardProblem, profile?.netId, set]); // eslint-disable-line react-hooks/exhaustive-deps
-  return { ...data, refreshFeed };
-}
-
-function greeting(now: Date): string {
-  const hour = Number(now.toLocaleString('en-GB', { timeZone: 'Asia/Dubai', hour: '2-digit', hour12: false }));
-  if (hour < 5) return 'Up late';
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
-}
-
-function Home({ composer, historyButton, history, wide, answersOff }: { composer: ReactNode; historyButton: ReactNode; history: Props['history']; wide: boolean; answersOff: boolean }) {
-  const { boardProblem, setAskPrefill, profile, health } = useApp();
-  const data = useHomeData();
-  const now = useNow();
-  const posts = health?.archive?.posts ?? 0;
-  const recent = useMemo(() => (history.count ? loadConversations().slice(0, 3) : []), [history.count]);
-  const showRecent = recent.length > 0 && (!wide || !history.open);
-
+/** Ask before the first question: the question, the box and three to start from. */
+function Home({ composer, historyButton, answersOff }: { composer: ReactNode; historyButton: ReactNode; answersOff: boolean }) {
+  const { setAskPrefill } = useApp();
   return (
     <div className="home">
+      {historyButton && <div className="hero-tools">{historyButton}</div>}
       <section className="hero">
-        {historyButton && <div className="hero-tools">{historyButton}</div>}
         <h1>Ask anything about NYUAD</h1>
-        <p className="hero-sub">
-          {greeting(now)}
-          {profile ? `, ${profile.name.split(' ')[0]}` : ''}. Answers come from official pages, the Albert schedule{posts > 1000 ? ` and ${(Math.floor(posts / 1000) * 1000).toLocaleString()}+ Room of Requirement threads` : ' and the Room of Requirement'}, with every source linked.
-        </p>
-        {composer}
-        {answersOff && <p className="hero-note">Answers are paused right now. Search the group's threads in Reviews meanwhile.</p>}
-        <ChatGPTLine tone="light" />
+        <div className="hero-box">{composer}</div>
+        {answersOff && <p className="hero-note">Answers are paused right now. Try again in a little while.</p>}
         <div className="prompts" aria-label="Try a question">
-          {PROMPTS.map((question) => (
-            <button type="button" key={question} onClick={() => setAskPrefill({ question, autoSend: true })}>
+          {PROMPTS.map((question, i) => (
+            <button type="button" key={question} style={{ '--i': i } as CSSProperties} onClick={() => setAskPrefill({ question, autoSend: true })}>
               {question}
             </button>
           ))}
         </div>
       </section>
-
-      {showRecent && (
-        <section className="recent" aria-label="Recent conversations">
-          <div className="block-head">
-            <h2>Pick up where you left off</h2>
-            <button type="button" className="link-btn" onClick={history.toggle}>
-              All {history.count}
-            </button>
-          </div>
-          <div className="recent-list">
-            {recent.map((conversation) => (
-              <a key={conversation.id} href={`/?c=${conversation.id}`} onClick={onLinkClick}>
-                <b>{conversation.title || 'Untitled'}</b>
-                <span>{relativeDate(conversation.updatedAt)}</span>
-              </a>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {boardProblem ? null : (
-        <div className="campus">
-          <div className="campus-main">
-            <NewAnswers mine={data.mine} />
-            <HelpBlock feed={data.feed} onChanged={data.refreshFeed} />
-          </div>
-          <aside className="campus-side">
-            <EventsBlock notices={data.notices} now={now} />
-            <MarketBlock rides={data.rides} listings={data.listings} markets={data.markets} now={now} />
-          </aside>
-        </div>
-      )}
     </div>
   );
-}
-
-/** Your own questions that got answers since you last looked. */
-function NewAnswers({ mine }: { mine: QuestionWithAnswers[] }) {
-  const [seen, setSeen] = useState(loadSeenAnswers);
-  // A question seen for the first time here counts its answers as read, so only answers that arrive later are news.
-  useEffect(() => {
-    if (!mine.length) return;
-    const next = { ...seen };
-    let changed = false;
-    for (const question of mine) {
-      if (next[question.id] === undefined) {
-        next[question.id] = question.answers.length;
-        changed = true;
-      }
-    }
-    if (changed) {
-      saveSeenAnswers(next);
-      setSeen(next);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mine]);
-  const fresh = mine.filter((question) => seen[question.id] !== undefined && question.answers.length > seen[question.id]!);
-  if (!fresh.length) return null;
-  const markSeen = (question: QuestionWithAnswers) => {
-    const next = { ...seen, [question.id]: question.answers.length };
-    saveSeenAnswers(next);
-    setSeen(next);
-  };
-  return (
-    <div className="news">
-      {fresh.slice(0, 2).map((question) => {
-        const count = question.answers.length - seen[question.id]!;
-        const latest = question.answers.at(-1);
-        return (
-          <a key={question.id} className="news-item" href={`/questions/${question.id}`} onClick={(event) => { markSeen(question); onLinkClick(event); }}>
-            <span className="news-badge">{count === 1 ? 'New answer' : `${count} new answers`}</span>
-            <b>{question.text}</b>
-            {latest && (
-              <span className="news-quote">
-                {latest.helperName.split(' ')[0]}: {latest.text.slice(0, 140)}
-                {latest.text.length > 140 ? '…' : ''}
-              </span>
-            )}
-          </a>
-        );
-      })}
-    </div>
-  );
-}
-
-/** Questions other students are waiting on, best fit first, answerable right here. */
-function HelpBlock({ feed, onChanged }: { feed: FeedQuestion[] | null; onChanged(): void }) {
-  const { profile } = useApp();
-  const [gone, setGone] = useState<Set<string>>(() => new Set());
-  const open = useMemo(() => {
-    const fit = (question: FeedQuestion) =>
-      (question.answers.length === 0 ? 10 : 0) + (profile && question.majors.includes(profile.major) ? 3 : 0) + (profile && question.years.includes(profile.year) ? 2 : 0) + Date.parse(question.createdAt) / 1e13;
-    return (feed ?? [])
-      .filter((question) => !question.mine && !question.byMe && question.status !== 'closed' && question.answers.length < 3 && !gone.has(question.id))
-      .sort((a, b) => fit(b) - fit(a))
-      .slice(0, 3);
-  }, [feed, profile, gone]);
-  const answered = (feed ?? []).filter((question) => question.answers.length > 0 && question.status !== 'closed').slice(0, 3);
-  const drop = (id: string) => setGone((current) => new Set(current).add(id));
-
-  return (
-    <section className="block help" data-line="questions">
-      <div className="block-head">
-        <h2>{open.length || !answered.length ? 'Students are asking' : 'Recently answered'}</h2>
-        <a className="link-btn" href="/questions" onClick={onLinkClick}>
-          All questions
-        </a>
-      </div>
-      {feed === null ? (
-        <Loading />
-      ) : open.length ? (
-        <div className="help-list">
-          {open.map((question) => (
-            <HelpItem key={question.id} question={question} onDone={() => { drop(question.id); onChanged(); }} onSkip={() => drop(question.id)} />
-          ))}
-        </div>
-      ) : answered.length ? (
-        <div className="help-list">
-          {answered.map((question) => (
-            <a key={question.id} className="help-item link" href={`/questions/${question.id}`} onClick={onLinkClick}>
-              <b>{question.text}</b>
-              <span className="help-meta">
-                {question.answers[0]!.helperName.split(' ')[0]} answered · {plural(question.answers.length, 'answer')}
-              </span>
-            </a>
-          ))}
-        </div>
-      ) : (
-        <p className="block-empty">
-          Nobody is waiting on an answer. When Ask cannot help,{' '}
-          <a href="/questions" onClick={onLinkClick}>
-            ask other students
-          </a>
-          .
-        </p>
-      )}
-    </section>
-  );
-}
-
-function HelpItem({ question, onDone, onSkip }: { question: FeedQuestion; onDone(): void; onSkip(): void }) {
-  const { profile, setProfile, toast } = useApp();
-  const [writing, setWriting] = useState(false);
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const fits = profile ? question.majors.includes(profile.major) || question.years.includes(profile.year) : false;
-
-  const send = async () => {
-    if (!profile || text.trim().length < 2 || busy) return;
-    setBusy(true);
-    setError('');
-    try {
-      const result = await api.board.answer({ netId: profile.netId, questionId: question.id, text: text.trim() });
-      setProfile({ ...profile, answers: result.answered });
-      toast(result.answered === 1 ? 'Your first answer is up. Thank you.' : `Answer posted. You have helped ${result.answered} students.`);
-      onDone();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not send the answer.');
-    } finally {
-      setBusy(false);
-    }
-  };
-  const skip = () => {
-    if (profile) void api.board.skip({ netId: profile.netId, questionId: question.id }).catch(() => {});
-    onSkip();
-  };
-
-  return (
-    <article className={`help-item${writing ? ' writing' : ''}`}>
-      <a className="help-q" href={`/questions/${question.id}`} onClick={onLinkClick}>
-        {question.text}
-      </a>
-      <span className="help-meta">
-        {fits && <span className="help-fit">For you</span>}
-        {question.askerName || 'A student'} · {relativeDate(question.createdAt)} · {question.answers.length ? plural(question.answers.length, 'answer') : 'No answers yet'}
-      </span>
-      {writing ? (
-        <div className="help-write">
-          <textarea
-            className="input"
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault();
-                void send();
-              }
-            }}
-            placeholder="What you know: be specific, and say when it was"
-            rows={3}
-            maxLength={1200}
-            aria-label="Your answer"
-            autoFocus
-          />
-          {error && <div className="alert error">{error}</div>}
-          <div className="help-actions">
-            <button type="button" className="btn ghost sm" onClick={() => setWriting(false)}>
-              Cancel
-            </button>
-            <button type="button" className="btn primary sm" onClick={() => void send()} disabled={busy || text.trim().length < 2}>
-              {busy ? 'Sending' : 'Post answer'}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="help-actions">
-          <button type="button" className="btn sm" onClick={() => setWriting(true)}>
-            I know this
-          </button>
-          <button type="button" className="btn ghost sm" onClick={skip}>
-            Skip
-          </button>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function EventsBlock({ notices, now }: { notices: Announcement[] | null; now: Date }) {
-  const upcoming = (notices ?? []).filter((entry) => entry.kind === 'event' && entry.startsAt && Date.parse(entry.startsAt) > now.getTime() - 3 * 3_600_000).slice(0, 3);
-  return (
-    <section className="block" data-line="notices">
-      <div className="block-head">
-        <h2>Coming up</h2>
-        <a className="link-btn" href="/events" onClick={onLinkClick}>
-          Events
-        </a>
-      </div>
-      {notices === null ? (
-        <Loading />
-      ) : upcoming.length === 0 ? (
-        <p className="block-empty">
-          Nothing posted yet.{' '}
-          <a href="/events" onClick={onLinkClick}>
-            Post an event
-          </a>
-        </p>
-      ) : (
-        <div className="mini-list">
-          {upcoming.map((entry) => (
-            <a key={entry.id} className="mini" href="/events" onClick={onLinkClick}>
-              <span className="mini-when">{noticeWhen(entry, now)}</span>
-              <span className="mini-what">{entry.title}</span>
-              {entry.location && <span className="mini-where">{entry.location}</span>}
-            </a>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function MarketBlock({ rides, listings, markets, now }: { rides: Listing[] | null; listings: number; markets: HomeData['markets']; now: Date }) {
-  return (
-    <section className="block" data-line="market">
-      <div className="block-head">
-        <h2>Market</h2>
-        <a className="link-btn" href="/market" onClick={onLinkClick}>
-          {listings ? `${plural(listings, 'listing')}` : 'Open'}
-        </a>
-      </div>
-      {rides === null ? (
-        <Loading />
-      ) : (
-        <>
-          {rides.length > 0 && (
-            <div className="mini-list">
-              {rides.slice(0, 2).map((ride) => {
-                const soon = startsIn(new Date(ride.happensAt!), now, 60);
-                return (
-                  <a key={ride.id} className="mini" href="/market/rides" onClick={onLinkClick}>
-                    <span className="mini-when">{soon?.live ? 'Leaving now' : rideWhen(ride.happensAt!, now)}</span>
-                    <span className="mini-what">Ride to {ride.destination}</span>
-                  </a>
-                );
-              })}
-            </div>
-          )}
-          {markets.map(({ currency, label, summary }) => (
-            <a key={currency} className="rate-board" href={currency === 'falcon' ? '/market/falcons' : '/market/campus'} onClick={onLinkClick} title={`${label}: lowest sell and highest buy, AED each`}>
-              <span>{label}</span>
-              <b className="sell">
-                <Flap text={summary.bestAsk === null ? '–' : summary.bestAsk.toFixed(2)} />
-              </b>
-              <b className="buy">
-                <Flap text={summary.bestBid === null ? '–' : summary.bestBid.toFixed(2)} />
-              </b>
-            </a>
-          ))}
-          {rides.length === 0 && markets.length === 0 && (
-            <p className="block-empty">
-              No rides or trades right now.{' '}
-              <a href="/market/rides" onClick={onLinkClick}>
-                Share a ride
-              </a>
-            </p>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
-function Loading() {
-  return (
-    <div className="block-empty">
-      <span className="spinner" />
-    </div>
-  );
-}
-
-function noticeWhen(entry: Announcement, now: Date): string {
-  if (!entry.startsAt) return 'Open';
-  const when = new Date(entry.startsAt);
-  const soon = startsIn(when, now);
-  if (soon?.live) return 'Now';
-  return `${dayName(when, now)} ${formatTime(entry.startsAt)}`;
-}
-
-function rideWhen(iso: string, now: Date): string {
-  const when = new Date(iso);
-  return dayName(when, now) === 'Today' ? formatTime(iso) : `${dayName(when, now)} ${formatTime(iso)}`;
-}
-
-function dayName(when: Date, now: Date): string {
-  const key = (date: Date) => date.toLocaleDateString('en-CA', { timeZone: 'Asia/Dubai' });
-  if (key(when) === key(now)) return 'Today';
-  if (key(when) === key(new Date(now.getTime() + 86_400_000))) return 'Tomorrow';
-  return when.toLocaleDateString('en-GB', { timeZone: 'Asia/Dubai', weekday: 'short', day: 'numeric', month: 'short' });
 }
 
 function fresh(): Conversation {

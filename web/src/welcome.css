@@ -1,161 +1,170 @@
-/* The campus tour keeps its navigation in view while the content scrolls. */
-.welcome { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 24px; background: var(--scrim); animation: fade-in 0.2s ease-out; }
-.welcome[data-line='ask'] { --line: var(--cobalt); --line-fill: var(--central-fill); --line-on: var(--on-central); }
-.welcome-card { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: min(920px, 100%); height: min(600px, calc(100dvh - 48px)); overflow: hidden; border: 1px solid var(--rule); border-radius: 20px; background: var(--plate); box-shadow: var(--shadow-2); touch-action: pan-y; }
-.welcome-card.is-signup { width: min(540px, 100%); height: auto; max-height: 100%; }
-.welcome-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--rule); }
+/* The tour fills the screen: a big moving picture of each section with its line drawing behind it, one line of large
+   type under it, and the controls along the bottom. */
+.welcome { position: fixed; inset: 0; z-index: 120; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; background: var(--ground); touch-action: pan-y; animation: fade-in 0.35s ease-out; }
+.welcome[data-line='ask'] { --line: var(--cobalt); --line-fill: var(--cobalt-fill); --line-ink: var(--cobalt-ink); --line-soft: var(--cobalt-soft); --line-on: #ffffff; }
+.welcome-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: max(14px, env(safe-area-inset-top)) max(20px, 4vw) 6px; }
 .welcome-brand { display: inline-flex; align-items: center; gap: 10px; }
-.welcome-skip { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-2); font-size: 14px; font-weight: 600; }
+.welcome-skip { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border: 1px solid var(--rule); border-radius: 999px; background: color-mix(in srgb, var(--plate) 60%, transparent); color: var(--ink-2); font-size: 14px; font-weight: 620; transition: color 0.15s, background 0.15s, border-color 0.15s; }
 .welcome-skip svg { width: 16px; height: 16px; }
-.welcome-skip:hover { color: var(--ink); background: var(--plate-2); }
-.welcome-page { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); align-items: stretch; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--rule-2) transparent; }
-.welcome-page.is-signup { display: block; padding: 28px; }
-.welcome-page.from-right { animation: wp-right 0.3s var(--ease) both; }
-.welcome-page.from-left { animation: wp-left 0.3s var(--ease) both; }
-@keyframes wp-right { from { transform: translateX(16px); } }
-@keyframes wp-left { from { transform: translateX(-16px); } }
-/* The scene sits on the section's own colour, with its line running behind it. */
-.welcome-visual { position: relative; display: grid; place-items: center; min-width: 0; padding: 32px 28px; overflow: hidden; background: color-mix(in srgb, var(--line) 9%, var(--plate-2)); }
-.welcome-visual::before { content: ''; position: absolute; left: -10%; right: -10%; top: 50%; height: 10px; border-radius: 5px; background: color-mix(in srgb, var(--line) 22%, transparent); transform: rotate(-8deg); }
-.welcome-visual::after { content: ''; position: absolute; left: 18%; top: 50%; width: 30px; height: 30px; border-radius: 50%; border: 7px solid color-mix(in srgb, var(--line) 40%, var(--plate)); background: var(--plate); transform: translate(-50%, -50%) rotate(-8deg); }
-.welcome-scene { position: relative; z-index: 1; display: grid; place-items: center; width: 100%; min-height: 220px; }
-.welcome-copy { display: grid; align-content: center; padding: 36px 36px 32px; }
-.welcome-copy h2, .welcome-signup h2 { font: 800 32px/1.08 var(--sign); font-stretch: 94%; letter-spacing: -0.03em; text-wrap: balance; }
-.welcome-copy h2:focus, .welcome-signup h2:focus { outline: none; }
-.welcome-copy p, .welcome-signup > p { margin-top: 14px; color: var(--ink-2); font-size: 15px; line-height: 1.6; }
-.welcome-copy ul { display: grid; gap: 10px; margin: 18px 0 0; padding: 0; list-style: none; }
-.welcome-copy li { position: relative; padding-left: 20px; font-size: 14px; line-height: 1.5; }
-.welcome-copy li::before { content: ''; position: absolute; left: 1px; top: 0.45em; width: 9px; height: 9px; border-radius: 50%; border: 3px solid var(--line); }
-.welcome-signup { max-width: 480px; margin: 0 auto; padding: 12px 0 20px; }
-.welcome-signup > p { margin-bottom: 24px; }
+.welcome-skip:hover { border-color: var(--rule-2); background: var(--plate); color: var(--ink); }
+
+.welcome-stop { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; }
+.welcome-stop.from-right { animation: ws-right 0.5s var(--ease) both; }
+.welcome-stop.from-left { animation: ws-left 0.5s var(--ease) both; }
+@keyframes ws-right { from { opacity: 0; transform: translateX(40px); } }
+@keyframes ws-left { from { opacity: 0; transform: translateX(-40px); } }
+
+/* The picture sizes itself to the room it has: everything in a scene is in em, and the em follows the box. */
+.welcome-visual { position: relative; display: grid; place-items: center; min-height: 0; container-type: size; }
+.welcome-glow { position: absolute; left: 50%; top: 50%; width: 110cqmin; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(closest-side, color-mix(in srgb, var(--line) 20%, transparent), transparent); translate: -50% -50%; pointer-events: none; animation: glow-in 1.4s var(--ease) both; }
+@keyframes glow-in { from { opacity: 0; scale: 0.5; } }
+.welcome-track { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.wt-line { fill: none; stroke: color-mix(in srgb, var(--line) 30%, transparent); stroke-width: 22; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1 1; stroke-dashoffset: 1; animation: wt-draw 1.6s var(--ease-io) 0.1s forwards; }
+@keyframes wt-draw { to { stroke-dashoffset: 0; } }
+.wt-station { fill: var(--ground); stroke: var(--line); stroke-width: 8; transform-box: fill-box; transform-origin: center; animation: stop-pop 0.5s var(--ease) both; animation-delay: calc(0.6s + var(--i) * 0.5s); }
+.wt-train { fill: var(--line-fill); opacity: 0; animation: wt-show 0.4s ease-out 1.25s forwards; }
+@keyframes wt-show { to { opacity: 1; } }
+.welcome-scene { position: relative; z-index: 1; display: grid; place-items: center; font-size: clamp(10px, min(3.25cqw, 4.6cqh), 26px); animation: scene-float 7s ease-in-out 3s infinite; }
+@keyframes scene-float { 50% { translate: 0 -0.35em; } }
+
+.welcome-copy { display: grid; justify-items: center; gap: 14px; padding: 4px max(20px, 5vw) 0; text-align: center; }
+.welcome-kicker { display: inline-flex; align-items: center; gap: 9px; color: var(--line-ink); font: 720 13px/1 var(--sign); letter-spacing: 0.16em; text-transform: uppercase; animation: rise-in 0.6s var(--ease) 0.05s both; }
+.welcome-kicker::before { content: ''; width: 11px; height: 11px; box-sizing: border-box; border-radius: 50%; border: 3px solid var(--line); }
+.welcome-copy h2 { max-width: 15ch; font: 840 clamp(40px, min(7.2vw, 10.5vh), 108px)/0.96 var(--sign); font-stretch: 88%; letter-spacing: -0.045em; word-spacing: 0.1em; text-wrap: balance; }
+.welcome-copy h2 span { display: inline-block; animation: word-in 0.8s var(--ease) both; animation-delay: calc(0.12s + var(--w) * 0.07s); }
+@keyframes word-in { from { opacity: 0; transform: translateY(0.4em); filter: blur(8px); } }
+.welcome h2:focus { outline: none; }
+
+.welcome-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px max(20px, 4vw) max(20px, env(safe-area-inset-bottom)); }
+.welcome-foot:empty { display: none; }
+.welcome.is-signup .welcome-foot { justify-content: center; padding-top: 8px; }
+.welcome-progress { display: flex; align-items: center; gap: 6px; }
+.welcome-progress button { position: relative; width: 36px; height: 44px; padding: 0; border: 0; background: none; transition: width 0.45s var(--ease); }
+.welcome-progress button::before, .welcome-progress button::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 4px; margin-top: -2px; border-radius: 2px; }
+.welcome-progress button::before { background: var(--rule); transition: background 0.15s; }
+.welcome-progress button::after { background: var(--ink-2); transform: scaleX(0); transform-origin: left; }
+.welcome-progress button:hover::before { background: var(--rule-2); }
+.welcome-progress button.done::after { transform: none; }
+.welcome-progress button.now { width: 64px; }
+.welcome-progress button.now::after { background: var(--line); transform: none; animation: bar-fill 0.9s var(--ease) 0.1s both; }
+@keyframes bar-fill { from { transform: scaleX(0); } }
+.welcome-actions { display: flex; align-items: center; gap: 10px; }
+.welcome-back { display: grid; place-items: center; width: 52px; height: 52px; padding: 0; border: 1px solid var(--rule); border-radius: 50%; background: var(--plate); color: var(--ink); transition: border-color 0.15s, transform 0.15s var(--ease); }
+.welcome-back:hover:not(:disabled) { border-color: var(--rule-2); }
+.welcome-back:disabled { opacity: 0.35; }
+.welcome-back svg { width: 20px; height: 20px; }
+.welcome-next { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-width: 150px; height: 52px; padding: 0 22px 0 26px; border: 0; border-radius: 999px; background: var(--ink); color: var(--ground); font: 680 16px/1 var(--text); box-shadow: var(--shadow-1); transition: transform 0.15s var(--ease), filter 0.15s; }
+.welcome-next svg { width: 18px; height: 18px; transition: transform 0.25s var(--ease); }
+.welcome-next:hover { filter: brightness(1.12); }
+.welcome-next:hover svg { transform: translateX(3px); }
+.welcome-next:active, .welcome-back:active:not(:disabled) { transform: scale(0.96); }
+
+/* Logging in: the form on its own plate, in the middle of the same screen. */
+.welcome-signup-wrap { display: grid; min-height: 0; overflow: auto; padding: 12px 20px; overscroll-behavior: contain; scrollbar-color: var(--rule-2) transparent; animation: ws-right 0.45s var(--ease) both; }
+.welcome-signup { width: min(480px, 100%); margin: auto; padding: 32px; border: 1px solid var(--rule); border-radius: 24px; background: var(--plate); box-shadow: var(--shadow-2); }
+.welcome-signup h2 { font: 820 34px/1.05 var(--sign); font-stretch: 92%; letter-spacing: -0.035em; text-wrap: balance; }
+.welcome-signup > p { margin: 12px 0 24px; color: var(--ink-2); font-size: 15px; line-height: 1.6; }
 .welcome-signup .auth-form > .muted { display: none; }
 .welcome-signup .modal-actions .btn { width: 100%; }
-.welcome-foot { display: grid; gap: 6px; padding: 12px 28px 18px; border-top: 1px solid var(--rule); background: var(--plate); }
-.welcome-foot:empty { display: none; }
-.welcome-position { display: flex; justify-content: space-between; gap: 12px; color: var(--ink-2); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.welcome-position span:first-child { color: var(--line-ink); }
-.welcome-actions { display: flex; justify-content: space-between; gap: 12px; margin-top: 4px; }
-.welcome-actions .btn { min-height: 44px; }
-.welcome-back { width: 44px; padding: 0; }
-.welcome-next { min-width: 170px; }
-.welcome[data-line='ask'] .welcome-next { background: var(--central-fill); color: var(--on-central); }
-.welcome-progress { position: relative; height: 54px; margin: 0 30px; }
-.welcome-track { position: absolute; left: 0; right: 0; top: 18px; height: 3px; background: var(--rule); transform: translateY(-50%); }
-.welcome-train { position: absolute; top: 18px; width: 10px; height: 10px; border-radius: 50%; background: var(--line); transform: translateY(-50%); transition: left 0.3s var(--ease), background 0.3s; pointer-events: none; z-index: 2; }
-.welcome-dot { position: absolute; top: 18px; width: 64px; height: 50px; padding: 0; border: 0; border-radius: 8px; background: transparent; transform: translate(-50%, -18px); }
-.welcome-dot::before { top: 7px; left: 50%; width: 14px; height: 14px; transform: translateX(-50%); }
-.welcome-dot-name { position: absolute; left: 0; right: 0; bottom: 4px; color: var(--ink-3); font: 650 11.5px/1 var(--text); text-align: center; transition: color 0.2s; }
-.welcome-dot[aria-current='step'] .welcome-dot-name { color: var(--ink); }
-.welcome-dot::before { content: ''; position: absolute; box-sizing: border-box; border: 3px solid var(--rule-2); border-radius: 50%; background: var(--plate); }
-.welcome-dot.done::before { border-color: var(--line); }
-.welcome-dot[data-line='ask'].done::before { border-color: var(--ink); }
-.welcome-dot:hover::before { border-color: var(--ink-3); }
 
-/* Welcome: six lines drawing into Central, then trains running along them. */
-
-/* Ask: the question, the route it takes, the answer arriving with its citations. */
-.scene-ask { display: grid; gap: 12px; width: min(420px, 88%); }
-.sa-q { justify-self: end; max-width: 92%; padding: 10px 14px; border-radius: 14px 14px 4px 14px; background: var(--ink); color: var(--ground); font: 620 14px/1.35 var(--text); }
-.sa-q span { display: inline-block; white-space: nowrap; overflow: hidden; vertical-align: bottom; max-width: 100%; clip-path: inset(0 100% 0 0); animation: type 0.9s steps(28) 0.15s forwards; }
-@keyframes type { to { clip-path: inset(0 0 0 0); } }
-.sa-route { display: flex; gap: 14px; color: var(--ink-3); font: 600 12px/1 var(--text); }
-.sa-route span { display: inline-flex; align-items: center; gap: 6px; opacity: 0; animation: appear 0.3s ease-out forwards; animation-delay: calc(1s + var(--i) * 0.25s); }
-.sa-route i { width: 9px; height: 9px; border-radius: 50%; background: var(--ink); }
-.sa-answer { display: grid; gap: 7px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--plate); font-size: 13.5px; }
-.sa-answer p { margin: 0; opacity: 0; animation: appear 0.4s var(--ease) forwards; animation-delay: calc(1.7s + var(--i) * 0.25s); }
-.sa-answer p.short { height: 9px; width: 60%; border-radius: 5px; background: var(--plate-3); }
-.sa-answer em { display: inline-grid; place-items: center; min-width: 17px; height: 17px; margin-left: 2px; border: 1.5px solid var(--cobalt); border-radius: 9px; color: var(--cobalt-ink); font: 700 9.5px/1 var(--sign); font-style: normal; vertical-align: 1px; }
-
-/* Plan: a week filling with classes, one course at a time, and Friday left free. */
-.scene-plan { display: grid; gap: 8px; width: min(420px, 88%); }
-.sp-head { display: grid; grid-template-columns: repeat(5, 1fr); color: var(--ink-3); font: 720 11px/1 var(--sign); letter-spacing: 0.08em; text-align: center; }
-.sp-grid { position: relative; height: 130px; border: 1px solid var(--rule); border-radius: 12px; background: repeating-linear-gradient(90deg, transparent 0 calc(20% - 1px), var(--rule) calc(20% - 1px) 20%), var(--plate); overflow: hidden; }
-.sp-grid i { position: absolute; width: 18%; border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); border-radius: 5px; background: color-mix(in srgb, var(--c) 24%, var(--plate)); transform-origin: top; animation: block-drop 0.5s var(--ease) both; animation-delay: calc(0.3s + var(--i) * 0.18s); }
+/* ---------- Scenes ---------- */
 /* Hidden until their turn, so the animation has to end visible rather than at the element's own opacity. */
-@keyframes appear { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@keyframes block-drop { from { opacity: 0; transform: translateY(-18px) scaleY(0.6); } }
-.sp-off { position: absolute; right: 0; top: 0; bottom: 0; width: 20%; display: grid; place-items: center; color: var(--ink-3); font: 650 11px/1.2 var(--text); text-align: center; background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--line) 12%, transparent) 6px 12px); animation: fade-in 0.5s ease-out 1.3s both; }
-.sp-badge { justify-self: center; padding: 6px 12px; border-radius: 999px; background: var(--line-fill); color: var(--line-on); font: 600 12.5px/1 var(--text); animation: stop-pop 0.4s var(--ease) 1.5s both; }
+@keyframes appear { from { opacity: 0; transform: translateY(0.4em); } to { opacity: 1; transform: none; } }
+@keyframes type { to { clip-path: inset(0 0 0 0); } }
+@keyframes card-rise { from { opacity: 0; transform: translateY(1.2em) scale(0.97); } }
+
+/* Ask: the question typed, the route it takes, the answer arriving with its citations and where they came from. */
+.scene-ask { display: grid; gap: 0.8em; width: 28em; }
+.sa-q { justify-self: end; max-width: 94%; padding: 0.7em 1em; border-radius: 1.1em 1.1em 0.3em 1.1em; background: var(--ink); color: var(--ground); font: 620 1.05em/1.35 var(--text); box-shadow: var(--shadow-1); }
+.sa-q span { display: inline-block; max-width: 100%; overflow: hidden; vertical-align: bottom; white-space: nowrap; clip-path: inset(0 100% 0 0); animation: type 1.1s steps(42) 0.3s forwards; }
+.sa-route { display: flex; gap: 1.1em; margin-bottom: 0.25em; color: var(--ink-3); font: 600 0.8em/1 var(--text); }
+.sa-route span { display: inline-flex; align-items: center; gap: 0.45em; opacity: 0; animation: appear 0.35s ease-out forwards; animation-delay: calc(1.5s + var(--i) * 0.3s); }
+.sa-route i { width: 0.6em; height: 0.6em; border-radius: 50%; background: var(--line); }
+.sa-answer { display: grid; gap: 0.55em; padding: 1em 1.15em; border: 1px solid var(--rule); border-radius: 1em; background: var(--plate); box-shadow: var(--shadow-2); font-size: 0.95em; line-height: 1.45; }
+.sa-answer p { margin: 0; opacity: 0; animation: appear 0.45s var(--ease) forwards; animation-delay: calc(2.4s + var(--i) * 0.25s); }
+.sa-answer p.bar { width: 92%; height: 0.6em; border-radius: 0.3em; background: var(--plate-3); }
+.sa-answer p.bar.short { width: 58%; }
+.sa-answer em { display: inline-grid; place-items: center; min-width: 1.35em; height: 1.35em; margin-left: 0.15em; border: 1.5px solid var(--cobalt); border-radius: 0.7em; color: var(--cobalt-ink); font: 700 0.7em/1 var(--sign); font-style: normal; vertical-align: 0.15em; }
+.sa-sources { display: flex; flex-wrap: wrap; gap: 0.4em; margin-top: 0.35em; }
+.sa-sources span { display: inline-flex; align-items: center; gap: 0.45em; padding: 0.4em 0.75em; border-radius: 999px; background: var(--line-soft); color: var(--line-ink); font: 650 0.75em/1 var(--text); animation: stop-pop 0.4s var(--ease) both; animation-delay: calc(3.4s + var(--i) * 0.12s); }
+.sa-sources span::before { content: ''; width: 0.6em; height: 0.6em; box-sizing: border-box; border-radius: 50%; border: 0.18em solid var(--line); }
+
+/* Plan: the sentence typed, a week filling with classes one course at a time, and Friday left free. */
+.scene-plan { display: grid; gap: 0.7em; width: 28em; }
+.sp-ask { display: flex; align-items: center; gap: 0.6em; padding: 0.5em 0.5em 0.5em 1em; border: 1px solid var(--rule); border-radius: 999px; background: var(--plate); box-shadow: var(--shadow-1); font: 560 0.9em/1.3 var(--text); }
+.sp-ask span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; clip-path: inset(0 100% 0 0); animation: type 1.1s steps(46) 0.3s forwards; }
+.sp-ask i { display: grid; place-items: center; width: 2em; height: 2em; flex: none; border-radius: 50%; background: var(--ink); }
+.sp-ask i::after { content: ''; width: 0.5em; height: 0.5em; border: solid var(--ground); border-width: 0.14em 0.14em 0 0; transform: translateX(-0.1em) rotate(45deg); }
+.sp-week { display: grid; gap: 0.6em; padding: 0.75em 0.6em 0.6em; border: 1px solid var(--rule); border-radius: 1em; background: var(--plate); box-shadow: var(--shadow-2); }
+.sp-head { display: grid; grid-template-columns: repeat(5, 1fr); color: var(--ink-3); font: 720 0.7em/1 var(--sign); letter-spacing: 0.08em; text-align: center; }
+.sp-grid { position: relative; height: 10.5em; overflow: hidden; border-radius: 0.55em; background: repeating-linear-gradient(90deg, transparent 0 calc(20% - 1px), var(--rule) calc(20% - 1px) 20%), var(--plate-2); }
+.sp-grid i { position: absolute; width: 18%; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); border-left: 0.22em solid var(--c); border-radius: 0.35em; background: color-mix(in srgb, var(--c) 22%, var(--plate)); transform-origin: top; animation: block-drop 0.55s var(--ease) both; animation-delay: calc(1.5s + var(--i) * 0.15s); }
+@keyframes block-drop { from { opacity: 0; transform: translateY(-1.2em) scaleY(0.6); } }
+.sp-off { position: absolute; right: 0; top: 0; bottom: 0; display: grid; place-items: center; width: 20%; background: repeating-linear-gradient(135deg, transparent 0 0.4em, color-mix(in srgb, var(--line) 14%, transparent) 0.4em 0.8em); color: var(--ink-3); font: 650 0.7em/1.2 var(--text); text-align: center; animation: fade-in 0.6s ease-out 2.8s both; }
+.sp-badge { justify-self: center; padding: 0.5em 1em; border-radius: 999px; background: var(--line-fill); color: var(--line-on); font: 600 0.8em/1 var(--text); animation: stop-pop 0.45s var(--ease) 3s both; }
 .sp-badge b { font-family: var(--sign); letter-spacing: 0.04em; }
 
-/* Questions: the feed, an answer sliding in, the plus button waiting. */
-.scene-questions { position: relative; display: grid; gap: 10px; width: min(400px, 86%); }
-.sq-card { display: grid; gap: 7px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--plate); box-shadow: var(--shadow-1); animation: rise-in 0.45s var(--ease) both; animation-delay: calc(0.2s + var(--i) * 0.2s); font-size: 13.5px; }
-.sq-card b { font-weight: 650; }
-.sq-answer { position: relative; padding: 7px 10px 7px 28px; border-radius: 9px; background: var(--line-soft); color: var(--ink-2); animation: fade-in 0.4s ease-out 1.1s both; }
-.sq-answer::before { content: ''; position: absolute; left: 10px; top: 11px; width: 10px; height: 10px; box-sizing: border-box; border-radius: 50%; border: 3px solid var(--line); }
-.sq-pill { justify-self: start; padding: 4px 8px; border-radius: 5px; background: var(--amber-soft); color: var(--amber-ink); font: 650 11.5px/1 var(--text); }
-.sq-plus { position: absolute; right: -14px; bottom: -16px; display: grid; place-items: center; width: 46px; height: 46px; border-radius: 15px; background: var(--line-fill); color: var(--line-on); font: 500 28px/1 var(--text); box-shadow: var(--shadow-2); animation: stop-pop 0.4s var(--ease) 1.5s both, nudge 2.4s ease-in-out 2s infinite; }
+/* Reviews: the rating plate fills its stops, the meters fill beside it, and a student's word slides in. */
+.scene-courses { display: grid; gap: 1em; width: 27em; }
+.sc-top { display: flex; align-items: center; gap: 1.2em; padding: 0.9em; border: 1px solid var(--rule); border-radius: 1.2em; background: var(--plate); box-shadow: var(--shadow-2); }
+.sc-plate { display: grid; justify-items: center; gap: 0.6em; padding: 1em 1.2em 0.9em; border-radius: 1.1em; background: var(--line-fill); color: var(--line-on); box-shadow: inset 0 1px 0 var(--gloss), 0 1.2em 2.4em -1.2em var(--line-fill); animation: plate-in 0.6s var(--ease) 0.2s both; }
+@keyframes plate-in { from { opacity: 0; transform: scale(0.85) rotate(-3deg); } }
+.sc-plate b { font: 800 3.6em/0.88 var(--sign); font-stretch: 78%; }
+.sc-stops { display: flex; gap: 0.3em; }
+.sc-stops i { width: 0.8em; height: 0.8em; box-sizing: border-box; border-radius: 50%; border: 0.15em solid currentColor; background: linear-gradient(90deg, currentColor var(--fill), transparent var(--fill)); animation: stop-pop 0.35s var(--ease) both; animation-delay: calc(0.7s + var(--i) * 0.12s); }
+.sc-side { display: grid; flex: 1; gap: 0.45em; min-width: 0; padding-right: 0.3em; animation: rise-in 0.5s var(--ease) 0.4s both; }
+.sc-code { justify-self: start; padding: 0.3em 0.55em; border-radius: 0.35em; background: var(--line-soft); color: var(--line-ink); font: 720 0.72em/1 var(--sign); letter-spacing: 0.04em; }
+.sc-side > b { font: 700 1.15em/1.2 var(--text); }
+.sc-meter { display: grid; gap: 0.35em; }
+.sc-meter em { color: var(--ink-3); font: 680 0.66em/1 var(--sign); font-style: normal; letter-spacing: 0.1em; text-transform: uppercase; }
+.sc-meter span { display: flex; gap: 0.2em; }
+.sc-meter i { flex: 1; height: 0.45em; border-radius: 0.25em; background: var(--plate-3); }
+.sc-meter i.on { background: var(--line); animation: meter-in 0.3s var(--ease) both; animation-delay: calc(1.1s + var(--i) * 0.08s); }
+@keyframes meter-in { from { background: var(--plate-3); } }
+.sc-review { padding: 0.9em 1.1em; border: 1px solid var(--rule); border-radius: 1em; background: var(--plate); box-shadow: var(--shadow-2); color: var(--ink-2); font: 500 0.92em/1.45 var(--text); animation: card-rise 0.6s var(--ease) 2s both; }
+
+/* Students: the feed, an answer arriving, the plus button waiting. */
+.scene-questions { position: relative; display: grid; gap: 0.8em; width: 26em; }
+.sq-card { display: grid; gap: 0.55em; padding: 1em 1.1em; border: 1px solid var(--rule); border-radius: 1em; background: var(--plate); box-shadow: var(--shadow-2); font-size: 0.95em; animation: card-rise 0.55s var(--ease) both; animation-delay: calc(0.3s + var(--i) * 0.25s); }
+.sq-card b { font-weight: 650; line-height: 1.35; }
+.sq-answer { position: relative; padding: 0.55em 0.8em 0.55em 2em; border-radius: 0.7em; background: var(--line-soft); color: var(--ink-2); line-height: 1.4; animation: appear 0.45s var(--ease) 1.3s both; }
+.sq-answer::before { content: ''; position: absolute; left: 0.75em; top: 0.85em; width: 0.75em; height: 0.75em; box-sizing: border-box; border-radius: 50%; border: 0.22em solid var(--line); }
+.sq-pill { justify-self: start; padding: 0.35em 0.6em; border-radius: 0.35em; background: var(--amber-soft); color: var(--amber-ink); font: 650 0.8em/1 var(--text); }
+.sq-plus { position: absolute; right: -0.55em; bottom: -0.7em; display: grid; place-items: center; width: 1.65em; height: 1.65em; border-radius: 0.55em; background: var(--line-fill); color: var(--line-on); font: 500 1.75em/1 var(--text); box-shadow: var(--shadow-2); animation: stop-pop 0.45s var(--ease) 1.8s both, nudge 2.6s ease-in-out 2.6s infinite; }
 @keyframes nudge { 0%, 70%, 100% { transform: scale(1); } 80% { transform: scale(1.12); } 90% { transform: scale(0.97); } }
 
-/* Notices: the week lights up, Thursday has something on. */
-
-/* Market: price tags flip down like a departure board, and a ride is boarding. */
-
-/* Courses: the rating plate fills its stops, the meters fill beside it. */
-.scene-courses { display: flex; align-items: center; gap: 18px; width: min(430px, 90%); }
-.sc-plate { display: grid; justify-items: center; gap: 9px; padding: 14px 18px 12px; border-radius: 16px; background: var(--line-fill); color: var(--line-on); box-shadow: inset 0 1px 0 var(--gloss), 0 10px 24px -16px var(--line-fill); animation: sign-in 0.5s var(--ease) both; }
-.sc-plate b { font: 800 44px/0.88 var(--sign); font-stretch: 78%; }
-.sc-stops { display: flex; gap: 4px; }
-.sc-stops i { width: 11px; height: 11px; border-radius: 50%; border: 2px solid currentColor; background: linear-gradient(90deg, currentColor var(--fill), transparent var(--fill)); animation: stop-pop 0.3s var(--ease) both; animation-delay: calc(0.5s + var(--i) * 0.12s); }
-.sc-side { display: grid; gap: 7px; flex: 1; min-width: 0; justify-items: start; animation: rise-in 0.45s var(--ease) 0.3s both; }
-.sc-side > b { font-size: 15px; }
-.sc-meter { display: grid; gap: 5px; width: 100%; }
-.sc-meter em { color: var(--ink-3); font: 680 10.5px/1 var(--sign); font-style: normal; letter-spacing: 0.1em; text-transform: uppercase; }
-.sc-meter span { display: flex; gap: 3px; }
-.sc-meter i { flex: 1; height: 6px; border-radius: 3px; background: var(--plate-3); }
-.sc-meter i.on { background: var(--line); animation: meter-in 0.3s var(--ease) both; animation-delay: calc(0.8s + var(--i) * 0.08s); }
-@keyframes meter-in { from { background: var(--plate-3); } }
-
 @media (max-width: 700px) {
-  .welcome { padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
-  .welcome-card { height: min(680px, 100%); width: min(480px, 100%); }
-  .welcome-head { padding: 10px 16px; }
+  .welcome-head { padding-inline: 16px; }
   .welcome-brand { gap: 8px; }
   .welcome-brand .brand-mark { width: 24px; height: 24px; }
   .welcome-brand .brand-name { font-size: 17px; }
-  .welcome-skip { font-size: 13px; padding: 0 6px; }
-  .welcome-page { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; }
-  .welcome-visual { flex: none; padding: 22px 18px; }
-  .welcome-scene { min-height: 170px; }
-  .welcome-copy { padding: 22px 20px 20px; }
-  .welcome-copy h2 { font-size: 27px; }
-  .welcome-copy h2, .welcome-signup h2 { font-size: 26px; }
-  .welcome-copy p, .welcome-signup > p { margin-top: 12px; }
-  .welcome-copy ul { margin-top: 14px; }
-  .welcome-page.is-signup { padding: 20px; }
-  .welcome-signup { padding: 6px 0 12px; }
-  .welcome-foot { padding: 12px 20px 16px; }
-  .welcome-next { flex: 1; min-width: 0; }
-  .sc-plate { padding: 14px 12px 12px; }
-  .scene-courses { gap: 12px; }
-  .sa-q, .sa-answer { font-size: 12px; }
-  .sa-q span { white-space: normal; }
-  .welcome-scene:has(.scene-ask), .welcome-scene:has(.scene-questions) { min-height: 200px; }
-  .welcome-progress { margin: 0 24px; }
+  .welcome-skip { padding: 0 14px; font-size: 13px; }
+  .welcome-copy { gap: 10px; padding-inline: 20px; }
+  .welcome-copy h2 { font-size: clamp(34px, 10.5vw, 52px); }
+  .welcome-kicker { font-size: 12px; }
+  .welcome-foot { gap: 12px; padding: 18px 16px max(16px, env(safe-area-inset-bottom)); }
+  .welcome-progress { gap: 4px; }
+  .welcome-progress button { width: 22px; }
+  .welcome-progress button.now { width: 40px; }
+  .welcome-back { width: 48px; height: 48px; }
+  .welcome-next { min-width: 0; height: 48px; padding: 0 18px 0 22px; font-size: 15px; }
+  .welcome-signup-wrap { padding: 8px 12px; }
+  .welcome-signup { padding: 24px 20px; border-radius: 20px; }
+  .welcome-signup h2 { font-size: 28px; }
 }
-@media (max-height: 600px) and (min-width: 561px) {
-  .welcome-card { height: 100%; }
-  .welcome-head { padding-block: 6px; }
-  .welcome-page { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .welcome-page.is-signup { display: block; padding: 16px 24px; }
-  .welcome-scene { min-height: 160px; }
-  .welcome-copy { padding: 18px 24px; }
-  .welcome-copy h2 { font-size: 23px; }
-  .welcome-foot { padding: 8px 24px 12px; }
-}
-@media (max-width: 380px) {
-  .welcome { padding-inline: max(6px, env(safe-area-inset-left)) max(6px, env(safe-area-inset-right)); }
-  .welcome-head { padding-inline: 12px; }
-  .welcome-copy { padding: 18px 16px; }
-  .welcome-page.is-signup { padding: 18px 16px; }
-  .welcome-copy h2, .welcome-signup h2 { font-size: 24px; }
-  .welcome-foot { padding-inline: 0; }
-  .welcome-position, .welcome-actions { margin-inline: 16px; }
+/* A phone on its side: the words beside the picture. */
+@media (max-height: 560px) and (min-width: 640px) {
+  .welcome-stop { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); grid-template-rows: minmax(0, 1fr); }
+  .welcome-copy { grid-row: 1; grid-column: 1; align-content: center; justify-items: start; text-align: left; }
+  .welcome-visual { grid-row: 1; grid-column: 2; }
+  .welcome-copy h2 { font-size: clamp(30px, 5vw, 56px); }
+  .welcome-foot { padding-top: 8px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sa-q span { clip-path: none; animation: none; }
-  .sa-route span, .sa-answer p { opacity: 1; animation: none; }
+  .welcome, .welcome-stop, .welcome-signup-wrap, .welcome-glow, .welcome-scene, .welcome-kicker, .welcome-copy h2 span, .welcome-scene *, .wt-station, .welcome-progress button::after { animation: none !important; }
+  .welcome-scene * { opacity: 1 !important; clip-path: none !important; }
+  .wt-line { animation: none; stroke-dashoffset: 0; }
+  .wt-train { display: none; }
 }
 
 /* Signing up: email, code, details, as three stops. */
