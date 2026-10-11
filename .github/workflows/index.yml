@@ -1,7 +1,11 @@
-# Builds the search index whenever new posts land, so nobody has to run the indexer by hand.
-# Needs one embedding key as a repository secret (Settings → Secrets and variables → Actions):
-#   VOYAGE_API_KEY (recommended), or CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID, or GEMINI_API_KEY.
-# The committed data/index/ is what Vercel deploys; only chunks that changed get embedded.
+# Builds the search index whenever the indexing code changes or a scrape asks for it (scripts/scrape-publish.sh runs
+# it by hand), so nobody has to run the indexer by hand.
+# Needs repository secrets (Settings → Secrets and variables → Actions): BLOB_READ_WRITE_TOKEN for the project's private
+# Blob store, and one embedding key: VOYAGE_API_KEY (recommended), or CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID, or
+# GEMINI_API_KEY.
+# The posts and the index hold students' names and words, so they stay in the store and never touch git: the job pulls
+# the posts and the last index, embeds only the chunks that changed, and pushes the new index back. The next deploy
+# pulls it.
 name: Build search index
 
 on:
@@ -9,13 +13,12 @@ on:
     branches:
       - main
     paths:
-      - 'data/posts.jsonl'
       - 'lib/**'
       - 'scripts/index.ts'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: index-${{ github.ref }}
@@ -32,8 +35,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Embed new posts and commit the index
+      - name: Embed new posts and push the index to the store
         env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
           VOYAGE_EMBED_MODEL: ${{ vars.VOYAGE_EMBED_MODEL }}
           VOYAGE_EMBED_DIMENSIONS: ${{ vars.VOYAGE_EMBED_DIMENSIONS }}
@@ -50,19 +54,7 @@ jobs:
             echo "::warning::No embedding key is set (VOYAGE_API_KEY, CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID, or GEMINI_API_KEY), so the index was not built. Add one under Settings → Secrets → Actions."
             exit 0
           fi
+          npm run archive -- pull posts
+          npm run archive -- pull index
           npm run index
-          rm -f data/index/cache-*
-          git config user.name "ror-indexer"
-          git config user.email "ror-indexer@users.noreply.github.com"
-          git add data/index
-          if git diff --cached --quiet; then
-            echo "Index unchanged."
-          else
-            git commit -m "Update search index [skip ci]"
-            # Other jobs (the official-pages crawl, new pushes) can land on main while embedding runs.
-            for i in 1 2 3 4 5; do
-              git pull --rebase && git push && exit 0
-              sleep $((i * 10))
-            done
-            exit 1
-          fi
+          npm run archive -- push index

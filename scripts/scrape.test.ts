@@ -32,7 +32,7 @@ let workDir = '';
 
 function runScraper(extra: string[]): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [path.join('node_modules', 'tsx', 'dist', 'cli.mjs'), 'scripts/scrape.ts', '--headless', '--group', `${fake.url}/groups/testgroup`, ...extra], {
+    const child = spawn(process.execPath, [path.join('node_modules', 'tsx', 'dist', 'cli.mjs'), 'scripts/scrape.ts', '--headless', '--new-archive', '--group', `${fake.url}/groups/testgroup`, ...extra], {
       cwd: process.cwd(),
       env: {
         ...process.env,

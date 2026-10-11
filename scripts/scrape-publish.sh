@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Scrapes new comments, pushes the archive to the private Blob store, has the index workflow embed it, then deploys
+# and checks that production serves the new index. The archive never goes into git.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -9,20 +11,22 @@ fi
 git fetch origin
 git merge --ff-only origin/main
 
+npm run archive -- pull posts
+cp data/posts.jsonl data/posts.jsonl.before
 npm run scrape -- --only-comments "$@"
-if git diff --quiet -- data/posts.jsonl; then
+if cmp -s data/posts.jsonl data/posts.jsonl.before; then
+  rm data/posts.jsonl.before
   echo 'The scraper saved no archive changes.'
   exit 0
 fi
+rm data/posts.jsonl.before
+npm run archive -- push posts
 
-git add data/posts.jsonl
-git commit -m 'Add newly captured group comments'
-git push origin main
-revision="$(git rev-parse HEAD)"
-
+started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+gh workflow run index.yml --ref main
 run_id=''
 for ((attempt = 0; attempt < 30; attempt++)); do
-  run_id="$(gh run list --workflow index.yml --commit "$revision" --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+  run_id="$(gh run list --workflow index.yml --event workflow_dispatch --created ">=$started" --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
   [[ -n "$run_id" ]] && break
   sleep 5
 done
@@ -31,23 +35,17 @@ if [[ -z "$run_id" ]]; then
   exit 1
 fi
 gh run watch "$run_id" --exit-status
-git fetch origin
-git merge --ff-only origin/main
 
-if git diff --quiet "$revision" HEAD -- data/index; then
-  echo 'The indexed archive did not change, so the live search data is already current.'
-  exit 0
-fi
-
-npm run build
-vercel --prod --yes
+rm -rf data/index
+npm run archive -- pull index
+vercel deploy --prod --yes --global-config ~/.vercel-nyuad
 node --input-type=module <<'JS'
 import { readFileSync } from 'node:fs';
 const expected = JSON.parse(readFileSync('data/index/meta.json', 'utf8'));
 const response = await fetch('https://www.nyuad.life/api/health');
 const health = await response.json();
-if (!response.ok || !health.ok || health.archive?.builtAt !== expected.builtAt) {
+if (!response.ok || !health.ok || health.archive?.posts !== expected.posts || health.archive?.newestPost !== expected.newestPost) {
   throw Error('Production did not serve the new search index.');
 }
-console.log(`Live archive: ${health.archive.posts} posts, ${health.archive.comments} useful comments.`);
+console.log(`Live archive: ${expected.posts} posts, newest ${expected.newestPost}.`);
 JS

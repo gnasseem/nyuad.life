@@ -16,6 +16,7 @@
  *   npm run scrape -- --delay 2         double every wait (gentler on Facebook)
  *   npm run scrape -- --headless        no window (only after you logged in once with a window; Facebook may refuse)
  *   npm run scrape -- --debug           save raw responses to .scraper-debug/
+ *   npm run scrape -- --new-archive     start an archive when data/posts.jsonl is missing (otherwise pull it first)
  *
  * How it works: the scraper reads the JSON Facebook's own web client loads, so it does not depend on page
  * selectors. After the first scroll it has seen the exact request the client uses for "more posts", and from
@@ -1133,6 +1134,12 @@ function countCommentsFor(postId: string): number {
 
 async function main(): Promise<void> {
   const file = postsFile();
+  // The archive lives in the private store, not in git, so a fresh checkout has none. Starting from nothing would
+  // later overwrite the stored archive with only this run's posts.
+  if (!existsSync(file) && !LOGIN_ONLY && !flag('new-archive')) {
+    log('No data/posts.jsonl here. Run `npm run archive -- pull posts` first (or pass --new-archive to start one).');
+    process.exit(1);
+  }
   mkdirSync(path.dirname(file), { recursive: true });
   let archive = await readPostsJsonl(file);
   const initialPosts = archive.length;
