@@ -9,7 +9,7 @@ import { chunkPosts } from './chunker.ts';
 import { EmbeddingError, PROVIDER_LABELS, type Embedder } from './embeddings.ts';
 import { cleanPosts, FILTERS_VERSION } from './filters.ts';
 import { enrichPost, readPostsJsonl, sortNewestFirst } from './posts.ts';
-import type { Chunk, IndexMeta, IndexedPost } from './types.ts';
+import type { Chunk, IndexMeta, IndexedPost, SourcePost } from './types.ts';
 import { concatTables, decodeTable, emptyTable, encodeTable, quantize, selectRows, type VectorTable } from './vectors.ts';
 
 interface BuildOptions {
@@ -44,7 +44,7 @@ export async function buildIndex(options: BuildOptions): Promise<BuildResult> {
   const model = embedder?.model ?? 'none';
   const dimensions = embedder?.dimensions ?? 0;
 
-  const raw = await readPostsJsonl(options.postsFile);
+  const raw = withoutRemoved(await readPostsJsonl(options.postsFile), path.join(path.dirname(options.postsFile), 'removed.json'), log);
   if (raw.length === 0) throw new Error(`No posts found in ${options.postsFile}. Run the scraper first.`);
   const cleaned = cleanPosts(raw);
   let posts: IndexedPost[] = sortNewestFirst(cleaned.posts.map(enrichPost));
@@ -148,6 +148,24 @@ async function embedWithPatience(embedder: Embedder, batch: Chunk[], log: (messa
       await new Promise((resolve) => setTimeout(resolve, wait));
     }
   }
+}
+
+/**
+ * Leaves out what people asked to have removed (README, "Data and privacy"): removed.json beside posts.jsonl lists post
+ * ids and author names, kept in the private store with the posts. A listed author loses their posts and their
+ * comments. The scraper still saves them, so they are dropped again on every build.
+ */
+function withoutRemoved(posts: SourcePost[], file: string, log: (message: string) => void): SourcePost[] {
+  if (!existsSync(file)) return posts;
+  const removed = JSON.parse(readFileSync(file, 'utf8')) as { posts?: string[]; authors?: string[] };
+  const ids = new Set(removed.posts ?? []);
+  const authors = new Set((removed.authors ?? []).map((name) => name.trim().toLowerCase()));
+  const listed = (author: string) => authors.has(author.trim().toLowerCase());
+  const kept = posts
+    .filter((post) => !ids.has(post.id) && !listed(post.author))
+    .map((post) => ({ ...post, comments: post.comments.filter((comment) => !listed(comment.author)) }));
+  log(`Left out ${posts.length - kept.length} posts on the removal list.`);
+  return kept;
 }
 
 function loadCache(dir: string, model: string, dimensions: number): Cache {
