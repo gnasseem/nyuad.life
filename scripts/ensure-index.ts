@@ -1,7 +1,8 @@
 /**
- * Runs during `npm run build`. On Vercel/CI (or with --force), if data/index/ is missing it builds one from
- * data/posts.jsonl so the deploy works immediately. Keyword-only by default; set ROR_EMBED_ON_BUILD=1 (with GEMINI_API_KEY) to embed
- * during the build as well. A committed data/index/ (from `npm run index`) is always left untouched.
+ * Runs during `npm run build`, after scripts/archive.ts has pulled data/index/ from the private store. On Vercel/CI
+ * (or with --force), if data/index/ is still missing it builds one from data/posts.jsonl. Keyword-only by default; set
+ * ROR_EMBED_ON_BUILD=1 (with GEMINI_API_KEY) to embed during the build as well. An existing data/index/ is always left
+ * untouched.
  */
 import { existsSync } from 'node:fs';
 import path from 'node:path';
