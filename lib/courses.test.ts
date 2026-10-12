@@ -89,6 +89,15 @@ describe('matching a question', () => {
     // "young" is an ordinary word, so a surname match alone does not count.
     expect(matchSchedule(catalog, 'which class is best for young students').instructors).toEqual([]);
   });
+  it('distinguishes the Economics MVC section and its professor from the Science course', () => {
+    const mvc = buildCatalog([
+      offering('Fall 2026', 'MATH-UH 1020', 'Multivariable Calculus with Applications to Science and Engineering', ['Rossi, Marco']),
+      offering('Fall 2026', 'MATH-UH 1021', 'Multivariable Calculus with Applications to Economics', ['Demni, Nizar']),
+    ], new Date('2026-10-12'));
+    expect(matchSchedule(mvc, 'Who teaches MVC for Econ?').courses).toEqual(['MATH-UH 1021']);
+    expect(matchSchedule(mvc, 'Nizar MVC').courses).toEqual(['MATH-UH 1021']);
+    expect(matchSchedule(mvc, 'Nizar MVC').instructors).toEqual(['Nizar Demni']);
+  });
 });
 
 describe('schedule text for the answer model', () => {

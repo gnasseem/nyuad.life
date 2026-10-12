@@ -7,13 +7,14 @@ import { useApp } from '../context';
 import { plural, relativeDate } from '../format';
 import { IconRefresh, IconShield } from '../icons';
 
-type Tab = 'usage' | 'members' | 'models' | 'moderation';
+type Tab = 'usage' | 'members' | 'models' | 'moderation' | 'reports';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'usage', label: 'Usage' },
   { id: 'members', label: 'Members' },
   { id: 'models', label: 'Models' },
   { id: 'moderation', label: 'Moderation' },
+  { id: 'reports', label: 'Ask reports' },
 ];
 
 /** What students did, in the order the page lists it. */
@@ -123,9 +124,30 @@ export function AdminPage() {
         {tab === 'members' && <MembersTab stats={stats} />}
         {tab === 'models' && <ModelsTab />}
         {tab === 'moderation' && <ModerationTab stats={stats} />}
+        {tab === 'reports' && <ReportsTab />}
       </div>
     </div>
   );
+}
+
+function ReportsTab() {
+  const [reports, setReports] = useState<Array<{ id: string; createdAt: string; question: string; answer: string; reason: string; sources: string[] }> | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.admin.askReports().then((result) => setReports(result.reports)).catch((problem) => setError(problem instanceof Error ? problem.message : 'Could not load reports.'));
+  }, []);
+  return <section className="admin-block">
+    <h2>Reported Ask answers</h2>
+    {error && <div className="alert error">{error}</div>}
+    {reports === null && !error && <p className="muted">Loading reports…</p>}
+    {reports?.length === 0 && <p className="muted">No reports yet.</p>}
+    {reports?.map((report) => <article key={report.id} className="report-example">
+      <p className="faint small">{relativeDate(report.createdAt)}</p>
+      <h3>{report.question}</h3>
+      <p><strong>Reported issue:</strong> {report.reason}</p>
+      <details><summary>Answer and sources</summary><p className="report-answer-text">{report.answer}</p>{report.sources?.map((url) => <p key={url}><a href={url} target="_blank" rel="noopener noreferrer">{url}</a></p>)}</details>
+    </article>)}
+  </section>;
 }
 
 /** Today's headline numbers on a departure board. */

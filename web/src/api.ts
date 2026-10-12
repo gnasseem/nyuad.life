@@ -29,7 +29,7 @@ export interface PostDetail extends PostSummary {
   comments: Comment[];
 }
 
-type SourceKind = 'archive' | 'board' | 'announcement' | 'official' | 'schedule';
+type SourceKind = 'archive' | 'board' | 'announcement' | 'official' | 'schedule' | 'review';
 
 export interface SourceCard {
   n: number;
@@ -138,7 +138,7 @@ export interface Answer {
   text: string;
   helperName: string;
   helperMajor: string;
-  helperYear: Standing;
+  helperYear: Standing | '';
   createdAt: string;
 }
 
@@ -326,7 +326,7 @@ export interface LeaderboardEntry {
   me: boolean;
   name: string;
   major: string;
-  year: Standing;
+  year: Standing | '';
   answers: number;
   lastAnswerAt: string;
 }
@@ -391,6 +391,7 @@ export interface CourseDetail {
   description: string;
   currentTerm: string;
   instructors: string[];
+  professors: string[];
 }
 
 export interface CourseRating {
@@ -419,11 +420,12 @@ export interface CourseReview {
   code: string;
   authorName: string;
   authorMajor: string;
-  authorYear: Standing;
+  authorYear: Standing | '';
   rating: number;
   difficulty: number | null;
   workload: number | null;
   text: string;
+  professor: string;
   term: string;
   createdAt: string;
   updatedAt: string;
@@ -537,6 +539,7 @@ function post<T>(path: string, body: unknown): Promise<T> {
 export const api = {
   health: () => request<Health>('/api/health'),
   feedback: (message: string, page: string) => post<{ ok: true }>('/api/feedback', { message, page }),
+  reportAnswer: (question: string, answer: string, reason: string, sources: string[]) => post<{ ok: true }>('/api/feedback', { kind: 'ask-report', question, answer, message: reason, sources }),
   chatgpt: {
     me: () => request<ChatGPTStatus>('/api/chatgpt?op=me'),
     logout: () => post<{ ok: true }>('/api/chatgpt', { op: 'logout' }),
@@ -565,7 +568,7 @@ export const api = {
     deleteProfile: (netId: string) => post<{ ok: true }>('/api/board', { op: 'delete_profile', netId, key: askerKey() }),
     ask: (body: { text: string; key: string; name?: string }) => post<{ question?: Question; similar?: QuestionWithAnswers[]; related?: PostSummary[]; redirect?: Redirect }>('/api/board', { op: 'ask', ...body }),
     next: (netId: string, key: string) => post<{ question: Question | null; remaining: number; answered: number }>('/api/board', { op: 'next', netId, key }),
-    answer: (body: { netId: string; questionId: string; text: string }) => post<{ answer: Answer; answered: number }>('/api/board', { op: 'answer', key: askerKey(), ...body }),
+    answer: (body: { netId: string; questionId: string; text: string; anonymous?: boolean }) => post<{ answer: Answer; answered: number }>('/api/board', { op: 'answer', key: askerKey(), ...body }),
     skip: (body: { netId: string; questionId: string }) => post<{ ok: true }>('/api/board', { op: 'skip', key: askerKey(), ...body }),
     announce: (body: { netId: string; key: string; title: string; body: string; kind: AnnouncementKind; startsAt?: string; location?: string; link?: string }) => post<{ announcement: Announcement }>('/api/board', { op: 'announce', ...body }),
     unannounce: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unannounce', ...body }),
@@ -579,7 +582,7 @@ export const api = {
     unlisting: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unlisting', ...body }),
     leaderboard: (_netId?: string) => request<{ helpers: LeaderboardEntry[] }>('/api/board?op=leaderboard'),
     reviews: (code: string) => request<{ reviews: CourseReview[]; open?: boolean }>(`/api/board?op=reviews&code=${encodeURIComponent(code)}`),
-    review: (body: { code: string; rating: number; difficulty: number | null; workload: number | null; text: string; term: string }) => post<{ review: CourseReview }>('/api/board', { op: 'review', ...body }),
+    review: (body: { code: string; rating: number; difficulty: number | null; workload: number | null; text: string; term: string; professor: string; anonymous: boolean }) => post<{ review: CourseReview }>('/api/board', { op: 'review', ...body }),
     unreview: (code: string) => post<{ ok: true }>('/api/board', { op: 'unreview', code }),
     contact: (type: 'offer' | 'listing', id: string) => request<{ contactKind: ContactKind; contact: string }>(`/api/board?op=contact&type=${type}&id=${encodeURIComponent(id)}`),
   },
@@ -593,6 +596,7 @@ export const api = {
     alertTest: () => post<{ ok: true; to: string[] }>('/api/admin', { op: 'alert-test' }),
     stats: () => request<AdminDashboard>('/api/admin?op=stats'),
     audit: () => request<{ audit: Array<{ action: string; target: string; createdAt: string }> }>('/api/admin?op=audit'),
+    askReports: () => request<{ reports: Array<{ id: string; createdAt: string; question: string; answer: string; reason: string; sources: string[] }> }>('/api/admin?op=ask-reports'),
     warm: () => request<{ rated: number; none: number; failed: number; left: number; ms: number }>('/api/courses?op=warm'),
   },
   plan: {

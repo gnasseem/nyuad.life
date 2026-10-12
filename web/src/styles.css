@@ -740,6 +740,13 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
   .ann .when b { font-size: 21px; }
   .ann .foot { grid-column: 1 / -1; }
 }
+.report-answer { display: grid; gap: 8px; margin: 10px 0 16px; padding: 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--plate); }
+.report-answer label { font-weight: 650; font-size: 13px; }
+.report-answer .btn { justify-self: start; }
+.report-example { padding: 16px 0; border-top: 1px solid var(--rule); }
+.report-example h3 { margin: 4px 0 10px; font-size: 16px; }
+.report-example p { margin: 8px 0; overflow-wrap: anywhere; }
+.report-answer-text { white-space: pre-wrap; }
 
 /* ---------- Market ---------- */
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin-bottom: 18px; }

@@ -115,6 +115,7 @@ function courseDetail(official: OfficialCorpus | null, catalog: Catalog, code: s
     description: history?.description || (doc ? truncate(collapseWhitespace(doc.text), 1500) : ''),
     currentTerm: catalog.current,
     instructors: [...new Set((primary.length ? primary : current?.sections ?? []).flatMap((section) => section.instructors))],
+    professors: [...new Set((history?.offerings ?? []).flatMap((offering) => offering.sections.filter((section) => section.status !== 'cancelled' && section.component !== 'Recitation' && section.component !== 'Laboratory').flatMap((section) => section.instructors)))],
   };
 }
 
@@ -238,7 +239,7 @@ type SavedCourse = CourseRating | { none: true; createdAt: string; v?: number };
  * Saved with every "nobody has written about it", and raised when finding a course's or a professor's threads gets
  * better, so those verdicts are looked at again instead of standing for another week.
  */
-const NONE_VERSION = 2;
+const NONE_VERSION = 3;
 /** A course students have not described is looked at again after a week: new threads come in every day. */
 const RATING_NONE_TTL_MS = 7 * 86_400_000;
 

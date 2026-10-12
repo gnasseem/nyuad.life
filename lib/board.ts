@@ -65,7 +65,7 @@ export interface Answer {
   helperNetId: string;
   helperName: string;
   helperMajor: string;
-  helperYear: Standing;
+  helperYear: Standing | '';
   createdAt: string;
 }
 
@@ -176,7 +176,7 @@ export interface CourseReview {
   netId: string;
   authorName: string;
   authorMajor: string;
-  authorYear: Standing;
+  authorYear: Standing | '';
   /** 1 to 5: would they recommend it. */
   rating: number;
   difficulty: number | null;
@@ -186,6 +186,12 @@ export interface CourseReview {
   term: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Kept in the existing review text column so older reviews and deployments remain readable. */
+export function unpackReviewText(value: string): { professor: string; text: string } {
+  const match = /^Professor: ([^\n]{1,100})\n\n/.exec(value);
+  return match ? { professor: match[1]!, text: value.slice(match[0].length) } : { professor: '', text: value };
 }
 
 const REVIEW_MAX = 600;
@@ -430,7 +436,7 @@ export interface LeaderboardEntry {
   me: boolean;
   name: string;
   major: string;
-  year: Standing;
+  year: Standing | '';
   answers: number;
   /** Consecutive calendar weeks (Monday to Sunday) with at least one answer, ending this week or last week. */
   streak: number;

@@ -39,6 +39,11 @@ export default route(['GET', 'POST'], async (req, res) => {
       sendJson(res, 200, { audit: await need(store).listAudit(40) });
       return;
     }
+    case 'ask-reports': {
+      const entries = await need(store).listSummaryFields('ask-report:', ['question', 'answer', 'reason', 'sources']);
+      sendJson(res, 200, { reports: entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100).map((entry) => ({ id: entry.key, createdAt: entry.createdAt, ...entry.fields })) });
+      return;
+    }
     case 'models': {
       rateLimit(req, 3, 1, 'admin-models');
       await warmModels(4_000);

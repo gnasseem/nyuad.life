@@ -232,7 +232,7 @@ function Leaderboard() {
 function AskSheet({ open, initial, onClose, onPosted }: { open: boolean; initial: string; onClose(): void; onPosted(question: FeedQuestion): void }) {
   const { profile, toast } = useApp();
   const [text, setText] = useState('');
-  const [anonymous, setAnonymous] = useState(false);
+  const [anonymous, setAnonymous] = useState(true);
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState('');
   const [posted, setPosted] = useState<{ similar: QuestionWithAnswers[]; related: PostSummary[]; redirect?: Redirect } | null>(null);
@@ -323,6 +323,7 @@ function QuestionCard({ question, onAnswered, compact = false }: { question: Fee
   const { profile, setProfile, toast } = useApp();
   const [writing, setWriting] = useState(false);
   const [text, setText] = useState('');
+  const [anonymous, setAnonymous] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState(false);
@@ -341,7 +342,7 @@ function QuestionCard({ question, onAnswered, compact = false }: { question: Fee
     setBusy(true);
     setError('');
     try {
-      const result = await api.board.answer({ netId: profile.netId, questionId: question.id, text: text.trim() });
+      const result = await api.board.answer({ netId: profile.netId, questionId: question.id, text: text.trim(), anonymous });
       setProfile({ ...profile, answers: result.answered });
       onAnswered?.(result.answer);
       setText('');
@@ -406,6 +407,7 @@ function QuestionCard({ question, onAnswered, compact = false }: { question: Fee
           {writing ? (
             <>
               <textarea ref={boxRef} className="input" value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => submitOnShortcut(event, () => void send())} placeholder="What you know: be specific, and say when it was" rows={3} maxLength={ANSWER_MAX} aria-label="Your answer" />
+              <label className="check"><input type="checkbox" checked={anonymous} onChange={(event) => setAnonymous(event.target.checked)} /> Answer without my name</label>
               {error && <div className="alert error">{error}</div>}
               <div className="row-flex between">
                 <button type="button" className="btn ghost sm" onClick={() => setWriting(false)}>

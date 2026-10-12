@@ -24,6 +24,7 @@ import {
   validateProfile,
   validateQuestionText,
   validateReview,
+  unpackReviewText,
   type Announcement,
   type Answer,
   type CourseReview,
@@ -34,7 +35,7 @@ import {
 } from '../lib/board.ts';
 import { recordEvent } from '../lib/app-usage.ts';
 import { boardStore, type BoardStore } from '../lib/board-store.ts';
-import { loadCatalog } from '../lib/courses.ts';
+import { displayName, loadCatalog } from '../lib/courses.ts';
 import { detectRedirect } from '../lib/domains.ts';
 import { normalizeCode } from '../lib/html.ts';
 import { embedderForIndex } from '../lib/embeddings.ts';
@@ -206,9 +207,14 @@ export default route(['GET', 'POST'], async (req, res) => {
       const profile = await requireProfile(store, body.netId, body.key);
       const code = courseCode(body.code);
       const draft = validateReview(body);
+      const professor = collapseWhitespace(String(body.professor ?? '')).slice(0, 100);
+      const taught = loadCatalog().byCode.get(code)?.flatMap((offering) => offering.sections.flatMap((section) => section.instructors.map(displayName))) ?? [];
+      if (professor && !taught.includes(professor)) throw new ApiError(400, 'Choose a professor who taught this course.', 'bad_professor');
       allow('review', draft.text);
-      if (draft.text) await review('review', `Course: ${code}`, `Rating: ${draft.rating} of 5`, `Review: ${draft.text}`);
-      const saved = await store.upsertReview({ ...draft, code, netId: profile.netId, authorName: profile.name.split(' ')[0] ?? profile.name, authorMajor: profile.major, authorYear: standingFor(profile.classOf) }).catch((error: unknown) => {
+      if (draft.text) await review('review', `Course: ${code}`, `Professor: ${professor || 'Not specified'}`, `Rating: ${draft.rating} of 5`, `Review: ${draft.text}`);
+      const text = professor ? `Professor: ${professor}\n\n${draft.text}` : draft.text;
+      const anonymous = body.anonymous === true;
+      const saved = await store.upsertReview({ ...draft, text, code, netId: profile.netId, authorName: anonymous ? 'Anonymous' : profile.name.split(' ')[0] ?? profile.name, authorMajor: anonymous ? '' : profile.major, authorYear: anonymous ? '' : standingFor(profile.classOf) }).catch((error: unknown) => {
         if (error instanceof ApiError && error.code === 'board_schema_missing') throw new ApiError(503, 'Course reviews are not open yet. Try again soon.', 'reviews_unavailable');
         throw error;
       });
@@ -333,7 +339,8 @@ export default route(['GET', 'POST'], async (req, res) => {
       const text = validateAnswerText(body.text);
       allow('answer', text);
       await review('answer', `Question: ${question.text}`, `Answer: ${text}`);
-      const answer = await store.createAnswer({ questionId: question.id, text, helperNetId: profile.netId, helperName: profile.name, helperMajor: profile.major, helperYear: standingFor(profile.classOf) });
+      const anonymous = body.anonymous === true;
+      const answer = await store.createAnswer({ questionId: question.id, text, helperNetId: profile.netId, helperName: anonymous ? 'Anonymous' : profile.name, helperMajor: anonymous ? '' : profile.major, helperYear: anonymous ? '' : standingFor(profile.classOf) });
       await Promise.all([store.recordEvent({ questionId: question.id, netId: profile.netId, kind: 'answer' }), store.bump(question.id, { answers: 1 }), store.touchProfile(profile.netId, true)]);
       answersMemo = null;
       statsMemo = null;
@@ -507,7 +514,7 @@ function publicAnswer(answer: Answer) {
 
 function publicReview(entry: CourseReview, me?: string) {
   const { netId, ...rest } = entry;
-  return { ...rest, mine: Boolean(me) && netId === me };
+  return { ...rest, ...unpackReviewText(entry.text), mine: Boolean(me) && netId === me };
 }
 
 /** A course code from the request, refused unless Albert lists it, so reviews cannot pile up under made-up codes. */

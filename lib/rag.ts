@@ -3,14 +3,14 @@
  * the Albert class schedule for any course or professor the question names and what the student board and the
  * announcements feed know, then stream a grounded answer that cites every claim and says how sure it is.
  */
-import { searchAnnouncements, searchBoard, STANDING_LABELS, type Announcement, type Answer, type Question } from './board.ts';
+import { searchAnnouncements, searchBoard, STANDING_LABELS, unpackReviewText, type Announcement, type Answer, type Question } from './board.ts';
 import type { BoardStore } from './board-store.ts';
 import { detectRedirect } from './domains.ts';
 import { embedderForIndex, type Embedder } from './embeddings.ts';
 import { ChatGPTError, liteText, markChatGPTModelUnusable, streamResponse, usableChatGPTModels, type ChatGPTConfig } from './chatgpt.ts';
-import { abuDhabiDate, courseScheduleText, instructorScheduleText, isCourseQuestion, loadCatalog, matchSchedule, searchCatalog, type Catalog } from './courses.ts';
+import { abuDhabiDate, courseScheduleText, displayName, instructorScheduleText, isCourseQuestion, loadCatalog, matchSchedule, searchCatalog, termOrder, type Catalog } from './courses.ts';
 import { cachedAnswer, saveAnswer } from './answer-cache.ts';
-import { aboutTest, courseThreads, fold, mentions, person, personThreads, threadMentions, type Person } from './entities.ts';
+import { aboutTest, courseThreads, fold, mentions, person, personThreads, REVIEWING, threadMentions, type Person } from './entities.ts';
 import { generateJson, generateStream, geminiKeys, isDailyQuota, isModelUnavailable, keyTag, liveModels, markUnavailable, type GeminiConfig, type GeminiError, type Message } from './gemini.ts';
 import { ApiError } from './http.ts';
 import { officialCards, officialSourceBlock, retrieveOfficial, type OfficialCorpus } from './official.ts';
@@ -474,6 +474,22 @@ async function liveSources(store: BoardStore | null, query: string, terms: strin
   }
 }
 
+/** Reviews written on this site are first-hand evidence for the course, even when the archive has no matching thread. */
+async function courseReviewSources(store: BoardStore | null, codes: string[]): Promise<LiveSource[]> {
+  if (!store || !codes.length) return [];
+  try {
+    const rows = await Promise.all(codes.slice(0, 6).map((code) => store.listReviews(code)));
+    return rows.flatMap((reviews) => reviews.slice(0, 3).map((review) => {
+      const { professor, text } = unpackReviewText(review.text);
+      const description = `${review.rating}/5${professor ? ` with ${professor}` : ''}${review.term ? ` in ${review.term}` : ''}. ${text || 'Rating only; no written account.'}`;
+      return { card: { n: 0, kind: 'review' as const, postId: review.code, title: `Student review of ${review.code}`, url: '', author: review.authorName, date: review.updatedAt.slice(0, 10), text: description, commentCount: 0, reactions: 0, topics: ['courses'], courses: [review.code], snippet: description, score: 1 } };
+    }));
+  } catch (error) {
+    console.warn('[ask] course reviews unavailable:', (error as Error).message);
+    return [];
+  }
+}
+
 /* ---------- Prompting ---------- */
 
 function age(date: string, today: number): string {
@@ -501,8 +517,9 @@ export function sourcesBlock(archive: Archive, cards: SourceCard[], live: LiveSo
       const entry = liveByN.get(card.n);
       if (card.kind === 'official' && entry?.official) return cap(officialSourceBlock(entry.official.corpus, card, entry.official.chunk));
       if (card.kind === 'schedule' && entry?.scheduleText) return cap(`[${card.n}] ${entry.scheduleText}`);
+      if (card.kind === 'review') return cap(`[${card.n}] Student course review from ${formatDate(card.date)}: ${card.text}`);
       if (card.kind === 'board' && entry?.question) {
-        const lines = entry.answers!.map((answer) => `- ${answer.helperName} (${answer.helperMajor}, ${STANDING_LABELS[answer.helperYear].toLowerCase()}, ${formatDate(answer.createdAt.slice(0, 10))}): ${truncate(collapseWhitespace(answer.text), 700)}`);
+        const lines = entry.answers!.map((answer) => `- ${answer.helperName} (${[answer.helperMajor, answer.helperYear ? STANDING_LABELS[answer.helperYear].toLowerCase() : '', formatDate(answer.createdAt.slice(0, 10))].filter(Boolean).join(', ')}): ${truncate(collapseWhitespace(answer.text), 700)}`);
         return cap([`[${card.n}] Unverified answers students wrote on this site, to the question: "${truncate(collapseWhitespace(entry.question.text), 300)}"`, ...lines].join('\n'));
       }
       if (card.kind === 'announcement' && entry?.announcement) {
@@ -1002,7 +1019,7 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
     retrieval: { candidates: retrieval.hits.length, reranked, ms: Date.now() - started },
   };
   // Answers built on posts from this site are not kept: a notice can be removed, and an answer can be corrected.
-  const fromSite = cards.some((card) => card.kind === 'board' || card.kind === 'announcement');
+  const fromSite = cards.some((card) => card.kind === 'board' || card.kind === 'announcement' || card.kind === 'review');
   if (useCache && !truncated && !fromSite && usedSources.length > 0 && parsed.confidence?.level !== 'low' && !signal?.aborted) {
     const saving = saveAnswer(board, request.question, response);
     if (context.defer) context.defer(saving);
@@ -1054,6 +1071,13 @@ export async function gatherSources(
   const years = question.match(/\b20\d{2}\b/g) ?? [];
   const historical = /\b(?:historical|last year|previous)\b/i.test(question) || (years.length > 0 && years.every((year) => Number(year) < Number(abuDhabiDate(new Date()).slice(0, 4))));
   const schedule = scheduleSources(context.catalog, question, searchQuery);
+  const experience = /\b(?:reviews?|opinions?|worth|easiest|hardest|easy|hard|workload|grading|grades?|professors?|prof|teach|taught|like|avoid|recommend|best|worst|experience)\b/i.test(question) || (schedule.instructors.length > 0 && /\b(?:how|thoughts)\b/i.test(question));
+  const reviewCodes = [...schedule.codes];
+  if (experience && context.catalog && schedule.instructors.length) {
+    const taught = [...context.catalog.byCode].flatMap(([code, offerings]) => offerings.filter((offering) => offering.sections.some((section) => section.instructors.some((raw) => schedule.instructors.includes(displayName(raw))))).map((offering) => ({ code, term: termOrder(offering.term) })));
+    for (const entry of taught.sort((a, b) => b.term - a.term)) if (!reviewCodes.includes(entry.code)) reviewCodes.push(entry.code);
+  }
+  const reviewsPromise = experience ? courseReviewSources(context.board, reviewCodes) : Promise.resolve([]);
   searchQuery = safeRewrite(question, searchQuery);
   const people = questionPeople(archive, context.catalog, schedule.instructors, question, searchQuery);
   const named = (text: string) => people.length === 0 || people.some((who) => mentions(text, who));
@@ -1065,22 +1089,26 @@ export async function gatherSources(
   ];
   retrieval.hits = distinctThreads(archive, withLinked(retrieval.hits, linked));
   // The board snapshot was fetched while the question was embedded; its posts go through the reranker with the rest.
-  const [officialPool, livePool] = await Promise.all([officialCandidates(context.official, searchQuery, queries, archive, retrieval), liveSources(context.board, searchQuery, retrieval.terms, retrieval.vector)]);
+  const [officialPool, livePool, reviewPool] = await Promise.all([officialCandidates(context.official, searchQuery, queries, archive, retrieval), liveSources(context.board, searchQuery, retrieval.terms, retrieval.vector), reviewsPromise]);
   if (officialPool && people.length) officialPool.hits = officialPool.hits.filter((hit) => {
     const doc = officialPool.corpus.docs[officialPool.corpus.chunkDoc[hit.chunk]!]!;
     return named(`${doc.title} ${officialPool.corpus.chunks[hit.chunk]!.text}`);
   });
   const eligibleLive = livePool.filter((entry) => named(`${entry.card.author} ${entry.card.title} ${entry.card.text}`));
+  const eligibleReviews = reviewPool.filter((entry) => named(`${entry.card.title} ${entry.card.text}`));
   const ranked = retrieval.hits.length || officialPool || livePool.length ? await withStatus(events, 'Ranking sources', rank(context.cfg, archive, searchQuery, retrieval, officialPool, eligibleLive, context.reranker, timely, context.writers)) : { archive: [], official: [], live: [], reranked: false };
+  // A firsthand reply in a thread naming the exact course or professor remains evidence even if a general-purpose
+  // reranker scores its short, informal wording below the normal source threshold.
+  const linkedReviews = experience ? linked.flat().filter((hit) => REVIEWING.test(fold(archiveDocument(archive, hit)))) : [];
+  const archiveHits = [...linkedReviews.slice(0, 3), ...ranked.archive].filter((hit, index, all) => all.findIndex((other) => other.post === hit.post) === index).slice(0, MAX_SOURCES);
   const official = officialSources(officialPool, ranked.official);
   const live = ranked.live;
   const focus = aboutTest(people, context.catalog, schedule.codes);
-  const threads = toSourceCards(archive, ranked.archive, retrieval.terms, 0).map((card, i): LiveSource => ({ card, chunk: archive.chunks[ranked.archive[i]!.chunk]!.text, focus }));
+  const threads = toSourceCards(archive, archiveHits, retrieval.terms, 0).map((card, i): LiveSource => ({ card, chunk: archive.chunks[archiveHits[i]!.chunk]!.text, focus }));
   const courseFirst = schedule.sources.length > 0 && (schedule.codes.length > 0 || isCourseQuestion(question));
-  const experience = /\b(?:review|opinion|worth|easiest|hardest|easy|hard|workload|grading|grade|professor|prof|teach|taught|like|avoid|recommend|best|worst|experience)\b/i.test(question);
   const usefulOfficial = experience && !/\b(?:hours?|timings?|open|close|deadline|requirements?|policy|policies)\b/i.test(question) ? [] : official;
   let entries = experience
-    ? [...threads, ...live, ...schedule.sources, ...usefulOfficial]
+    ? [...eligibleReviews, ...threads, ...live, ...schedule.sources, ...usefulOfficial]
     : courseFirst ? [...schedule.sources, ...official, ...threads, ...live] : [...official, ...schedule.sources, ...threads, ...live];
   entries = entries.filter((entry) => {
     const about = entry.card.kind === 'archive' ? threadMentions(archive, archive.postPosition.get(entry.card.postId)!, people) : named(`${entry.card.author} ${entry.card.title} ${entry.card.text} ${entry.scheduleText ?? ''}`);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ApiError, askStream, type SourceCard } from '../api';
+import { api, ApiError, askStream, type SourceCard } from '../api';
 import { ChatGPTSignIn } from '../components/ChatGPT';
 import { RedirectCard } from '../components/RedirectCard';
 import { KIND_LABEL, SourceRow } from '../components/SourceRow';
@@ -43,6 +43,9 @@ export function AskPage({ resumeId, history }: Props) {
   const [hot, setHot] = useState<Hot | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [copied, setCopied] = useState<string | null>(null);
+  const [reportId, setReportId] = useState<string | null>(null);
+  const [reportReason, setReportReason] = useState('');
+  const [reporting, setReporting] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -406,11 +409,25 @@ export function AskPage({ resumeId, history }: Props) {
                         </>
                       )}
                     </button>
+                    <button type="button" className="foot-btn" onClick={() => { setReportId(reportId === message.id ? null : message.id); setReportReason(''); }}>Report answer</button>
                     {(!message.confidence || message.confidence.level !== 'high') && (
                       <button type="button" className="foot-btn ask-students" onClick={() => askStudents(questionBefore(conversation.messages, message.id))}>
                         Ask students <IconArrow />
                       </button>
                     )}
+                  </div>
+                )}
+                {reportId === message.id && !message.pending && message.content && (
+                  <div className="report-answer">
+                    <label htmlFor={`report-${message.id}`}>What was wrong with this answer?</label>
+                    <textarea id={`report-${message.id}`} className="input" rows={2} maxLength={1000} value={reportReason} onChange={(event) => setReportReason(event.target.value)} placeholder="Incorrect fact, missed review, outdated professor…" />
+                    <button type="button" className="btn sm primary" disabled={!reportReason.trim() || reporting} onClick={() => {
+                      setReporting(true);
+                      void api.reportAnswer(questionBefore(conversation.messages, message.id), message.content, reportReason.trim(), (message.sources ?? []).map((source) => source.url).filter(Boolean))
+                        .then(() => { setReportId(null); setReportReason(''); toast('Report saved for the admins'); })
+                        .catch((error) => toast(error instanceof Error ? error.message : 'Could not save the report.'))
+                        .finally(() => setReporting(false));
+                    }}>{reporting ? 'Saving…' : 'Send report'}</button>
                   </div>
                 )}
                 {!message.pending && message.confidence?.reason && message.confidence.level !== 'high' && <p className="confidence-reason">{message.confidence.reason}</p>}

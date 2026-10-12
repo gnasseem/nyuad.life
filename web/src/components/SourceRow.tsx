@@ -9,7 +9,7 @@ interface Props {
   onHover?(n: number | null): void;
 }
 
-export const KIND_LABEL: Record<SourceCard['kind'], string> = { archive: 'Group thread', board: 'Student answer', announcement: 'Notice', official: 'Official page', schedule: 'Albert schedule' };
+export const KIND_LABEL: Record<SourceCard['kind'], string> = { archive: 'Group thread', board: 'Student answer', announcement: 'Notice', official: 'Official page', schedule: 'Albert schedule', review: 'Course review' };
 
 /** One numbered source under an answer: what kind, who, when, the matching passage and where it opens. Its colour is the line it lives on. */
 export function SourceRow({ source, hot, id, onHover }: Props) {
@@ -17,6 +17,7 @@ export function SourceRow({ source, hot, id, onHover }: Props) {
     if (source.kind === 'archive') navigate({ name: 'post', id: source.postId });
     else if (source.kind === 'board') navigate({ name: 'question', id: source.postId });
     else if (source.kind === 'schedule') navigate(source.postId.startsWith('instructor:') ? { name: 'courses' } : { name: 'courses', code: source.postId }, source.postId.startsWith('instructor:') ? { search: `q=${encodeURIComponent(source.postId.slice(11))}` } : {});
+    else if (source.kind === 'review') navigate({ name: 'courses', code: source.postId });
     else if (source.url) window.open(source.url, '_blank', 'noreferrer');
     else navigate({ name: 'announcements' });
   };
@@ -33,7 +34,7 @@ export function SourceRow({ source, hot, id, onHover }: Props) {
       <div className="source-text">{source.snippet || source.text}</div>
       <div className="source-links">
         <button type="button" onClick={open}>
-          {source.kind === 'official' ? 'Open page' : source.kind === 'schedule' ? 'Open in Courses' : 'Open'}
+          {source.kind === 'official' ? 'Open page' : source.kind === 'schedule' || source.kind === 'review' ? 'Open in Courses' : 'Open'}
         </button>
         {source.kind === 'archive' && source.url && (
           <a href={source.url} target="_blank" rel="noreferrer">

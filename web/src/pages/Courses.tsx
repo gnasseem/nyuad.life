@@ -88,6 +88,7 @@ interface Indexed {
   code: string;
   title: string;
   people: string;
+  aliases: string;
 }
 
 /** What a course is rated, all told: the AI score and students' own reviews, weighted by how many each rests on. */
@@ -112,7 +113,7 @@ function filterCourses(rows: Indexed[], filters: Filters, scores: ScoreIndex | n
     let missed = false;
     for (const token of tokens) {
       const squashed = token.replace(/[^a-z0-9]/g, '');
-      const hit = (squashed && entry.code.includes(squashed) ? 8 : 0) + (entry.title.includes(token) ? 4 : 0) + (entry.people.includes(token) ? 2 : 0);
+      const hit = (squashed && entry.code.includes(squashed) ? 8 : 0) + (entry.title.includes(token) ? 4 : 0) + (entry.people.includes(token) ? 2 : 0) + (entry.aliases.includes(token) ? 3 : 0);
       if (!hit) {
         missed = true;
         break;
@@ -154,7 +155,13 @@ function CourseSearch({ code, scores }: { code?: string; scores: ScoreIndex | nu
     navigate(code ? { name: 'courses', code } : { name: 'courses' }, { replace: true, keepScroll: true, search: writeFilters({ ...filters, ...patch }) });
   };
 
-  const indexed = useMemo(() => (courses ?? []).map((course) => ({ course, code: fold(course.code).replace(/[^a-z0-9]/g, ''), title: fold(course.title), people: fold(course.people.join(' ')) })), [courses]);
+  const indexed = useMemo(() => (courses ?? []).map((course) => ({
+    course,
+    code: fold(course.code).replace(/[^a-z0-9]/g, ''),
+    title: fold(course.title),
+    people: fold(course.people.join(' ')),
+    aliases: fold([/multivariable calculus/i.test(course.title) ? 'mvc multivar calc' : '', /economics/i.test(course.title) ? 'econ' : '', /linear algebra/i.test(course.title) ? 'linalg lin alg' : '', /introduction to computer science/i.test(course.title) ? 'ics intro cs' : ''].join(' ')),
+  })), [courses]);
   const subjects = useMemo(() => [...new Set((courses ?? []).map((course) => course.subject))].sort(), [courses]);
   const shown = useMemo(() => filterCourses(indexed, filters, scores), [indexed, filters.q, filters.subject, filters.core, filters.rated, filters.sort, scores]); // eslint-disable-line react-hooks/exhaustive-deps
   const rated = useMemo(() => (courses ?? []).filter((course) => blended(scores, course.code)).length, [courses, scores]);
@@ -428,6 +435,7 @@ function Detail({ code, onClose }: { code: string; onClose(): void }) {
             </a>
           </div>
         )}
+        <StudentReviews code={code} professors={detail?.professors ?? []} />
         {error ? (
           <div className="alert error">{error}</div>
         ) : !rating.done ? (
@@ -435,9 +443,8 @@ function Detail({ code, onClose }: { code: string; onClose(): void }) {
         ) : rating.value ? (
           <Rating rating={rating.value} />
         ) : (
-          <p className="rating-none">{rating.failed ? 'The rating could not be written right now. Try again in a minute.' : 'Nobody in the group has described taking this course yet. If you took it, your review below would be the first.'}</p>
+          <p className="rating-none">{rating.failed ? 'The group rating is unavailable right now.' : 'No group rating is ready yet. Search the original threads or add your experience above.'} <a href={`/threads?q=${encodeURIComponent(`${code} ${detail?.title ?? ''}`)}`}>Search threads</a></p>
         )}
-        <StudentReviews code={code} />
         {detail && (
           <section className="detail-section" aria-label={`Professors this ${detail.currentTerm}`}>
             <h3>Teaching this {detail.currentTerm}</h3>
@@ -564,7 +571,7 @@ function RatingLoading() {
 }
 
 /** Reviews written here by students who took the course, and the form to write or change your own. */
-function StudentReviews({ code }: { code: string }) {
+function StudentReviews({ code, professors }: { code: string; professors: string[] }) {
   const { profile, toast } = useApp();
   const [reviews, setReviews] = useState<CourseReview[] | null>(null);
   const [open, setOpen] = useState(true);
@@ -630,6 +637,7 @@ function StudentReviews({ code }: { code: string }) {
       {profile && open && (editing || (reviews && !mine)) ? (
         <ReviewForm
           code={code}
+          professors={professors}
           initial={mine}
           onCancel={mine ? () => setEditing(false) : undefined}
           onSaved={(review) => {
@@ -663,7 +671,8 @@ function ReviewCard({ review, onEdit, onRemove }: { review: CourseReview; onEdit
       </div>
       {review.text && <p className="review-text">{review.text}</p>}
       <div className="review-by">
-        {review.mine ? 'You' : review.authorName}, {review.authorMajor}
+        {review.mine ? 'You' : review.authorName}{review.authorMajor ? `, ${review.authorMajor}` : ''}
+        {review.professor ? ` · with ${review.professor}` : ''}
         {review.term ? ` · took it ${review.term}` : ''} · {relativeDate(review.updatedAt)}
         {review.mine && (
           <>
@@ -681,12 +690,14 @@ function ReviewCard({ review, onEdit, onRemove }: { review: CourseReview; onEdit
   );
 }
 
-function ReviewForm({ code, initial, onSaved, onCancel }: { code: string; initial?: CourseReview; onSaved(review: CourseReview): void; onCancel?(): void }) {
+function ReviewForm({ code, professors, initial, onSaved, onCancel }: { code: string; professors: string[]; initial?: CourseReview; onSaved(review: CourseReview): void; onCancel?(): void }) {
   const [rating, setRating] = useState(initial?.rating ?? 0);
   const [difficulty, setDifficulty] = useState<number | null>(initial?.difficulty ?? null);
   const [workload, setWorkload] = useState<number | null>(initial?.workload ?? null);
   const [text, setText] = useState(initial?.text ?? '');
   const [term, setTerm] = useState(initial?.term ?? '');
+  const [professor, setProfessor] = useState(initial?.professor ?? '');
+  const [anonymous, setAnonymous] = useState(initial ? initial.authorName === 'Anonymous' : true);
   const [terms, setTerms] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -703,7 +714,7 @@ function ReviewForm({ code, initial, onSaved, onCancel }: { code: string; initia
     setBusy(true);
     setError('');
     try {
-      const result = await api.board.review({ code, rating, difficulty, workload, text: text.trim(), term });
+      const result = await api.board.review({ code, rating, difficulty, workload, text: text.trim(), term, professor, anonymous });
       onSaved(result.review);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save your review.');
@@ -751,6 +762,13 @@ function ReviewForm({ code, initial, onSaved, onCancel }: { code: string; initia
       </div>
       <ScalePick label="Difficulty" words={HARDNESS} value={difficulty} onChange={setDifficulty} />
       <ScalePick label="Workload" words={SCALE} value={workload} onChange={setWorkload} />
+      {professors.length > 0 && <label className="review-row">
+        <span>Professor you took it with</span>
+        <select className="input" value={professor} onChange={(event) => setProfessor(event.target.value)}>
+          <option value="">Not saying</option>
+          {professors.map((name) => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </label>}
       <label className="review-row">
         <span>When you took it</span>
         <select className="input" value={term} onChange={(event) => setTerm(event.target.value)}>
@@ -763,9 +781,10 @@ function ReviewForm({ code, initial, onSaved, onCancel }: { code: string; initia
         </select>
       </label>
       <textarea className="input" rows={3} maxLength={600} value={text} onChange={(event) => setText(event.target.value)} placeholder="What should the next student know? The exams, the problem sets, the teaching…" aria-label="Your review" />
+      <label className="check"><input type="checkbox" checked={anonymous} onChange={(event) => setAnonymous(event.target.checked)} /> Show anonymously to other students</label>
       {error && <div className="alert error">{error}</div>}
       <div className="review-actions">
-        <span className="faint small">Shown with your first name and major.</span>
+        <span className="faint small">A star rating posts quickly. Details are optional. {anonymous ? 'Your name stays hidden from students.' : 'Shown with your first name and major.'}</span>
         <span className="spacer" />
         {onCancel && (
           <button type="button" className="btn ghost sm" onClick={onCancel}>

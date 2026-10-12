@@ -403,6 +403,19 @@ export function matchSchedule(catalog: Catalog, question: string, limits = { cou
     const bySurname = teaching && surname.length >= 4 && !COMMON_WORDS.has(surname) && folded.includes(` ${surname} `);
     if (full || bySurname) instructors.push(name);
   }
+  // A first name can identify a professor once the course has narrowed the roster ("Nizar's MVC for Econ").
+  const courseTeachers = courses.flatMap((code) => (catalog.byCode.get(code) ?? []).flatMap((offering) => offering.sections.filter((section) => section.status !== 'Cancelled').flatMap((section) => section.instructors.map(displayName))));
+  const firstMatches = [...new Set(courseTeachers)].filter((name) => {
+    const first = fold(name).split(' ')[0]!;
+    return first.length >= 4 && folded.includes(` ${first} `);
+  });
+  if (firstMatches.length === 1) {
+    if (!instructors.includes(firstMatches[0]!)) instructors.push(firstMatches[0]!);
+    if (courses.length > 1) {
+      const taught = courses.filter((code) => (catalog.byCode.get(code) ?? []).some((offering) => offering.sections.some((section) => section.instructors.some((name) => displayName(name) === firstMatches[0]))));
+      if (taught.length) courses.splice(0, courses.length, ...taught);
+    }
+  }
   return { courses: courses.slice(0, limits.courses), instructors };
 }
 
@@ -424,6 +437,7 @@ function titleIndex(catalog: Catalog): Map<string, string[]> {
 
 /** Words students shorten. Expanded before matching titles. */
 const ALIASES: Record<string, string> = {
+  mvc: 'multivariable calculus',
   calc: 'calculus',
   multivar: 'multivariable',
   linalg: 'linear algebra',
@@ -509,7 +523,14 @@ export function matchTitleHeads(catalog: Catalog, question: string): string[] {
   // Applications to Economics" and "… to Science" share only a head, and both are worth showing.)
   const titles = new Map<string, number>();
   for (const hit of hits) titles.set(hit.entry.title, (titles.get(hit.entry.title) ?? 0) + 1);
-  const best = hits.filter((hit) => hit.entry.head.length === longest && titles.get(hit.entry.title) === 1);
+  let best = hits.filter((hit) => hit.entry.head.length === longest && titles.get(hit.entry.title) === 1);
+  // The two MVC courses share a head, but "MVC for Econ" names the Economics version specifically.
+  if (words.has('economic') && !words.has('science') && !words.has('engineer') && best.some((hit) => hit.entry.title.includes('economics'))) {
+    best = best.filter((hit) => hit.entry.title.includes('economics'));
+  }
+  if ((words.has('science') || words.has('engineer')) && !words.has('economic') && best.some((hit) => hit.entry.title.includes('science'))) {
+    best = best.filter((hit) => hit.entry.title.includes('science'));
+  }
   if (best.length > 3) return [];
   return best
     .sort((a, b) => b.score - a.score)

@@ -60,7 +60,7 @@ export interface IndexMeta {
   filters?: number;
 }
 
-export type SourceKind = 'archive' | 'board' | 'announcement' | 'official' | 'schedule';
+export type SourceKind = 'archive' | 'board' | 'announcement' | 'official' | 'schedule' | 'review';
 
 /** What the API returns as a citation: an archive thread, a board answer, an announcement, an official NYUAD page, or a course's or professor's Albert schedule. */
 export interface SourceCard {

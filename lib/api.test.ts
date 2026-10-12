@@ -432,6 +432,31 @@ describe('api', () => {
     }
   });
 
+  it('keeps reported answers for admins without requiring or storing a student identity', async () => {
+    const report = await fetch(`${apiUrl}/api/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'ask-report', question: 'Who teaches MVC?', answer: 'The wrong professor.', message: 'The Fall section is wrong.', sources: ['https://example.com/source'] }) });
+    expect(report.status).toBe(200);
+    expect((await fetch(`${apiUrl}/api/admin?op=ask-reports`)).status).toBe(403);
+    process.env.ROR_ADMIN_NETIDS = MEMBER.netId;
+    try {
+      const result = await getJson(`${apiUrl}/api/admin?op=ask-reports`, { headers });
+      expect(result.reports[0]).toMatchObject({ question: 'Who teaches MVC?', answer: 'The wrong professor.', reason: 'The Fall section is wrong.', sources: ['https://example.com/source'] });
+      expect(JSON.stringify(result.reports[0])).not.toContain(MEMBER.netId);
+    } finally {
+      process.env.ROR_ADMIN_NETIDS = '';
+    }
+  });
+
+  it('publishes anonymous course reviews with a professor while keeping the account private', async () => {
+    const body = { op: 'review', code: 'MATH-UH 1012', rating: 4, difficulty: null, workload: null, text: 'Clear lectures and fair exams.', term: 'Fall 2026', professor: 'Rana Dania', anonymous: true };
+    const written = await getJson(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
+    expect(written.review).toMatchObject({ authorName: 'Anonymous', authorMajor: '', professor: 'Rana Dania', text: body.text, mine: true });
+    const publicView = await getJson(`${apiUrl}/api/board?op=reviews&code=MATH-UH%201012`);
+    expect(publicView.reviews[0]).toMatchObject({ authorName: 'Anonymous', professor: 'Rana Dania', text: body.text, mine: false });
+    expect(JSON.stringify(publicView)).not.toContain(MEMBER.netId);
+    const answer = await getJson(`${apiUrl}/api/ask`, { method: 'POST', headers, body: JSON.stringify({ question: 'What do students say in reviews of MATH-UH 1012?', stream: false }) });
+    expect(answer.sources).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'review', author: 'Anonymous', postId: 'MATH-UH 1012' })]));
+  });
+
   it('refuses posts from another site, and from the asker to their own question', async () => {
     const crossSite = await fetch(`${apiUrl}/api/board`, { method: 'POST', headers: { ...headers, origin: 'https://evil.example' }, body: JSON.stringify({ op: 'ask', key: MEMBER.key, text: 'Which dining hall is open late on Fridays?' }) });
     expect(crossSite.status).toBe(403);
