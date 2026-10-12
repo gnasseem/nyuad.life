@@ -2,6 +2,7 @@ import { Component, lazy, Suspense, useCallback, useEffect, useLayoutEffect, use
 import { api, boardProblem as describeBoardProblem, onSignupRequired, type ChatGPTStatus, type Health, type Profile } from './api';
 import { APP_NAME } from './brand';
 import { HistoryPanel } from './components/HistoryPanel';
+import { Feedback } from './components/Feedback';
 import { Wordmark } from './components/Logo';
 import { ProfileModal } from './components/ProfileForm';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
@@ -295,6 +296,7 @@ export function App() {
           </div>
           <LineNav activeIndex={activeIndex} hrefOf={hrefOf} />
           <div className="bar-tools">
+            <Feedback toast={toast} />
             {admin && (
               <a href="/admin" className={`admin-badge${route.name === 'admin' ? ' on' : ''}`} onClick={onLinkClick} title="Admin" aria-current={route.name === 'admin' ? 'page' : undefined}>
                 <IconShield /> <span>Admin</span>

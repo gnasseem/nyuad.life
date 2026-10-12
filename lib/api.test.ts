@@ -397,6 +397,41 @@ describe('api', () => {
     expect((await fetch(`${apiUrl}/api/ask`, { method: 'POST', headers, body: question })).status).toBe(200);
   });
 
+  it('emails feedback to the admins from a verified student', async () => {
+    const originalFetch = globalThis.fetch;
+    const previous = {
+      RESEND_API_KEY: process.env.RESEND_API_KEY,
+      RESEND_FROM: process.env.RESEND_FROM,
+      ROR_ADMIN_NETIDS: process.env.ROR_ADMIN_NETIDS,
+    };
+    process.env.RESEND_API_KEY = 'test-resend-key';
+    process.env.RESEND_FROM = 'nyuad.life <login@nyuad.life>';
+    process.env.ROR_ADMIN_NETIDS = 'adm1234';
+    const sent: Array<Record<string, unknown>> = [];
+    globalThis.fetch = async (input, init) => {
+      if (String(input) === 'https://api.resend.com/emails') {
+        sent.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ id: 'email-1' }), { status: 200 });
+      }
+      return originalFetch(input, init);
+    };
+    try {
+      const post = (message: string, credentials = headers) => fetch(`${apiUrl}/api/feedback`, { method: 'POST', headers: credentials, body: JSON.stringify({ message, page: '/courses' }) });
+      expect((await post('Please fix the timetable', { 'content-type': 'application/json' })).status).toBe(401);
+      expect((await post('   ')).status).toBe(400);
+      expect((await post('x'.repeat(2001))).status).toBe(400);
+      expect((await post('Please fix the timetable')).status).toBe(200);
+      expect(sent[0]).toMatchObject({ to: ['adm1234@nyu.edu'], subject: 'nyuad.life: student feedback' });
+      expect(String(sent[0]?.text)).toContain('From: tst1234@nyu.edu\nPage: /courses\n\nPlease fix the timetable');
+    } finally {
+      globalThis.fetch = originalFetch;
+      for (const [name, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
   it('refuses posts from another site, and from the asker to their own question', async () => {
     const crossSite = await fetch(`${apiUrl}/api/board`, { method: 'POST', headers: { ...headers, origin: 'https://evil.example' }, body: JSON.stringify({ op: 'ask', key: MEMBER.key, text: 'Which dining hall is open late on Fridays?' }) });
     expect(crossSite.status).toBe(403);

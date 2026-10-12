@@ -536,6 +536,7 @@ function post<T>(path: string, body: unknown): Promise<T> {
 
 export const api = {
   health: () => request<Health>('/api/health'),
+  feedback: (message: string, page: string) => post<{ ok: true }>('/api/feedback', { message, page }),
   chatgpt: {
     me: () => request<ChatGPTStatus>('/api/chatgpt?op=me'),
     logout: () => post<{ ok: true }>('/api/chatgpt', { op: 'logout' }),
