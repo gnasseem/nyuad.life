@@ -356,7 +356,7 @@ function normalizeName(name: string): string {
 
 const TEACHING = /\b(?:prof|professor|professors|dr|teach|teaches|teaching|taught|instructor|lecturer|class|classes|course|courses|section|sections|take|taking|took)\b/;
 // Surnames that are also ordinary English words students use in course questions.
-const COMMON_WORDS = new Set(['young', 'long', 'love', 'hall', 'green', 'white', 'black', 'brown', 'king', 'rich', 'west', 'will', 'may', 'hope', 'early', 'case', 'park', 'wood', 'more', 'good', 'best', 'hill', 'field', 'stone', 'bell', 'lane', 'street', 'north', 'south', 'cook', 'baker', 'mason', 'price', 'grant', 'hunt', 'major', 'minor', 'core', 'data']);
+export const COMMON_WORDS = new Set(['young', 'long', 'love', 'hall', 'green', 'white', 'black', 'brown', 'king', 'rich', 'west', 'will', 'may', 'hope', 'early', 'case', 'park', 'wood', 'more', 'good', 'best', 'hill', 'field', 'stone', 'bell', 'lane', 'street', 'north', 'south', 'cook', 'baker', 'mason', 'price', 'grant', 'hunt', 'major', 'minor', 'core', 'data']);
 
 export interface ScheduleMatch {
   courses: string[];

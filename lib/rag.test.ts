@@ -76,6 +76,18 @@ it('preserves full person identities and rejects rewritten substitutions', () =>
   expect(safeRewrite('pool timings', '{}')).toBe('pool timings');
 });
 
+it('finds what students wrote about a professor by surname, and stops a name at the words after it', async () => {
+  expect(personName('How is Morgan Testname as a professor?')).toBe('Morgan Testname');
+  const posts = [
+    { id: 'q', url: '', author: 'Ana', date: '2026-04-01', text: 'Thoughts on Prof Testname for calculus?', comments: [{ author: 'Ben', date: '2026-04-02', text: 'Testname is great, clear lectures and fair exams.' }] },
+    { id: 'other', url: '', author: 'Cy', date: '2026-04-03', text: 'Morgan from the gym lost a water bottle.', comments: [] },
+  ].map((post) => ({ ...post, courses: [], topics: [], commentCount: post.comments.length }));
+  const chunks = posts.map((post, i) => ({ id: `${post.id}#1`, postId: post.id, n: 1, text: [post.text, ...post.comments.map((comment) => comment.text)].join('\n'), hash: String(i) }));
+  const archive = { posts, chunks, chunkPost: new Int32Array([0, 1]), postChunk: new Int32Array([0, 1]), postPosition: new Map([['q', 0], ['other', 1]]), byCourse: new Map(), vectors: emptyTable(0), bm25: buildBm25(chunks.map((chunk) => chunk.text)), meta: { model: 'none' } } as unknown as Archive;
+  const result = await gatherSources(archive, 'How is Morgan Testname as a professor?', 'How is Morgan Testname as a professor?', { cfg: null, official: null, catalog: null, board: null, reranker: { name: 'fixed', rerank: async (_q, texts) => texts.map(() => 0.3) } });
+  expect(result.cards.map((card) => card.postId)).toEqual(['q']);
+});
+
 it('returns no evidence for a different person even when the reranker gives it a perfect score', async () => {
   const posts = [{ id: 'wrong', url: 'https://example.com', author: 'George Smith', date: '2026-10-01', text: 'George Smith teaches at NYUAD.', comments: [], courses: [], topics: [], commentCount: 0 }];
   const chunk = { id: 'wrong#1', postId: 'wrong', n: 1, text: 'George Smith\nGeorge Smith teaches at NYUAD.', hash: 'x' };

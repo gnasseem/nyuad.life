@@ -27,7 +27,7 @@ const ANSWER = 'Take it with **Dania** [1].\n\n- **Teaching:** clear and fair [1
 let geminiBehaviour: Record<string, number> = {};
 const geminiSeen: string[] = [];
 /** What the fake backup does per model: answer (optionally wrapped in <think>), or fail with this status. */
-let backupBehaviour: Record<string, number | 'think'> = {};
+let backupBehaviour: Record<string, number | 'think' | 'slow'> = {};
 const backupSeen: Array<{ model: string; chars: number; body: Record<string, unknown> }> = [];
 let gemini: Server;
 let backup: Server;
@@ -71,6 +71,8 @@ beforeAll(async () => {
       res.end(JSON.stringify({ error: { message: behaviour === 404 ? `The model ${body.model} does not exist` : 'Rate limit reached for requests per minute' } }));
       return;
     }
+    // A free tier that takes the request and sits on it, as Z.ai's GLM did in October 2026.
+    if (behaviour === 'slow') await new Promise((resolve) => setTimeout(resolve, 8_000));
     const text = behaviour === 'think' ? `<think>Let me weigh the threads…</think>\n\n${ANSWER}` : ANSWER;
     if (!body.stream) {
       res.setHeader('content-type', 'application/json');
@@ -105,6 +107,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise((resolve) => gemini?.close(resolve));
+  backup?.closeAllConnections();
   await new Promise((resolve) => backup?.close(resolve));
   rmSync(dataRoot, { recursive: true, force: true });
   delete process.env.ROR_DATA_ROOT;
@@ -207,6 +210,15 @@ describe('the answer model chain', () => {
     await two.return(undefined);
     expect([atCapacity(first), atCapacity(second)]).toEqual([false, false]);
     expect((await ask1()).model).toBe('zai:glm-4.7-flash');
+  });
+
+  it('starts the next model beside one that has not written within a few seconds, and leaves the slow one out for a while', async () => {
+    backupBehaviour['glm-4.7-flash'] = 'slow';
+    const started = Date.now();
+    const result = await ask(archive, geminiConfig()!, { question: 'best calculus professor?', stream: true }, {}, undefined, { ...context, backups: [zai('zai')] });
+    expect(result.model).toBe('gemini-3.5-flash');
+    expect(Date.now() - started).toBeLessThan(7_000);
+    expect(answerWriters({ gemini: geminiConfig(), chatgpt: null, backups: [zai('zai')], order: modelOrder() }).map((writer) => writer.name)[0]).toBe('gemini-3.5-flash');
   });
 
   it("rests a GLM key for seconds when another instance's request is open on it", () => {

@@ -588,31 +588,58 @@ function partialTag(text: string): number {
 }
 
 /**
- * Runs a small call down ROR_MODEL_ORDER, one provider at a time (Gemini's models at Gemini's place, each backup's keys
- * at its own) until one answers. No step may take more than `stepMs`, so one slow provider leaves time for the next,
- * and the whole chain ends by `totalMs`.
+ * Runs a small call down ROR_MODEL_ORDER until one provider answers (Gemini's models at Gemini's place, each backup's
+ * keys at its own). A provider that fails hands over at once; one still silent after `hedgeMs` gets the next started
+ * beside it, and the first answer wins. No step may take more than `stepMs`, and the whole chain ends by `totalMs`.
  */
 async function downTheOrder<T>(
   gemini: GeminiConfig | null,
   backups: Provider[],
-  limits: { totalMs: number; stepMs: number },
+  limits: { totalMs: number; stepMs: number; hedgeMs?: number },
   viaGemini: (cfg: GeminiConfig, signal: AbortSignal) => Promise<T>,
   viaBackups: (family: Provider[], signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
+  const ids = modelOrder().filter((id) => (id === 'gemini' ? Boolean(gemini) : backups.some((provider) => provider.family === id)));
+  if (ids.length === 0) throw new ProviderError('No model is set up.', 503);
   const deadline = AbortSignal.timeout(limits.totalMs);
-  let lastError: unknown = new ProviderError('No model is set up.', 503);
-  for (const id of modelOrder()) {
-    if (deadline.aborted) break;
-    const family = backups.filter((provider) => provider.family === id);
-    if (id === 'gemini' ? !gemini : !family.length) continue;
-    const signal = AbortSignal.any([deadline, AbortSignal.timeout(limits.stepMs)]);
-    try {
-      return await (id === 'gemini' ? viaGemini(gemini!, signal) : viaBackups(family, signal));
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError;
+  const stops: AbortController[] = [];
+  let next = 0;
+  let open = 0;
+  let done = false;
+  let lastError: unknown = new ProviderError('No model answered in time.', 504);
+  let hedge: ReturnType<typeof setTimeout> | undefined;
+  return new Promise<T>((resolve, reject) => {
+    const finish = (settle: () => void) => {
+      if (done) return;
+      done = true;
+      clearTimeout(hedge);
+      stops.forEach((stop) => stop.abort());
+      settle();
+    };
+    const launch = () => {
+      clearTimeout(hedge);
+      if (done) return;
+      if (next >= ids.length || deadline.aborted) {
+        if (open === 0) finish(() => reject(lastError));
+        return;
+      }
+      const id = ids[next++]!;
+      const stop = new AbortController();
+      stops.push(stop);
+      const signal = AbortSignal.any([deadline, stop.signal, AbortSignal.timeout(limits.stepMs)]);
+      open++;
+      (id === 'gemini' ? viaGemini(gemini!, signal) : viaBackups(backups.filter((provider) => provider.family === id), signal)).then(
+        (value) => finish(() => resolve(value)),
+        (error: unknown) => {
+          open--;
+          if (!stop.signal.aborted) lastError = error;
+          launch();
+        },
+      );
+      if (next < ids.length) hedge = setTimeout(launch, limits.hedgeMs ?? limits.stepMs);
+    };
+    launch();
+  });
 }
 
 /**
@@ -631,11 +658,11 @@ export async function siteJson<T>(
   // The lists this call got were built before the instance knew what the keys can use; the next calls will.
   void warmModels(0).catch(() => undefined);
   // One deadline for the whole chain, so falling back cannot outlast the function's time limit; no provider may take
-  // more than 60% of it (or `stepMs`), so a slow first one still leaves the next a chance.
+  // more than 60% of it (or `stepMs`), and the next one starts beside a provider still silent after six seconds.
   return downTheOrder<T>(
     gemini,
     backups,
-    { totalMs: timeoutMs, stepMs: params.stepMs ?? Math.ceil(timeoutMs * 0.6) },
+    { totalMs: timeoutMs, stepMs: params.stepMs ?? Math.ceil(timeoutMs * 0.6), hedgeMs: Math.min(params.stepMs ?? timeoutMs, 6_000) },
     (cfg, signal) => {
       const model = params.tier === 'main' ? [cfg.chatModel, ...cfg.chatFallbacks] : cfg.liteModels;
       return generateJson<T>(cfg, { model, system: params.system, messages, responseSchema: params.schema, temperature, maxOutputTokens }, { retries: 0, signal, timeoutMs });
@@ -649,7 +676,8 @@ export async function siteJson<T>(
 
 /**
  * A short text (a query rewrite, a reranking) from the site's own models in ROR_MODEL_ORDER: Gemini's lite models and
- * the backups' lite models. Each provider gets up to `timeoutMs`, the chain twice that.
+ * the backups' lite models. Each provider gets up to `timeoutMs`, the chain twice that, and the next one starts beside
+ * a provider still silent after a second and a half.
  */
 export async function siteText(gemini: GeminiConfig | null, backups: Provider[], params: { system: string; prompt: string; maxOutputTokens: number; temperature: number; timeoutMs: number }): Promise<string> {
   const messages: Message[] = [{ role: 'user', text: params.prompt }];
@@ -657,7 +685,7 @@ export async function siteText(gemini: GeminiConfig | null, backups: Provider[],
   return downTheOrder<string>(
     gemini,
     backups,
-    { totalMs: params.timeoutMs * 2, stepMs: params.timeoutMs },
+    { totalMs: params.timeoutMs * 2, stepMs: params.timeoutMs, hedgeMs: Math.min(params.timeoutMs, 1_500) },
     async (cfg, signal) => {
       const { text } = await generateText(cfg, { model: cfg.liteModels, temperature, maxOutputTokens, system, messages }, { retries: 0, signal, timeoutMs: params.timeoutMs });
       if (!text.trim()) throw new ProviderError('Gemini returned an empty reply.', 502);

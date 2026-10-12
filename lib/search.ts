@@ -64,6 +64,8 @@ export interface Hit {
   score: number;
   lexicalRank?: number;
   denseRank?: number;
+  /** Found because it names the course or the person asked about (lib/entities.ts), not by matching the question. */
+  linked?: boolean;
 }
 
 interface FuseOptions {

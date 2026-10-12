@@ -19,6 +19,7 @@ import { adminConfig, adminSession } from '../lib/admin.ts';
 import { recordEvent } from '../lib/app-usage.ts';
 import { boardStore } from '../lib/board-store.ts';
 import { allCourses, courseHistory, courseRows, displayName, loadCatalog, termOrder, type Catalog } from '../lib/courses.ts';
+import { courseThreads as threadsNamingCourse, mentions, person, personThreads, REVIEWING, type Person } from '../lib/entities.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, queryString, rateLimit, route, sendJson, type ApiRequest } from '../lib/http.ts';
 import { limitDurably, requireMember } from '../lib/identity.ts';
@@ -124,14 +125,17 @@ const MAX_THREADS = 8;
 /**
  * The group's threads about a course. Students rarely write the code ("intro to CS", "calc 2"), so this searches by
  * title and code like Ask does, keeps what the cross-encoder judges to be about the course, and always keeps threads
- * that name the code.
+ * that name the course by code, title or nickname.
  */
 async function courseThreads(archive: Archive, catalog: Catalog, official: OfficialCorpus | null, code: string): Promise<Hit[]> {
   const cached = threadCache.get(code);
   if (cached && Date.now() - cached.at < THREAD_TTL_MS) return cached.hits;
   const title = titleOf(catalog, official, code);
-  const mentioned = new Set([...(archive.byCourse.get(code) ?? []), ...(archive.byCourse.get(bareCode(code)) ?? [])]);
-  const retrieval = await retrieve(archive, `${title} ${bareCode(code)}`.trim(), { k: 36 });
+  // Threads naming the course by code, title or nickname ("data structures", "linalg"), the ones saying most first.
+  const linked = threadsNamingCourse(archive, catalog, [code], 24);
+  const mentioned = new Set(linked.map((hit) => hit.post));
+  // A title is not a person: "Anthropology and the Arab World" must not keep only threads naming an "Arab World".
+  const retrieval = await retrieve(archive, `${title} ${bareCode(code)}`.trim(), { k: 36, people: [] });
   const titleWords = [...new Set(tokenize(title.replace(/\bintroduction to\b/gi, 'intro').replace(/\bcomputer science\b/gi, 'CS').replace(/\bcalculus\b/gi, 'calc')))];
   const namesCourse = (hit: Hit) => {
     const post = archive.posts[hit.post]!;
@@ -155,9 +159,9 @@ async function courseThreads(archive: Archive, catalog: Catalog, official: Offic
   // Without a judge, keep title or code matches and threads keyword and meaning search agree on.
   if (!judged) hits = hits.filter((hit) => mentioned.has(hit.post) || namesCourse(hit) || (hit.lexicalRank !== undefined && hit.denseRank !== undefined));
   const kept = hits.filter((hit) => mentioned.has(hit.post)).slice(0, MAX_THREADS);
-  for (const post of mentioned) {
+  for (const hit of linked) {
     if (kept.length >= MAX_THREADS) break;
-    if (!kept.some((hit) => hit.post === post)) kept.push({ post, chunk: archive.postChunk[post]!, score: 0 });
+    if (!kept.some((entry) => entry.post === hit.post)) kept.push(hit);
   }
   for (const hit of hits) {
     if (kept.length >= MAX_THREADS) break;
@@ -229,12 +233,18 @@ function ratingKey(code: string): string {
 }
 
 /** What is kept for a course: a rating, or that students have not written enough to give one. */
-type SavedCourse = CourseRating | { none: true; createdAt: string };
+type SavedCourse = CourseRating | { none: true; createdAt: string; v?: number };
+/**
+ * Saved with every "nobody has written about it", and raised when finding a course's or a professor's threads gets
+ * better, so those verdicts are looked at again instead of standing for another week.
+ */
+const NONE_VERSION = 2;
 /** A course students have not described is looked at again after a week: new threads come in every day. */
 const RATING_NONE_TTL_MS = 7 * 86_400_000;
 
 function freshCourse(entry: SavedCourse | null | undefined): entry is SavedCourse {
   if (!entry || typeof entry !== 'object' || typeof entry.createdAt !== 'string') return false;
+  if ('none' in entry && entry.v !== NONE_VERSION) return false;
   return Date.now() - Date.parse(entry.createdAt) < ('none' in entry ? RATING_NONE_TTL_MS : RATING_TTL_MS);
 }
 
@@ -264,7 +274,7 @@ async function courseRating(archive: Archive, official: OfficialCorpus | null, c
     throw new ApiError(503, 'Ratings are off on this server.', 'no_model');
   }
   const none = async () => {
-    const entry: SavedCourse = { none: true, createdAt: new Date().toISOString() };
+    const entry: SavedCourse = { none: true, createdAt: new Date().toISOString(), v: NONE_VERSION };
     hot.set(key, entry);
     await store?.putSummary(key, entry).catch(() => undefined);
     return null;
@@ -344,7 +354,7 @@ interface ProfRating {
 }
 
 /** What is kept for a professor: a rating, or that students have not written enough to give one. */
-type SavedProf = ProfRating | { none: true; createdAt: string };
+type SavedProf = ProfRating | { none: true; createdAt: string; v?: number };
 
 const MAX_PROFS = 24;
 /** New ratings written per request: each is a search and a model call, and the client asks again for the rest. */
@@ -410,6 +420,7 @@ function profKey(name: string): string {
 function fresh(entry: SavedProf | null | undefined): entry is SavedProf {
   if (!entry || typeof entry !== 'object' || typeof entry.createdAt !== 'string') return false;
   if (!('none' in entry) && typeof entry.score !== 'number') return false;
+  if ('none' in entry && entry.v !== NONE_VERSION) return false;
   return Date.now() - Date.parse(entry.createdAt) < ('none' in entry ? PROF_NONE_TTL_MS : PROF_TTL_MS);
 }
 
@@ -466,7 +477,7 @@ async function profRatings(req: ApiRequest, catalog: Catalog, param: string) {
     const archive = await loadArchive();
     const written = await Promise.all(
       writing.map((name) =>
-        profRating(archive, index.get(foldName(name))!).catch((error: Error) => {
+        profRating(archive, catalog, index.get(foldName(name))!).catch((error: Error) => {
           console.warn('[courses] professor rating failed:', error.message);
           return undefined;
         }),
@@ -492,50 +503,37 @@ function spend(req: ApiRequest): boolean {
 }
 
 const TEACHING = /\b(?:prof|profs|professor|professors|dr|teach\w*|taught|class|classes|course|courses|lectures?|exams?|midterms?|finals?|grad(?:e|es|ed|ing)|syllabus|section|office hours)\b/;
-const TEACHING_REVIEW = /\b(?:take|took|taken|teach\w*|taught|explain\w*|clear|fair\w*|grad\w*|lectur\w*|exam\w*|assignment\w*|homework|workload|helpful|supportive|strict|lenient|organiz\w*|engag\w*|boring|good|great|amazing|fantastic|excellent|patient|harsh|tough|confusing|fun|love\w*|hate\w*|awful|terrible|hard|easy|difficult|recommend\w*|avoid|enjoy\w*|learn\w*)\b/;
 
-function namesAndReviews(text: string, named: RegExp): boolean {
-  return (text.match(/[^.!?]+[.!?]?/g) ?? []).some((sentence) => {
-    if (sentence.trimEnd().endsWith('?')) return false;
-    const words = foldName(sentence);
-    return named.test(words) && TEACHING_REVIEW.test(words);
-  });
+function namesAndReviews(text: string, who: Person): boolean {
+  return (text.match(/[^.!?]+[.!?]?/g) ?? []).some((sentence) => !sentence.trimEnd().endsWith('?') && mentions(sentence, who) && REVIEWING.test(foldName(sentence)));
 }
 const MAX_PROF_THREADS = 8;
 
 /**
- * What students wrote about a professor: threads found by surname, with what they teach as context, kept only when
- * they name the surname and talk about teaching (or name the first name or one of their courses), cut down to the
- * post and the comments that mention them, with the reply after each.
+ * What students wrote about a professor: every thread naming them (by full name, by a surname nobody else in the
+ * schedule or the group carries, or as "Prof <surname>"; lib/entities.ts), the ones saying most about them first, kept
+ * when they talk about teaching or name one of their courses, cut down to the post and the comments that mention them,
+ * with the reply after each.
  */
-async function profThreads(archive: Archive, teacher: Teacher): Promise<Array<{ text: string; url: string; date: string; excerpt: string }>> {
-  const surname = foldName(teacher.surname);
-  if (surname.length < 3) return [];
-  const named = new RegExp(`\\b${surname.replace(/ /g, '\\s+')}\\b`);
-  const first = foldName(teacher.first).split(' ')[0] ?? '';
+function profThreads(archive: Archive, catalog: Catalog, teacher: Teacher): Array<{ text: string; url: string; date: string; excerpt: string }> {
+  const who = person(teacher.name, archive, catalog);
   const numbers = teacher.courses.map((course) => /\d{4}/.exec(course)?.[0]).filter((value): value is string => !!value);
-  const title = teacher.courses[0]?.replace(/^\S+ \S+ /, '') ?? '';
-  const [byName, byCourse] = await Promise.all([retrieve(archive, teacher.surname, { k: 80, useDense: false }), retrieve(archive, `${teacher.surname} ${title}`, { k: 40, useDense: false })]);
-  const seen = new Set<number>();
+  const terms = [teacher.surname.toLowerCase(), who.surname];
   const out: Array<{ text: string; url: string; date: string; excerpt: string }> = [];
-  for (const hit of [...byName.hits, ...byCourse.hits]) {
+  for (const hit of personThreads(archive, who, 40)) {
     if (out.length >= MAX_PROF_THREADS) break;
-    if (seen.has(hit.post)) continue;
-    seen.add(hit.post);
     const post = archive.posts[hit.post]!;
     const folded = [post.text, ...post.comments.map((comment) => comment.text)].map(foldName);
     const all = folded.join(' ');
-    if (!named.test(all)) continue;
-    // A surname alone could be a student's: the thread has to be about teaching.
-    if (!TEACHING.test(all) && !(first.length > 2 && all.includes(first)) && !numbers.some((value) => all.includes(value))) continue;
-    const focused = named.test(folded[0]!) && !/\b(?:or|versus|vs)\b/.test(folded[0]!);
+    // A name alone could be a student's: the thread has to be about teaching or one of their courses.
+    if (!TEACHING.test(all) && !numbers.some((value) => all.includes(value))) continue;
+    const focused = mentions(post.text, who) && !/\b(?:or|versus|vs)\b/.test(folded[0]!);
     const reviewed = [post.text, ...post.comments.map((comment) => comment.text)].map((text, i) => {
-      if (namesAndReviews(text, named)) return true;
+      if (namesAndReviews(text, who)) return true;
       // An answered question supplies the subject of short replies such as "her exams are fair".
-      return i > 0 && focused && !text.trimEnd().endsWith('?') && TEACHING_REVIEW.test(folded[i]!);
+      return i > 0 && focused && !text.trimEnd().endsWith('?') && REVIEWING.test(folded[i]!);
     });
     if (!reviewed.some(Boolean)) continue;
-    const terms = [teacher.surname.toLowerCase(), surname];
     const lines = [`Post by ${post.author || 'a student'} on ${formatDate(post.date)}: ${reviewed[0] ? bestWindow(post.text, terms, 900) : truncate(collapseWhitespace(post.text), 400)}`];
     // What the page shows as the thread's excerpt: what was said, without who said it.
     const said: string[] = [];
@@ -581,8 +579,8 @@ const PROF_SYSTEM = [
 ].join('\n');
 
 /** A new rating, or null when students have not written enough first-hand; both are kept. Throws when the model fails. */
-async function profRating(archive: Archive, teacher: Teacher): Promise<SavedProf> {
-  const threads = await profThreads(archive, teacher);
+async function profRating(archive: Archive, catalog: Catalog, teacher: Teacher): Promise<SavedProf> {
+  const threads = profThreads(archive, catalog, teacher);
   let rating: ProfRating | null = null;
   if (threads.length) {
     const gemini = geminiConfig();
@@ -599,7 +597,7 @@ async function profRating(archive: Archive, teacher: Teacher): Promise<SavedProf
     });
     rating = cleanProf(result, threads, gemini?.chatModel ?? backups[0]?.models[0] ?? '');
   }
-  const entry: SavedProf = rating ?? { none: true, createdAt: new Date().toISOString() };
+  const entry: SavedProf = rating ?? { none: true, createdAt: new Date().toISOString(), v: NONE_VERSION };
   const key = profKey(teacher.name);
   profHot.set(key, entry);
   await boardStore()?.putSummary(key, entry).catch((error) => console.warn('[courses] could not cache the professor rating:', (error as Error).message));
@@ -692,21 +690,22 @@ async function warmRatings(req: ApiRequest, catalog: Catalog) {
   const [archive, official, courseRowsSaved, profRowsSaved] = await Promise.all([
     loadArchive(),
     loadOfficial().catch(() => null),
-    store.listSummaryFields(ratingKey(''), ['none']).catch(() => []),
-    store.listSummaryFields(profKey(''), ['none']).catch(() => []),
+    store.listSummaryFields(ratingKey(''), ['none', 'v']).catch(() => []),
+    store.listSummaryFields(profKey(''), ['none', 'v']).catch(() => []),
   ]);
-  const freshKeys = (rows: typeof courseRowsSaved, ttl: (none: boolean) => number) => new Set(rows.filter((row) => Date.now() - Date.parse(row.createdAt) < ttl(Boolean(row.fields.none))).map((row) => row.key));
+  const freshKeys = (rows: typeof courseRowsSaved, ttl: (none: boolean) => number) =>
+    new Set(rows.filter((row) => (!row.fields.none || Number(row.fields.v) === NONE_VERSION) && Date.now() - Date.parse(row.createdAt) < ttl(Boolean(row.fields.none))).map((row) => row.key));
   const ratedCourses = freshKeys(courseRowsSaved, (none) => (none ? RATING_NONE_TTL_MS : RATING_TTL_MS));
   const ratedProfs = freshKeys(profRowsSaved, (none) => (none ? PROF_NONE_TTL_MS : PROF_TTL_MS));
-  const mentions = (code: string) => (archive.byCourse.get(code)?.length ?? 0) + (bareCode(code) !== code ? (archive.byCourse.get(bareCode(code))?.length ?? 0) : 0);
-  const rows = courseRows(catalog, catalog.current).sort((a, b) => mentions(b.code) - mentions(a.code));
+  const tagged = (code: string) => (archive.byCourse.get(code)?.length ?? 0) + (bareCode(code) !== code ? (archive.byCourse.get(bareCode(code))?.length ?? 0) : 0);
+  const rows = courseRows(catalog, catalog.current).sort((a, b) => tagged(b.code) - tagged(a.code));
   const courses = rows.map((row) => row.code).filter((code) => !ratedCourses.has(ratingKey(code)));
   const index = teachers(catalog);
   const names = [...new Set(rows.flatMap((row) => row.sections.filter((section) => section.component !== 'Recitation' && section.component !== 'Laboratory').flatMap((section) => section.instructors)))];
   const people = names.map((name) => index.get(foldName(name))).filter((teacher): teacher is Teacher => Boolean(teacher) && !ratedProfs.has(profKey(teacher!.name)));
   const jobs: Array<() => Promise<'rated' | 'none'>> = [
     ...courses.map((code) => async () => ((await courseRating(archive, official, catalog, code)) ? 'rated' as const : 'none' as const)),
-    ...people.map((teacher) => async () => ('none' in (await profRating(archive, teacher)) ? 'none' as const : 'rated' as const)),
+    ...people.map((teacher) => async () => ('none' in (await profRating(archive, catalog, teacher)) ? 'none' as const : 'rated' as const)),
   ];
   const done = { rated: 0, none: 0, failed: 0 };
   let next = 0;

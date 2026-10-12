@@ -8,8 +8,9 @@ import type { BoardStore } from './board-store.ts';
 import { detectRedirect } from './domains.ts';
 import { embedderForIndex, type Embedder } from './embeddings.ts';
 import { ChatGPTError, liteText, markChatGPTModelUnusable, streamResponse, usableChatGPTModels, type ChatGPTConfig } from './chatgpt.ts';
-import { abuDhabiDate, baseCode, courseScheduleText, instructorScheduleText, isCourseQuestion, loadCatalog, matchSchedule, searchCatalog, type Catalog } from './courses.ts';
+import { abuDhabiDate, courseScheduleText, instructorScheduleText, isCourseQuestion, loadCatalog, matchSchedule, searchCatalog, type Catalog } from './courses.ts';
 import { cachedAnswer, saveAnswer } from './answer-cache.ts';
+import { aboutTest, courseThreads, fold, mentions, person, personThreads, threadMentions, type Person } from './entities.ts';
 import { generateJson, generateStream, geminiKeys, isDailyQuota, isModelUnavailable, keyTag, liveModels, markUnavailable, type GeminiConfig, type GeminiError, type Message } from './gemini.ts';
 import { ApiError } from './http.ts';
 import { officialCards, officialSourceBlock, retrieveOfficial, type OfficialCorpus } from './official.ts';
@@ -26,8 +27,12 @@ const CANDIDATES = 40;
 const RERANK_CANDIDATES = 30;
 /** Eight good sources answer better, and faster, than twelve with noise among them. */
 const MAX_SOURCES = 8;
-/** Threads named for the course a question asks about, read ahead of keyword matches. */
+/** Threads naming the course a question asks about, read ahead of keyword matches. */
 const COURSE_THREADS = 12;
+/** Threads naming the person a question asks about, likewise. */
+const PERSON_THREADS = 10;
+/** Most threads put ahead of keyword matches in all, so they cannot crowd the reranker's pool. */
+const LINKED_THREADS = 16;
 /** Words that ask about how things are now, so newer threads count for even more. */
 const TIMELY = /\b(?:now|currently|current|still|anymore|any more|latest|recent(?:ly)?|these days|nowadays|this (?:year|semester|term|fall|spring|summer|week|month)|next (?:semester|term|year)|today|20[2-9]\d)\b/i;
 /**
@@ -42,7 +47,7 @@ export function personName(question: string): string | null {
   const clean = collapseWhitespace(question).replace(/[?!.]+$/, '');
   const explicit = clean.match(/(?:who is|who's|tell me about|do you know|profile of|how is|what about|professor|prof\.?|dr\.?)\s+([\p{L}'’-]+(?:\s+[\p{L}'’-]+){1,3})/iu)?.[1];
   const capitalized = clean.match(/\b[\p{Lu}][\p{L}'’-]+(?:\s+[\p{Lu}][\p{L}'’-]+){1,2}/u)?.[0];
-  const candidate = (explicit?.split(/\s+(?:at|from|in|and|who|teaching|grading|reviews?|like|a|an|the|for)\b/i)[0]
+  const candidate = (explicit?.split(/\s+(?:at|as|from|in|on|to|and|or|vs|versus|with|who|is|was|this|next|teach(?:es|ing)?|taught|grading|grades?|class(?:es)?|courses?|sections?|prof(?:essor)?s?|lectures?|exams?|reviews?|like|really|good|bad|a|an|the|for)\b/i)[0]
     ?? capitalized ?? (/^[\p{L}'’-]+\s+[\p{L}'’-]+$/u.test(clean) ? clean : '')).replace(/^(?:professor|prof\.?|dr\.?)\s+/i, '').replace(/['’]s$/, '');
   if (!candidate || candidate.split(/\s+/).length < 2) return null;
   if (/\b(?:for|the|of|to|with|is|a|an|professor|prof|calculus|algebra|physics|economics|chemistry|biology|french|arabic|pool|gym|hours|timings|course|courses|class|classes|dining|housing|campus|deadline|registration|meal|plan|falcon|dirhams|computer|science|machine|learning|nyu|abu|dhabi|core|curriculum|study|away|financial|aid|health|wellness|student|portal|career|center|best|easy|easiest|math|requirements|waitlist|library|academic|calendar|shuttle|bus|laundry|tuition)\b/i.test(candidate)) return null;
@@ -74,6 +79,8 @@ interface RetrieveOptions {
   /** Overrides the embedder derived from the index (tests). */
   embedder?: Embedder | null;
   queries?: string[];
+  /** The people the question names: only threads naming one of them are kept. Taken from the query when not given. */
+  people?: Person[];
 }
 
 export interface Retrieval {
@@ -88,12 +95,41 @@ export interface Retrieval {
 
 let warnedMissingKey = '';
 
+/**
+ * Query embeddings by model and text, a few hundred at most: a question embedded while it is being rewritten, or asked
+ * again, is not embedded twice. A failed embedding is not kept.
+ */
+const queryVectors = new Map<string, Promise<Float32Array | undefined>>();
+
+function embedQueries(embedder: Embedder, texts: string[]): Promise<Array<Float32Array | undefined>> {
+  const key = (text: string) => `${embedder.provider}|${embedder.model}|${embedder.dimensions}|${text}`;
+  const missing = [...new Set(texts)].filter((text) => !queryVectors.has(key(text)));
+  if (missing.length) {
+    const batch = embedder.embed(missing, 'query', { retries: 1, timeoutMs: 6_000, maxWaitMs: 1_500 });
+    missing.forEach((text, i) => {
+      const vector = batch.then((values) => values[i]);
+      vector.catch(() => queryVectors.delete(key(text)));
+      queryVectors.set(key(text), vector);
+    });
+    while (queryVectors.size > 300) queryVectors.delete(queryVectors.keys().next().value!);
+  }
+  return Promise.all(texts.map((text) => queryVectors.get(key(text))!));
+}
+
+/** Starts embedding a question before it is searched (while the model rewrites it), so the search does not wait for it. */
+export function embedEarly(archive: Archive, texts: string[]): void {
+  if (archive.vectors.count === 0 || archive.meta.model === 'none') return;
+  const embedder = embedderForIndex(archive.meta);
+  if (embedder) void embedQueries(embedder, texts).catch(() => undefined);
+}
+
 /** Hybrid retrieval: BM25 over chunks plus dense search when vectors exist and the matching embedding key is set, fused by rank. */
 export async function retrieve(archive: Archive, query: string, options: RetrieveOptions = {}): Promise<Retrieval> {
   const started = Date.now();
   const terms = tokenize(query);
   const depth = Math.max(150, (options.k ?? CANDIDATES) * 4);
   const name = personName(query);
+  const people = options.people ?? (name ? [person(name, archive, null)] : []);
   const queries = [...new Set([query, ...(options.queries ?? [])])].slice(0, 3);
   const lexicalScores = new Map<number, number>();
   for (const variant of queries) bm25Query(archive.bm25, tokenize(variant), depth).forEach(({ row }, rank) => lexicalScores.set(row, (lexicalScores.get(row) ?? 0) + 1 / (60 + rank + 1)));
@@ -110,7 +146,7 @@ export async function retrieve(archive: Archive, query: string, options: Retriev
       }
     } else {
       try {
-        const embedded = await embedder.embed(queries, 'query', { retries: 1, timeoutMs: 6_000, maxWaitMs: 1_500 });
+        const embedded = await embedQueries(embedder, queries);
         const scores = new Map<number, number>();
         queries.forEach((variant, i) => {
           const value = embedded[i];
@@ -126,10 +162,7 @@ export async function retrieve(archive: Archive, query: string, options: Retriev
     }
   }
   let hits = fuse(lexical, dense, { dates: archive.posts.map((post) => post.date), chunkPost: archive.chunkPost, recencyWeight: options.recencyWeight });
-  if (name) hits = hits.filter((hit) => {
-    const post = archive.posts[hit.post]!;
-    return matchesPerson(`${post.author} ${post.text} ${post.comments.map((comment) => `${comment.author} ${comment.text}`).join(' ')}`, name);
-  });
+  if (people.length) hits = hits.filter((hit) => threadMentions(archive, hit.post, people));
   if (options.filter) hits = hits.filter((hit) => options.filter!(archive.posts[hit.post]!));
   return { hits: hits.slice(0, options.k ?? CANDIDATES), terms, dense: vector !== undefined, vector, vectors, ms: Date.now() - started };
 }
@@ -197,6 +230,8 @@ interface LiveSource {
   scheduleText?: string;
   /** For a thread, the chunk that matched, so a long thread shows those comments first. */
   chunk?: string;
+  /** For a thread, whether a comment is about the course or the person asked about; those are shown first too. */
+  focus?: (text: string) => boolean;
 }
 
 const MAX_OFFICIAL = 3;
@@ -294,8 +329,8 @@ function officialSources(candidates: OfficialCandidates | null, hits: OfficialCa
  * and on the rewrite, which may drop a code they typed. A question about courses that names none ("classes about
  * machine learning") gets the closest courses offered from this term on.
  */
-function scheduleSources(catalog: Catalog | null, question: string, rewrite: string): { sources: LiveSource[]; codes: string[] } {
-  if (!catalog) return { sources: [], codes: [] };
+function scheduleSources(catalog: Catalog | null, question: string, rewrite: string): { sources: LiveSource[]; codes: string[]; instructors: string[] } {
+  if (!catalog) return { sources: [], codes: [], instructors: [] };
   const match = matchSchedule(catalog, `${question}\n${rewrite}`);
   // Only a question about classes on a subject searches the catalog; "how does the waitlist work" names no subject.
   const codes = match.courses.length || match.instructors.length || !ASKS_FOR_CLASSES.test(question) ? match.courses : searchCatalog(catalog, rewrite);
@@ -310,35 +345,60 @@ function scheduleSources(catalog: Catalog | null, question: string, rewrite: str
     const text = truncate(instructorScheduleText(catalog, name), SCHEDULE_CHARS);
     if (text) out.push({ scheduleText: text, card: { ...base, postId: `instructor:${name}`, title: `Classes taught by ${name}`, text: truncate(text, 600), courses: [] } });
   }
-  return { sources: out, codes: match.courses };
+  return { sources: out, codes: match.courses, instructors: match.instructors };
 }
-
-const courseIndexes = new WeakMap<Archive, Map<string, number[]>>();
 
 /**
- * Threads tagged with the courses a question names, newest first, under any code the course has carried
- * ("MATH-UH 1012Q" and "MATH-UH 1012"). A thread about the course is worth reading even when it shares few words with
- * the question.
+ * The people a question names: the professors the schedule knows, else a name the question spells out ("who is Morgan
+ * Testname"). Their threads are matched by full name, by a surname nobody else carries, or by a title in front ("Prof
+ * Adhikari"), never by a first name alone.
  */
-function courseThreads(archive: Archive, codes: string[]): number[] {
-  if (codes.length === 0) return [];
-  let index = courseIndexes.get(archive);
-  if (!index) {
-    index = new Map();
-    for (const [code, posts] of archive.byCourse) index.set(baseCode(code), [...(index.get(baseCode(code)) ?? []), ...posts]);
-    courseIndexes.set(archive, index);
-  }
-  const positions = new Set(codes.flatMap((code) => index!.get(baseCode(code)) ?? []));
-  return [...positions].sort((a, b) => archive.posts[b]!.date.localeCompare(archive.posts[a]!.date)).slice(0, COURSE_THREADS);
+function questionPeople(archive: Archive, catalog: Catalog | null, instructors: string[], question: string, rewrite: string): Person[] {
+  const named = instructors.filter((name) => namesProfessor(question, name) || namesProfessor(rewrite, name));
+  if (named.length) return named.map((name) => person(name, archive, catalog));
+  const name = personName(question) ?? personName(rewrite);
+  return name ? [person(name, archive, catalog)] : [];
 }
 
-/** The course's own threads ahead of the keyword and vector matches, so the reranker sees them. */
-function withCourseThreads(archive: Archive, hits: Hit[], positions: number[]): Hit[] {
-  if (positions.length === 0) return hits;
+/**
+ * Whether a question really names this professor, so only threads about them are read. The schedule also matches a
+ * bare surname next to a word like "class", and many surnames are words ("Power", "Song", "Piano", "Settle"): "power
+ * electronics class" must not become a question about Professor Power. A surname alone counts after a title or "with"
+ * ("prof power", "MVC with gandolfi"), with a possessive ("Power's class"), or capitalised inside the sentence and not
+ * followed by another capitalised word ("is Gandolfi good", not "Khalifa University").
+ */
+function namesProfessor(question: string, name: string): boolean {
+  const full = fold(name);
+  const folded = ` ${fold(question)} `;
+  if (folded.includes(` ${full} `)) return true;
+  const surname = full.split(' ').at(-1)!;
+  if (new RegExp(` (?:prof|professor|dr|doctor|with) ${surname} | ${surname} s `).test(folded)) return true;
+  const words = question.split(/\s+/);
+  return words.some((word, i) => i > 0 && /^\p{Lu}/u.test(word) && fold(word).split(' ')[0] === surname && !/^\p{Lu}/u.test(words[i + 1] ?? ''));
+}
+
+/**
+ * Threads naming the courses and people asked about (lib/entities.ts) ahead of the keyword and vector matches, so the
+ * reranker reads them even when they share few words with the question; threads naming more of them go first.
+ */
+function withLinked(hits: Hit[], groups: Hit[][]): Hit[] {
+  const count = new Map<number, number>();
+  const linked = new Map<number, Hit>();
+  for (const group of groups) {
+    for (const hit of group) {
+      count.set(hit.post, (count.get(hit.post) ?? 0) + 1);
+      if (!linked.has(hit.post)) linked.set(hit.post, hit);
+    }
+  }
+  if (linked.size === 0) return hits;
   const top = hits[0]?.score ?? 0.03;
-  const seen = new Set(positions);
-  const tagged = positions.filter((post) => archive.postChunk[post]! >= 0).map((post, i) => hits.find((hit) => hit.post === post) ?? { post, chunk: archive.postChunk[post]!, score: top + 0.001 * (positions.length - i) });
-  return [...tagged, ...hits.filter((hit) => !seen.has(hit.post))];
+  const ordered = [...linked.values()].sort((a, b) => count.get(b.post)! - count.get(a.post)!).slice(0, LINKED_THREADS);
+  const first = ordered.map((hit, i) => {
+    const found = hits.find((entry) => entry.post === hit.post);
+    return { ...(found ?? { score: top + 0.001 * (ordered.length - i) }), post: hit.post, chunk: hit.chunk, linked: true };
+  });
+  const seen = new Set(first.map((hit) => hit.post));
+  return [...first, ...hits.filter((hit) => !seen.has(hit.post))];
 }
 
 /** The same thread posted twice (a repost, a cross-post) is one source. */
@@ -463,7 +523,7 @@ export function sourcesBlock(archive: Archive, cards: SourceCard[], live: LiveSo
       // In a long thread, the comments in the passage that matched the question go in first; the rest fill what is
       // left. Either way they are shown in the order they were written.
       const focus = entry?.chunk ?? card.snippet;
-      const matched = (i: number) => !!focus && focus.includes(collapseWhitespace(post.comments[i]!.text).slice(0, 60));
+      const matched = (i: number) => (!!focus && focus.includes(collapseWhitespace(post.comments[i]!.text).slice(0, 60))) || !!entry?.focus?.(post.comments[i]!.text);
       const order = [...lines.keys()].sort((a, b) => Number(matched(b)) - Number(matched(a)) || a - b);
       const shown = new Set<number>();
       for (const i of order) {
@@ -514,7 +574,7 @@ Then commit. Give a clear verdict or recommendation when the evidence supports o
 
 Be candid. Students come here for what the brochure leaves out, so report downsides, complaints, risks and common mistakes as plainly as the praise: specific and attributed ("two students found the grading harsh [4][7]"), never softened into "some may find it challenging". Keep criticism of people to their teaching, grading, workload or how an office runs; leave out personal remarks and rumours.
 
-For questions about lived experience, do not let a course description or official page stand in for a student review. If the group has bad reviews, say the verdict plainly. If only one first-hand review is saved, describe it with its date and make clear it is one account, not a consensus. Check the comments as well as the original post before claiming no reviews were found. If none is saved, say that instead of guessing.
+For questions about lived experience, do not let a course description or official page stand in for a student review. If the group has bad reviews, say the verdict plainly. If only one first-hand review is saved, describe it with its date and make clear it is one account, not a consensus. Check the comments as well as the original post before claiming no reviews were found. Students name professors by surname, first name or "Prof X" and courses by nicknames (MVC, linalg, orgo, ICS) or codes: those are reviews of them, and replies to a post asking about a professor or course are about it even when they do not repeat the name. If none is saved, say that instead of guessing.
 
 Shape of the answer:
 1. Open with the answer itself in one short sentence: the verdict, the fact, or "it depends on X". No preamble and no restating the question. If the sources only cover part of it, say plainly what is missing.
@@ -585,6 +645,9 @@ interface Ranked {
  * those within reach of the best score, at least a few threads so the answer can say what students think, and a
  * slight lift for recent threads because advice goes stale. Null when there is no reranker or it fails.
  */
+/** The cross-encoder score a thread naming what was asked about needs (others need the floor in rerankWithModel). */
+const LINKED_FLOOR = 0.25;
+
 async function rerankWithModel(reranker: Reranker, archive: Archive, question: string, hits: Hit[], official: OfficialCandidates | null, live: LiveSource[], timely: boolean, today = Date.now() / 86_400_000): Promise<Ranked | null> {
   const pool = hits.slice(0, RERANK_CANDIDATES);
   const officialPool = official?.hits ?? [];
@@ -608,7 +671,9 @@ async function rerankWithModel(reranker: Reranker, archive: Archive, question: s
         return { hit: { ...hit, score: scores[i]! + lift * recency }, relevance: scores[i]! };
       })
       .sort((a, b) => b.hit.score - a.hit.score);
-    const chosen = archiveScored.filter((entry) => entry.relevance >= floor).slice(0, MAX_SOURCES).map((entry) => entry.hit);
+    // A thread naming the course or person asked about is kept on a lower bar: "thoughts on Gandolfi?" with five replies
+    // reads as only partly on topic to the cross-encoder, yet it is exactly the review the student wants.
+    const chosen = archiveScored.filter((entry) => entry.relevance >= floor || (entry.hit.linked && entry.relevance >= LINKED_FLOOR)).slice(0, MAX_SOURCES).map((entry) => entry.hit);
     const officialChosen = officialPool
       .map((hit, i) => ({ hit: { ...hit, score: scores[pool.length + i]! }, relevance: scores[pool.length + i]! }))
       .filter((entry) => entry.relevance >= Math.max(0.4, floor))
@@ -662,7 +727,7 @@ async function rerankWithLite(cfg: GeminiConfig, archive: Archive, question: str
       return { hit: { ...hit, score: 0.7 * (llm / 10) + 0.3 * (hit.score / maxFused) }, llm };
     });
     rescored.sort((a, b) => b.hit.score - a.hit.score);
-    return rescored.filter((entry) => entry.llm >= 5).slice(0, MAX_SOURCES).map((entry) => entry.hit);
+    return rescored.filter((entry) => entry.llm >= (entry.hit.linked ? 3 : 5)).slice(0, MAX_SOURCES).map((entry) => entry.hit);
   } catch (error) {
     console.warn('[rerank] falling back to hybrid order:', (error as Error).message);
     return null;
@@ -692,7 +757,7 @@ async function rank(cfg: GeminiConfig | null, archive: Archive, question: string
       const scores = new Map<number, number>();
       for (const item of result.scores ?? []) if (Number.isInteger(item.i) && item.i >= 0 && item.i < texts.length && Number.isFinite(item.s)) scores.set(item.i, Math.min(10, Math.max(0, item.s)));
       if (scores.size === texts.length) {
-        const choose = <T>(items: T[], start: number) => items.map((item, i) => ({ item, score: scores.get(start + i)! })).filter((entry) => entry.score >= 6).sort((a, b) => b.score - a.score).map((entry) => entry.item);
+        const choose = <T>(items: T[], start: number) => items.map((item, i) => ({ item, score: scores.get(start + i)! })).filter((entry) => entry.score >= ((entry.item as Hit).linked ? 4 : 6)).sort((a, b) => b.score - a.score).map((entry) => entry.item);
         return { archive: choose(pool, 0).slice(0, MAX_SOURCES), official: choose(officialPool, pool.length).slice(0, MAX_OFFICIAL), live: choose(live, pool.length + officialPool.length), reranked: true };
       }
     } catch (error) { console.warn('[rerank] source review unavailable:', (error as Error).message); }
@@ -701,7 +766,7 @@ async function rank(cfg: GeminiConfig | null, archive: Archive, question: string
   if (retrieval.hits.length === 0) return { archive: [], official: officialHits, live: live.filter((entry) => sharesQuestionWords(entry.card.text, retrieval.terms)), reranked: false };
   // The lite-model fallback is the site's Gemini; without it the fused order stands.
   const lite = cfg ? await rerankWithLite(cfg, archive, question, retrieval.hits, retrieval.terms) : null;
-  const fallback = retrieval.hits.filter((hit) => hit.lexicalRank !== undefined && coversQuery(archive.chunks[hit.chunk]!.text, question, archive));
+  const fallback = retrieval.hits.filter((hit) => hit.linked || (hit.lexicalRank !== undefined && coversQuery(archive.chunks[hit.chunk]!.text, question, archive)));
   return { archive: (lite ?? fallback).slice(0, MAX_SOURCES), official: officialHits, live: live.filter((entry) => sharesQuestionWords(`${entry.card.title} ${entry.card.text}`, retrieval.terms)), reranked: lite !== null };
 }
 
@@ -754,7 +819,7 @@ async function standaloneQuestion(writers: Writers, history: ChatTurn[], questio
     try {
       const text = writers.chatgpt
         ? await liteText(writers.chatgpt.cfg, writers.chatgpt.token, system, question, 4_000)
-        : await liteWithSiteModels(writers, system, question, { maxOutputTokens: 180, temperature: 0, timeoutMs: 4_000 });
+        : await liteWithSiteModels(writers, system, question, { maxOutputTokens: 180, temperature: 0, timeoutMs: 2_500 });
       const rewrite = collapseWhitespace(text).replace(/^["“]|["”]$/g, '');
       return rewrite && rewrite.length <= MAX_QUESTION_CHARS && !/\[\d+\]|confidence:|\n/.test(text) ? rewrite : question;
     } catch { return question; }
@@ -767,7 +832,7 @@ async function standaloneQuestion(writers: Writers, history: ChatTurn[], questio
   try {
     const text = writers.chatgpt
       ? await liteText(writers.chatgpt.cfg, writers.chatgpt.token, REWRITE_SYSTEM + GLOSSARY, prompt, 8_000)
-      : await liteWithSiteModels(writers, REWRITE_SYSTEM + GLOSSARY, prompt, { maxOutputTokens: 512, temperature: 0, timeoutMs: 8_000 });
+      : await liteWithSiteModels(writers, REWRITE_SYSTEM + GLOSSARY, prompt, { maxOutputTokens: 512, temperature: 0, timeoutMs: 5_000 });
     const rewritten = collapseWhitespace(text).replace(/^["“]|["”]$/g, '');
     return rewritten && rewritten.length <= MAX_QUESTION_CHARS ? rewritten : question;
   } catch {
@@ -881,6 +946,8 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
   // The board snapshot is a network call that does not depend on the question: start it now, use it later.
   if (board) void liveSnapshot(board).catch(() => null);
   events.status?.('Reading the question');
+  // The student's own words are searched too, so they are embedded while the model rewrites them.
+  embedEarly(archive, searchQueries(request.question));
   const searchQuery = safeRewrite(request.question, await standaloneQuestion(writers, history, request.question));
 
   events.status?.('Searching');
@@ -987,22 +1054,28 @@ export async function gatherSources(
   const years = question.match(/\b20\d{2}\b/g) ?? [];
   const historical = /\b(?:historical|last year|previous)\b/i.test(question) || (years.length > 0 && years.every((year) => Number(year) < Number(abuDhabiDate(new Date()).slice(0, 4))));
   const schedule = scheduleSources(context.catalog, question, searchQuery);
-  const name = personName(question) ?? personName(searchQuery);
   searchQuery = safeRewrite(question, searchQuery);
+  const people = questionPeople(archive, context.catalog, schedule.instructors, question, searchQuery);
+  const named = (text: string) => people.length === 0 || people.some((who) => mentions(text, who));
   const queries = searchQueries(question, searchQuery);
-  const retrieval = await retrieve(archive, searchQuery, { queries, k: CANDIDATES, recencyWeight: timely ? 0.01 : 0.006 });
-  retrieval.hits = withCourseThreads(archive, distinctThreads(archive, retrieval.hits), courseThreads(archive, schedule.codes));
+  const retrieval = await retrieve(archive, searchQuery, { queries, people, k: CANDIDATES, recencyWeight: timely ? 0.01 : 0.006 });
+  const linked = [
+    courseThreads(archive, context.catalog, schedule.codes, COURSE_THREADS).filter((hit) => threadMentions(archive, hit.post, people)),
+    ...people.map((who) => personThreads(archive, who, PERSON_THREADS)),
+  ];
+  retrieval.hits = distinctThreads(archive, withLinked(retrieval.hits, linked));
   // The board snapshot was fetched while the question was embedded; its posts go through the reranker with the rest.
   const [officialPool, livePool] = await Promise.all([officialCandidates(context.official, searchQuery, queries, archive, retrieval), liveSources(context.board, searchQuery, retrieval.terms, retrieval.vector)]);
-  if (officialPool && name) officialPool.hits = officialPool.hits.filter((hit) => {
+  if (officialPool && people.length) officialPool.hits = officialPool.hits.filter((hit) => {
     const doc = officialPool.corpus.docs[officialPool.corpus.chunkDoc[hit.chunk]!]!;
-    return matchesPerson(`${doc.title} ${officialPool.corpus.chunks[hit.chunk]!.text}`, name);
+    return named(`${doc.title} ${officialPool.corpus.chunks[hit.chunk]!.text}`);
   });
-  const eligibleLive = livePool.filter((entry) => matchesPerson(`${entry.card.author} ${entry.card.title} ${entry.card.text}`, name));
+  const eligibleLive = livePool.filter((entry) => named(`${entry.card.author} ${entry.card.title} ${entry.card.text}`));
   const ranked = retrieval.hits.length || officialPool || livePool.length ? await withStatus(events, 'Ranking sources', rank(context.cfg, archive, searchQuery, retrieval, officialPool, eligibleLive, context.reranker, timely, context.writers)) : { archive: [], official: [], live: [], reranked: false };
   const official = officialSources(officialPool, ranked.official);
   const live = ranked.live;
-  const threads = toSourceCards(archive, ranked.archive, retrieval.terms, 0).map((card, i): LiveSource => ({ card, chunk: archive.chunks[ranked.archive[i]!.chunk]!.text }));
+  const focus = aboutTest(people, context.catalog, schedule.codes);
+  const threads = toSourceCards(archive, ranked.archive, retrieval.terms, 0).map((card, i): LiveSource => ({ card, chunk: archive.chunks[ranked.archive[i]!.chunk]!.text, focus }));
   const courseFirst = schedule.sources.length > 0 && (schedule.codes.length > 0 || isCourseQuestion(question));
   const experience = /\b(?:review|opinion|worth|easiest|hardest|easy|hard|workload|grading|grade|professor|prof|teach|taught|like|avoid|recommend|best|worst|experience)\b/i.test(question);
   const usefulOfficial = experience && !/\b(?:hours?|timings?|open|close|deadline|requirements?|policy|policies)\b/i.test(question) ? [] : official;
@@ -1010,7 +1083,8 @@ export async function gatherSources(
     ? [...threads, ...live, ...schedule.sources, ...usefulOfficial]
     : courseFirst ? [...schedule.sources, ...official, ...threads, ...live] : [...official, ...schedule.sources, ...threads, ...live];
   entries = entries.filter((entry) => {
-    if (!matchesPerson(`${entry.card.author} ${entry.card.title} ${entry.card.text} ${entry.chunk ?? ''} ${entry.scheduleText ?? ''}`, name)) return false;
+    const about = entry.card.kind === 'archive' ? threadMentions(archive, archive.postPosition.get(entry.card.postId)!, people) : named(`${entry.card.author} ${entry.card.title} ${entry.card.text} ${entry.scheduleText ?? ''}`);
+    if (!about) return false;
     // Old discussions cannot establish a current deadline or policy. Keep them for historical questions only.
     if (/\b(?:deadlines?|due dates?|registration dates?|last day)\b/i.test(question) && !historical) {
       if (!['official', 'schedule', 'announcement'].includes(entry.card.kind)) return false;
@@ -1043,8 +1117,20 @@ async function withStatus<T>(events: AskEvents, message: string, work: Promise<T
 
 const QUOTA_MESSAGE = "Answers are paused: today's free model quota is used up. Try again in a while, or search the group's threads in the meantime.";
 const BUSY_MESSAGE = 'Answers are busy right now: every model we use is overloaded. Try again in a minute.';
-/** How long a model that is not the last one may take to start writing before the next one is tried. */
+/** How long a model that is not the last one may take to start writing before it is given up on. */
 const FIRST_TEXT_MS = 15_000;
+/**
+ * How long the model writing an answer may stay silent before the next one starts beside it. Free tiers are usually
+ * quick or very slow (Z.ai's free GLM sat for over 15 seconds on every key in October 2026), so a short hedge costs
+ * one extra request now and then and saves most of the wait.
+ */
+const HEDGE_MS = 3_500;
+/** Most models writing the same answer at once. */
+const MAX_RACING = 3;
+/** How long a model beaten to its first word by one started after it is left out of the chain. */
+const SLOW_REST_MS = 10 * 60_000;
+/** Writer name -> until when it rests for being slow (see HEDGE_MS). */
+const slowUntil = new Map<string, number>();
 
 interface Chunk {
   text?: string;
@@ -1117,7 +1203,7 @@ export function answerWriters(writers: Writers, now = Date.now()): AnswerWriter[
     gemini(lite);
     return out;
   };
-  const strict = build(true);
+  const strict = build(true).filter((writer) => (slowUntil.get(writer.name) ?? 0) <= now);
   return strict.length ? strict : build(false);
 }
 
@@ -1131,62 +1217,105 @@ async function* geminiChunks(cfg: GeminiConfig, model: string, system: string, m
 }
 
 /**
- * Streams the answer from the first model that can write it, moving down the chain when a model is overloaded, gone
- * or out of quota (free tiers are per model and reset daily), or is too slow to start. Only switches before any text
- * has been sent. Stops at the deadline, or when the model hits its token limit, and says so rather than ending
- * mid-sentence without a word.
+ * Streams the answer from the first model that starts writing it. The chain's first model starts alone; when it has
+ * not written a word within HEDGE_MS, the next starts beside it (at most MAX_RACING at once), and the first to write
+ * wins while the others are stopped: a slow free tier costs a few seconds, not the whole wait. A model that fails
+ * before writing (overloaded, gone, out of quota) hands over at once, and one that has not started within
+ * FIRST_TEXT_MS is given up on. Once a model has written, the answer stays with it: it stops at the deadline or its
+ * token limit with a note rather than mid-sentence without a word.
  */
 async function writeAnswer(writers: Writers, system: string, prompt: (maxChars?: number) => Message[], events: AskEvents, signal: AbortSignal | undefined, deadline: number): Promise<{ answer: string; model: string; truncated: boolean }> {
   const chain = answerWriters(writers);
+  const racing = new Map<AnswerWriter, { controller: AbortController; started: number }>();
+  let next = 0;
+  let winner: AnswerWriter | null = null;
+  let answer = '';
+  let truncated = false;
+  let timedOut = false;
   let allQuota = true;
   let anyBusy = false;
-  for (let i = 0; i < chain.length; i++) {
-    const writer = chain[i]!;
-    const last = i === chain.length - 1;
-    // A key already answering someone else is passed over at once rather than waited on (asked now, not when the chain
-    // was built: the student before may have just finished).
-    if (!last && writer.full?.()) continue;
+  let hedge: ReturnType<typeof setTimeout> | undefined;
+  let settle!: (outcome: { answer: string; model: string; truncated: boolean } | { error: unknown }) => void;
+  const outcome = new Promise<{ answer: string; model: string; truncated: boolean } | { error: unknown }>((resolve) => (settle = resolve));
+  const stopAll = () => racing.forEach(({ controller }) => controller.abort());
+  signal?.addEventListener('abort', stopAll, { once: true });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    stopAll();
+  }, Math.max(1_000, deadline - Date.now()));
+
+  const nothingLeft = () => {
+    if (signal?.aborted) return new ApiError(499, 'The question was cancelled.', 'cancelled');
+    if (timedOut) return new ApiError(504, 'The answer took too long. Try again, or ask a narrower question.', 'timeout');
+    if (allQuota) return new ApiError(503, QUOTA_MESSAGE, 'quota');
+    if (anyBusy) return new ApiError(503, BUSY_MESSAGE, 'busy');
+    return new ApiError(502, 'The answer could not be written this time. Try again, or rephrase the question.', 'model_error');
+  };
+
+  // Starts the next model in the chain that can take the request, and arms the hedge for the one after it.
+  const startNext = () => {
+    clearTimeout(hedge);
+    if (winner) return;
+    while (!timedOut && !signal?.aborted && next < chain.length && racing.size < MAX_RACING) {
+      const writer = chain[next]!;
+      const last = next === chain.length - 1;
+      next++;
+      // A key already answering someone else is passed over at once rather than waited on.
+      if (!last && writer.full?.()) continue;
+      void run(writer, last);
+      if (next < chain.length) hedge = setTimeout(startNext, HEDGE_MS);
+      return;
+    }
+    if (racing.size === 0) settle({ error: nothingLeft() });
+  };
+
+  const run = async (writer: AnswerWriter, last: boolean) => {
     const controller = new AbortController();
-    const onAbort = () => controller.abort();
-    signal?.addEventListener('abort', onAbort, { once: true });
-    let timedOut = false;
+    const started = Date.now();
+    racing.set(writer, { controller, started });
     let slow = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, Math.max(1_000, deadline - Date.now()));
-    // A model that has not started writing in time is skipped while there is still time for the next one.
+    // A model that has not started writing in time is given up on while there is still time for the next one.
     const firstText = last ? null : setTimeout(() => {
       slow = true;
       controller.abort();
     }, Math.max(5_000, Math.min(FIRST_TEXT_MS, deadline - Date.now() - 15_000)));
-    let answer = '';
-    let truncated = false;
     try {
       for await (const chunk of writer.stream(system, prompt(writer.maxPromptChars), controller.signal, last)) {
         if (chunk.text) {
-          if (firstText) clearTimeout(firstText);
+          if (!winner) {
+            winner = writer;
+            clearTimeout(hedge);
+            if (firstText) clearTimeout(firstText);
+            for (const [other, entry] of racing) {
+              if (other === writer) continue;
+              entry.controller.abort();
+              // Started before this one and still silent: the next questions go to the quicker model for a while.
+              if (entry.started < started) slowUntil.set(other.name, Date.now() + SLOW_REST_MS);
+            }
+          }
+          if (winner !== writer) return;
           answer += chunk.text;
           events.delta?.(chunk.text);
         }
-        if (chunk.truncated) truncated = true;
+        if (chunk.truncated && winner === writer) truncated = true;
       }
-      if (!answer.trim() && !last) throw new Error('empty answer');
-      return { answer, model: writer.name, truncated };
+      if (winner === writer) return settle({ answer, model: writer.name, truncated });
+      if (winner) return;
+      if (!last) throw new Error('empty answer');
+      winner = writer;
+      settle({ answer: '', model: writer.name, truncated });
     } catch (error) {
-      if (signal?.aborted) throw error;
-      if (timedOut) {
-        console.warn(`[ask] ${writer.name} ran past the deadline; ending the answer early.`);
-        if (answer) return { answer, model: writer.name, truncated: true };
-        throw new ApiError(504, 'The answer took too long. Try again, or ask a narrower question.', 'timeout');
-      }
-      if (answer) {
+      if (winner === writer) {
+        if (signal?.aborted) return settle({ error });
         // Text already went out: switching models now would start a second answer under the first.
-        console.warn(`[ask] ${writer.name} failed mid-answer:`, (error as Error).message);
-        return { answer, model: writer.name, truncated: true };
+        if (timedOut) console.warn(`[ask] ${writer.name} ran past the deadline; ending the answer early.`);
+        else console.warn(`[ask] ${writer.name} failed mid-answer:`, (error as Error).message);
+        return settle({ answer, model: writer.name, truncated: true });
       }
+      // Stopped because another model won, the student left or time ran out: nothing to learn from it.
+      if (winner || signal?.aborted || timedOut) return;
       // Whatever went wrong before the first word (overload, quota, a model gone, a refused prompt), the next model
-      // may well answer, so it is tried; only the kind of failure decides the message if none of them does.
+      // may well answer; only the kind of failure decides the message if none of them does.
       if (slow) console.warn(`[ask] ${writer.name} had not started after ${FIRST_TEXT_MS / 1000}s; trying the next model.`);
       else {
         writer.failed(error);
@@ -1195,17 +1324,25 @@ async function writeAnswer(writers: Writers, system: string, prompt: (maxChars?:
       const busy = slow || writer.busy(error);
       anyBusy ||= busy;
       allQuota &&= busy && !slow && writer.quota(error);
-      if (last) break;
-      events.status?.('Switching to a backup model');
+      if (next < chain.length) events.status?.('Switching to a backup model');
     } finally {
-      clearTimeout(timer);
       if (firstText) clearTimeout(firstText);
-      signal?.removeEventListener('abort', onAbort);
+      racing.delete(writer);
+      if (!winner) startNext();
     }
+  };
+
+  startNext();
+  try {
+    const result = await outcome;
+    if ('error' in result) throw result.error;
+    return result;
+  } finally {
+    clearTimeout(timer);
+    clearTimeout(hedge);
+    stopAll();
+    signal?.removeEventListener('abort', stopAll);
   }
-  if (allQuota) throw new ApiError(503, QUOTA_MESSAGE, 'quota');
-  if (anyBusy) throw new ApiError(503, BUSY_MESSAGE, 'busy');
-  throw new ApiError(502, 'The answer could not be written this time. Try again, or rephrase the question.', 'model_error');
 }
 
 /**

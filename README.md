@@ -11,7 +11,9 @@ archive browsing, plan reading and contacts to anyone who has not.
   and written up by Gemini, with backup models when Gemini is overloaded or spent, or on the student's own ChatGPT plan
   when they sign in with ChatGPT. Past conversations are listed down the left, as in a chat app. A question about a course or a professor gets the Albert schedule first (course codes
   in any spelling, titles the way students say them, "calc", "intro to cs", or a subject for "classes about machine
-  learning"), plus the group's threads tagged with that course. Newer threads are lifted, more so for questions about
+  learning"), plus every thread that names that course or professor the way students write it (the code, the title,
+  "linalg", "MVC", "Prof Gandolfi", or a surname nobody else in the schedule or the group carries; `lib/entities.ts`),
+  ranked by how much each says about it and read by the reranker ahead of keyword matches. Newer threads are lifted, more so for questions about
   how things are now, and a thread the reranker finds unrelated is left out rather than padding the answer. Answers lead
   with a verdict, then at most five specifics (a ranked shortlist for "which is best" questions), the catch and the next
   step, in about 200 words.
@@ -104,7 +106,11 @@ search, courses, plan and the board are rate-limited per IP.
 
 ## Keeping answers up for free
 
-Free model tiers can be overloaded (503) or rate-limited (429). Ask moves down a chain before writing any text:
+Free model tiers can be overloaded (503), rate-limited (429) or just slow. Ask moves down a chain before writing any
+text, and does not wait on a slow model: when the model writing an answer has not written a word within three and a
+half seconds, the next one starts beside it (at most three at once) and the first to write wins, the others are
+stopped. A model beaten that way is left out of the chain for ten minutes, so the next questions go straight to the
+quicker one.
 
 1. Z.ai's GLM 4.7 Flash, on each key in `ZAI_API_KEY`. Its free tier takes one request at a time per key, so a key
    already answering someone is passed over at once for the next key, and with every key busy the question goes on
@@ -120,8 +126,9 @@ Gemma is not called anywhere: on Gemini's and OpenRouter's free tiers it accepte
 question waited out a timeout before moving on. Built-in lists leave it out and a listing that offers it as a stand-in
 is ignored; only a model list set in the environment can name it.
 
-Small calls (query rewrites, reranking, moderation, ratings, plan reading) go down the same order, one provider at a
-time, and no provider may take more than its share of the call's time (12 seconds for a course or professor rating),
+Small calls (query rewrites, reranking, moderation, ratings, plan reading) go down the same order the same way: a
+provider that fails hands over at once, one still silent after a second and a half (six for JSON calls) gets the next
+started beside it, and no provider may take more than its share of the call's time (12 seconds for a course or professor rating),
 so a slow one leaves the next a chance.
 
 Instances also learn from each other: every couple of minutes each one reads today's usage (below) and rests the
@@ -141,7 +148,7 @@ and drops the ones it cannot. A model that answers "no free tier"
 (`limit: 0`) or "out of today's quota" is skipped for hours rather than tried on every question.
 
 A model that failed rests for a while (a minute when overloaded, an hour when its day's quota is spent, hours when it
-no longer exists), and one that has not started writing within 25 seconds is skipped while there is time for the next.
+no longer exists), and one that has not started writing within 15 seconds is given up on while there is time for the next.
 If every model is down, the student is told answers are busy and offered a retry, and every NetID on
 `ROR_ADMIN_NETIDS` gets an email at its NYU address (through Resend, the login sender) saying what each key did today;
 at most one every three hours. Settings has a button to send a test. `GET /api/health` shows the chain as it stands
@@ -273,8 +280,11 @@ and complete NYU sign-in in the browser once. Subsequent runs can use `--portal-
 records, account widgets and student directories are excluded. Refresh and reindex after deadlines change;
 stale pages are not treated as evidence for a current deadline. No credentials are sent to the deployed app.
 
-Retrieval preserves full names and course codes during query rewriting, searches the original and expanded queries,
-filters person matches before ranking, and reranks all source kinds with backup models when needed. Keyword
+Retrieval preserves full names and course codes during query rewriting, searches the original and expanded queries
+(the original is embedded while the model rewrites it), keeps only threads naming the person asked about (full name, a
+surname no other professor or group member carries, or "Prof <surname>"; never a first name alone), and reranks all
+source kinds with backup models when needed. Threads naming the course or person asked about clear the reranker on a
+lower bar, since "thoughts on Gandolfi?" with five replies is the review a student wants. Keyword
 fallbacks require meaningful term coverage. Current official policy and deadline evidence comes before anecdotes.
 Unanswered board questions enter the first feed page even when older and get priority, then major/year matches.
 
