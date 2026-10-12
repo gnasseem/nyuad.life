@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { abuDhabiDate, buildCatalog, courseRows, courseScheduleText, currentTerm, instructorScheduleText, liveTerms, matchSchedule, seatStatus, termOrder, type Offering } from './courses.ts';
+import { abuDhabiDate, allCourses, buildCatalog, courseRows, courseScheduleText, currentTerm, instructorScheduleText, liveTerms, matchSchedule, seatStatus, termOrder, type Offering } from './courses.ts';
 
 function offering(term: string, code: string, title: string, instructors: string[], status = 'Open', dates = ['2026-08-24', '2026-12-14']): Offering {
   return {
@@ -97,6 +97,13 @@ describe('matching a question', () => {
     expect(matchSchedule(mvc, 'Who teaches MVC for Econ?').courses).toEqual(['MATH-UH 1021']);
     expect(matchSchedule(mvc, 'Nizar MVC').courses).toEqual(['MATH-UH 1021']);
     expect(matchSchedule(mvc, 'Nizar MVC').instructors).toEqual(['Nizar Demni']);
+  });
+  it('shows current instructors ahead of teachers from a future term', () => {
+    const mvc = buildCatalog([
+      offering('January 2027', 'MATH-UH 1021', 'Multivariable Calculus with Applications to Economics', ['Mustafa, Rai'], 'Open', ['2027-01-05', '2027-01-15']),
+      offering('Fall 2026', 'MATH-UH 1021', 'Multivariable Calculus with Applications to Economics', ['Demni, Nizar']),
+    ], new Date('2026-10-12'));
+    expect(allCourses(mvc)[0]).toMatchObject({ currentPeople: ['Nizar Demni'], people: ['Rai Mustafa', 'Nizar Demni'] });
   });
 });
 

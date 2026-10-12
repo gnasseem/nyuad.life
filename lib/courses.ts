@@ -316,6 +316,8 @@ export interface CourseEntry {
   core: boolean;
   /** Who taught it lately; searched, not shown. */
   people: string[];
+  /** Who teaches it in the current term, shown on the course card. */
+  currentPeople: string[];
 }
 
 /** Every course in the schedule once, under the code it goes by now, for the course list. */
@@ -328,7 +330,11 @@ export function allCourses(catalog: Catalog): CourseEntry[] {
     seen.add(current);
     const offerings = mergedOfferings(catalog, current);
     const people = new Set(offerings.slice(0, 4).flatMap((offering) => offering.sections.flatMap((section) => section.instructors.map(displayName))));
-    out.push({ code: current, title: offerings[0]!.title, subject: subjectOf(current), core: CORE_SUBJECTS.has(subjectOf(current)), people: [...people].slice(0, 8) });
+    const currentOffering = offerings.find((offering) => offering.term === catalog.current);
+    const currentPeople = [...new Set((currentOffering?.sections ?? [])
+      .filter((section) => section.status.toLowerCase() !== 'cancelled' && section.component !== 'Recitation' && section.component !== 'Laboratory')
+      .flatMap((section) => section.instructors.map(displayName)))];
+    out.push({ code: current, title: offerings[0]!.title, subject: subjectOf(current), core: CORE_SUBJECTS.has(subjectOf(current)), people: [...people].slice(0, 8), currentPeople });
   }
   return out.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
 }

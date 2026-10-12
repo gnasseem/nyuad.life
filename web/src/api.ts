@@ -381,6 +381,7 @@ export interface CourseEntry {
   subject: string;
   core: boolean;
   people: string[];
+  currentPeople: string[];
 }
 
 export interface CourseDetail {
@@ -606,7 +607,7 @@ export const api = {
   courses: {
     terms: () => cached('terms', () => request<{ terms: Term[]; current: string; scraped: string }>('/api/courses')),
     list: (term: string) => cached(`courses:${term}`, () => request<{ term: string; courses: CourseRow[] }>(`/api/courses?term=${encodeURIComponent(term)}`)),
-    all: () => cached('courses:all', () => request<{ courses: CourseEntry[] }>('/api/courses?all=1')),
+    all: () => cached('courses:all:2', () => request<{ courses: CourseEntry[] }>('/api/courses?all=2')),
     detail: (code: string) => request<CourseDetail>(`/api/courses?code=${encodeURIComponent(code)}`),
     rating: (code: string) => cached(`rating:${code}`, () => request<{ rating: CourseRating | null }>(`/api/courses?code=${encodeURIComponent(code)}&rating=1`)),
     scores: () => cached('scores', () => request<ScoreIndex>('/api/courses?ratings=1')),

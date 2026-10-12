@@ -291,9 +291,9 @@ function CourseItem({ course, scores, selected, onOpen }: { course: CourseEntry;
           {course.core && <span className="tag">Core</span>}
         </span>
         <span className="course-title">{course.title}</span>
-        {(ai?.difficulty || ai?.workload || course.people.length > 0) && (
+        {(ai?.difficulty || ai?.workload || course.currentPeople.length > 0) && (
           <span className="course-sub">
-            {[ai?.difficulty ? HARDNESS[ai.difficulty] : '', ai?.workload ? `${SCALE[ai.workload]!.toLowerCase()} work` : '', course.people.slice(0, 2).join(', ')].filter(Boolean).join(' · ')}
+            {[ai?.difficulty ? HARDNESS[ai.difficulty] : '', ai?.workload ? `${SCALE[ai.workload]!.toLowerCase()} work` : '', course.currentPeople.join(', ')].filter(Boolean).join(' · ')}
           </span>
         )}
       </span>
