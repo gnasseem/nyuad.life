@@ -41,6 +41,7 @@ export default route(['GET'], async (req, res) => {
   const catalog = loadCatalog();
   const code = queryString(req, 'code').trim();
   const term = queryString(req, 'term').trim();
+  const school = queryString(req, 'school').trim();
   const profs = queryString(req, 'profs');
 
   if (queryString(req, 'op') === 'warm' || /\/cron\/warm-ratings/.test(req.url ?? '')) {
@@ -82,9 +83,14 @@ export default route(['GET'], async (req, res) => {
   }
   if (term) {
     if (!catalog.terms.some((entry) => entry.name === term)) throw new ApiError(404, 'No such term.', 'not_found');
-    const school = queryString(req, 'school');
     if (school && !isPlanSchool(school)) throw new ApiError(400, 'Choose a school or study away site.', 'bad_school');
     sendJson(res, 200, { term, courses: school ? schoolRows(catalog, term, school as PlanSchool) : courseRows(catalog, term) }, 3600);
+    return;
+  }
+  if (school) {
+    if (!isPlanSchool(school)) throw new ApiError(400, 'Choose a school or study away site.', 'bad_school');
+    const terms = catalog.terms.map((entry) => ({ ...entry, courses: schoolRows(catalog, entry.name, school).filter((row) => row.sections.some((section) => section.status !== 'cancelled')).length })).filter((entry) => entry.courses > 0);
+    sendJson(res, 200, { terms, current: terms.find((entry) => entry.name === catalog.current)?.name ?? terms[0]?.name ?? '', scraped: catalog.scraped }, 3600);
     return;
   }
   sendJson(res, 200, { terms: catalog.terms, current: catalog.current, scraped: catalog.scraped }, 3600);

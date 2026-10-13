@@ -488,6 +488,10 @@ describe('api', () => {
   it('serves the course search and spends nothing on codes that are not courses', async () => {
     const terms = await getJson(`${apiUrl}/api/courses`);
     expect(terms.terms.map((term: { name: string }) => term.name)).toEqual(['Fall 2026']);
+    const abuDhabiTerms = await getJson(`${apiUrl}/api/courses?school=Abu%20Dhabi`);
+    expect(abuDhabiTerms.terms).toEqual([expect.objectContaining({ name: 'Fall 2026', courses: 1 })]);
+    const parisTerms = await getJson(`${apiUrl}/api/courses?school=NYU%20Paris%20(Global)`);
+    expect(parisTerms.terms).toEqual([]);
     const list = await getJson(`${apiUrl}/api/courses?term=Fall%202026`);
     expect(list.courses.map((row: { code: string }) => row.code)).toEqual(['MATH-UH 1012']);
     const detail = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012`);

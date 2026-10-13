@@ -54,11 +54,13 @@ describe('course rows', () => {
   it('keeps only sections taught at the selected site', () => {
     const mixed = offering('Fall 2026', 'CS-UH 1052G', 'Algorithms', ['Lee, Ana']);
     mixed.sections.push({ ...mixed.sections[0]!, classNumber: 'paris-1', location: 'NYU Paris (Global)', instructors: ['Martin, Eve'] });
+    const cso = offering('Fall 2026', 'CS-UH 2010G', 'Computer Systems Organization', ['Martin, Eve']);
+    cso.sections[0]!.location = 'NYU Paris (Global)';
     const cas = offering('Fall 2026', 'MATH-UA 101', 'Calculus I', ['Diaz, Sol']);
     cas.sections[0]!.location = 'NYU New York';
-    const source = buildCatalog([mixed, cas]);
+    const source = buildCatalog([mixed, cso, cas]);
     expect(schoolRows(source, 'Fall 2026', 'Abu Dhabi')[0]!.sections.map((section) => section.classNumber)).toEqual([mixed.sections[0]!.classNumber]);
-    expect(schoolRows(source, 'Fall 2026', 'NYU Paris (Global)')[0]!.sections.map((section) => section.classNumber)).toEqual(['paris-1']);
+    expect(schoolRows(source, 'Fall 2026', 'NYU Paris (Global)').map((row) => row.code)).toEqual(['CS-UH 1052G', 'CS-UH 2010G']);
     expect(schoolRows(source, 'Fall 2026', 'CAS').map((row) => row.code)).toEqual(['MATH-UA 101']);
   });
 

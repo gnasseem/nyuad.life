@@ -65,6 +65,7 @@ export function PlanPage() {
   const { profile, toast } = useApp();
   const [saved, setSaved] = useState<SavedPlan>(loadPlan);
   const [terms, setTerms] = useState<Term[] | null>(null);
+  const [scraped, setScraped] = useState('');
   const [rows, setRows] = useState<{ term: string; courses: CourseRow[] } | null>(null);
   const [error, setError] = useState('');
   const [text, setText] = useState('');
@@ -105,11 +106,16 @@ export function PlanPage() {
     });
 
   useEffect(() => {
+    if (!saved.school) { setTerms(null); return; }
+    let live = true;
+    setTerms(null);
+    setError('');
     api.courses
-      .terms()
-      .then((result) => setTerms(result.terms))
-      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load the terms.'));
-  }, []);
+      .terms(saved.school)
+      .then((result) => { if (live) { setTerms(result.terms); setScraped(result.scraped); } })
+      .catch((err) => live && setError(err instanceof Error ? err.message : 'Could not load the terms.'));
+    return () => { live = false; };
+  }, [saved.school]);
 
   useEffect(() => {
     if (!term || !saved.school) { setRows(null); return; }
@@ -250,7 +256,7 @@ export function PlanPage() {
             <select className="input" value={term} onChange={(event) => { setRows(null); update({ term: event.target.value, wants: [], chat: [] }); }} aria-label="Semester">
               {regularTerms(terms).map((entry) => (
                 <option key={entry.name} value={entry.name}>
-                  {entry.name}
+                  {entry.name}{entry.courses !== undefined ? ` · ${entry.courses} ${entry.courses === 1 ? 'course' : 'courses'}` : ''}
                 </option>
               ))}
             </select>
@@ -267,7 +273,7 @@ export function PlanPage() {
       <div className="plan-school">
         <div>
           <label htmlFor="plan-school">Where are you studying?</label>
-          <p>Choose your school or study away site before finding classes.{saved.school && saved.school !== 'Abu Dhabi' && saved.school !== 'CAS' ? ' Study away shows NYUAD courses taught at this site.' : ''}</p>
+          <p>Choose your school or study away site before finding classes.{saved.school && saved.school !== 'Abu Dhabi' && saved.school !== 'CAS' ? ' Only sections taught at that site appear.' : ''}{scraped && saved.school ? ` Albert snapshot: ${new Date(scraped).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.` : ''}</p>
         </div>
         <select id="plan-school" className="input" value={saved.school} onChange={(event) => { setRows(null); update({ school: event.target.value, wants: [], chat: [], rules: DEFAULT_RULES }); }}>
           <option value="">Choose a school or site</option>
@@ -275,6 +281,7 @@ export function PlanPage() {
           <optgroup label="Study away">{PLAN_SCHOOLS.filter((school) => school.id !== 'Abu Dhabi' && school.id !== 'CAS').map((school) => <option key={school.id} value={school.id}>{school.label}</option>)}</optgroup>
         </select>
       </div>
+      {saved.school && terms && regularTerms(terms).length === 0 && <div className="alert">No regular semester classes for this school or site are in the catalog yet.</div>}
       {saved.school && rows?.courses.length === 0 && <div className="alert">No classes for this school or site are in the catalog for {term}. Try another semester.</div>}
       {saved.school && rows?.courses.length ? <>
 

@@ -362,6 +362,7 @@ export interface Term {
   name: string;
   start: string;
   end: string;
+  courses?: number;
 }
 
 export interface CourseRow {
@@ -605,7 +606,7 @@ export const api = {
       post<{ wants: Array<{ label: string; codes: string[]; sessions?: Array<'71' | '72'> }>; rules: Rules; missing: string[]; reply?: string }>('/api/plan', body),
   },
   courses: {
-    terms: () => cached('terms', () => request<{ terms: Term[]; current: string; scraped: string }>('/api/courses')),
+    terms: (school?: string) => cached(`terms:${school ?? ''}`, () => request<{ terms: Term[]; current: string; scraped: string }>(`/api/courses${school ? `?school=${encodeURIComponent(school)}` : ''}`)),
     list: (term: string, school?: string) => cached(`courses:${term}:${school ?? ''}`, () => request<{ term: string; courses: CourseRow[] }>(`/api/courses?term=${encodeURIComponent(term)}${school ? `&school=${encodeURIComponent(school)}` : ''}`)),
     all: () => cached('courses:all:2', () => request<{ courses: CourseEntry[] }>('/api/courses?all=2')),
     detail: (code: string) => request<CourseDetail>(`/api/courses?code=${encodeURIComponent(code)}`),
