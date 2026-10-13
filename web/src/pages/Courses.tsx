@@ -435,7 +435,7 @@ function Detail({ code, onClose }: { code: string; onClose(): void }) {
             </a>
           </div>
         )}
-        <StudentReviews code={code} professors={detail?.professors ?? []} />
+        <StudentReviews code={code} title={detail?.title ?? code} professors={detail?.professors ?? []} />
         {error ? (
           <div className="alert error">{error}</div>
         ) : !rating.done ? (
@@ -571,12 +571,13 @@ function RatingLoading() {
 }
 
 /** Reviews written here by students who took the course, and the form to write or change your own. */
-function StudentReviews({ code, professors }: { code: string; professors: string[] }) {
+function StudentReviews({ code, title, professors }: { code: string; title: string; professors: string[] }) {
   const { profile, toast } = useApp();
   const [reviews, setReviews] = useState<CourseReview[] | null>(null);
   const [open, setOpen] = useState(true);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
+  const [prompt, setPrompt] = useState(false);
   useEffect(() => {
     let live = true;
     api.board
@@ -594,6 +595,28 @@ function StudentReviews({ code, professors }: { code: string; professors: string
   const mine = reviews?.find((review) => review.mine);
   const others = (reviews ?? []).filter((review) => !review.mine);
   const average = reviews?.length ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length : 0;
+
+  useEffect(() => {
+    if (!profile || !reviews || !open || mine || editing) return;
+    try {
+      const last = Number(localStorage.getItem('review-prompt-at') ?? 0);
+      const skipped = JSON.parse(localStorage.getItem('review-prompt-skipped') ?? '[]') as string[];
+      if (Date.now() - last < 7 * 86_400_000 || skipped.includes(code)) return;
+    } catch { return; }
+    const timer = window.setTimeout(() => setPrompt(true), 18_000);
+    return () => window.clearTimeout(timer);
+  }, [code, profile, reviews, open, mine, editing]);
+
+  const dismissPrompt = (skip = false) => {
+    setPrompt(false);
+    try {
+      localStorage.setItem('review-prompt-at', String(Date.now()));
+      if (skip) {
+        const skipped = JSON.parse(localStorage.getItem('review-prompt-skipped') ?? '[]') as string[];
+        localStorage.setItem('review-prompt-skipped', JSON.stringify([...new Set([...skipped, code])].slice(-100)));
+      }
+    } catch { /* Storage may be disabled; the prompt still closes. */ }
+  };
 
   const remove = async () => {
     try {
@@ -634,6 +657,13 @@ function StudentReviews({ code, professors }: { code: string; professors: string
         </div>
       )}
       {error && <div className="alert error">{error}</div>}
+      {prompt && createPortal(<div className="review-nudge" data-line="guide" role="dialog" aria-label="Review this course">
+        <button type="button" className="icon-btn" onClick={() => dismissPrompt()} aria-label="Dismiss review prompt"><IconClose /></button>
+        <div className="review-nudge-star" aria-hidden="true"><IconStar amount={1} width={22} height={22} /></div>
+        <b>Took {title}?</b>
+        <p>A quick rating helps the next student choose. Details are optional, and you can post anonymously.</p>
+        <div className="review-nudge-actions"><button type="button" className="btn primary sm" onClick={() => { dismissPrompt(); setEditing(true); window.setTimeout(() => document.getElementById('write-review')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60); }}>Review course</button><button type="button" className="link-btn" onClick={() => dismissPrompt(true)}>Haven’t taken it</button></div>
+      </div>, document.body)}
       {profile && open && (editing || (reviews && !mine)) ? (
         <ReviewForm
           code={code}

@@ -19,6 +19,7 @@ interface Meeting {
 }
 
 interface Section {
+  school?: string;
   classNumber: string;
   section: string;
   component: string;
@@ -38,6 +39,7 @@ interface Section {
 
 /** One course in one term, as the scraper stores it. */
 export interface Offering {
+  school?: string;
   term: string;
   code: string;
   title: string;
@@ -126,7 +128,14 @@ export function buildCatalog(offerings: Offering[], now = new Date()): Catalog {
     }
     spans.set(offering.term, span);
   }
-  for (const list of byCode.values()) list.sort((a, b) => termOrder(b.term) - termOrder(a.term));
+  for (const [code, list] of byCode) {
+    const byTerm = new Map<string, Offering>();
+    for (const offering of list) {
+      const previous = byTerm.get(offering.term);
+      byTerm.set(offering.term, previous ? { ...previous, sections: [...previous.sections, ...offering.sections] } : offering);
+    }
+    byCode.set(code, [...byTerm.values()].sort((a, b) => termOrder(b.term) - termOrder(a.term)));
+  }
   const terms = [...spans.entries()].map(([name, span]) => ({ name, start: span.start === '9999' ? '' : span.start, end: span.end })).sort((a, b) => termOrder(b.name) - termOrder(a.name));
   return { terms, current: currentTerm(terms, abuDhabiDate(now)), byCode, instructors, scraped };
 }

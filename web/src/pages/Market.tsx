@@ -5,6 +5,7 @@ import { EmptyState } from '../components/EmptyState';
 import { Flap } from '../components/Flap';
 import { Modal } from '../components/Modal';
 import { Segmented } from '../components/Segmented';
+import { DateTimePicker } from '../components/DateTimePicker';
 import { Sign } from '../components/Sign';
 import { AdminRemove, onAdminRemoved } from '../components/AdminRemove';
 import { useApp } from '../context';
@@ -456,7 +457,7 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
   const ready =
     contact.trim().length >= 3 &&
     (kind !== 'sell' || (Number(price) > 0 && /^\d+(?:\.\d{1,2})?$/.test(price))) &&
-    (kind === 'ride' ? place.trim().length >= 2 && destination.trim().length >= 2 && Boolean(when) : title.trim().length >= 3);
+    (kind === 'ride' ? place.trim().length >= 2 && destination.trim().length >= 2 && Boolean(when) && when >= localInput(now, true) : title.trim().length >= 3);
 
   const submit = async () => {
     if (!profile || !ready || busy) return;
@@ -514,7 +515,7 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
           <div className="form-grid">
             <div className="field">
               <label htmlFor="ls-when">Leaving</label>
-              <input id="ls-when" className="input" type="datetime-local" value={when} min={localInput(now, true)} onChange={(event) => setWhen(event.target.value)} />
+              <DateTimePicker id="ls-when" value={when} min={localInput(now, true)} onChange={setWhen} />
             </div>
             <div className="field">
               <label htmlFor="ls-seats">Seats</label>

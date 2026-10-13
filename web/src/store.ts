@@ -4,6 +4,7 @@
  */
 import type { Rules, Want } from '../../lib/schedule.ts';
 import { normalizeRules, sessionHalf } from '../../lib/schedule.ts';
+import { isPlanSchool } from '../../lib/plan-schools.ts';
 import type { ChatTurn, Confidence, ContactKind, Profile, Redirect, SourceCard } from './api';
 
 export interface Message {
@@ -266,6 +267,7 @@ export interface PlanMessage { role: 'user' | 'assistant'; text: string }
 
 export interface SavedPlan {
   term: string;
+  school: string;
   wants: Array<Want & { label: string }>;
   chat?: PlanMessage[];
   rules: Rules;
@@ -278,6 +280,7 @@ export function loadPlan(): SavedPlan {
   const chat = Array.isArray(saved.chat) ? saved.chat.filter((entry) => entry && (entry.role === 'user' || entry.role === 'assistant') && typeof entry.text === 'string').slice(-24) : [];
   return {
     term: typeof saved.term === 'string' ? saved.term : '',
+    school: typeof saved.school === 'string' && isPlanSchool(saved.school) ? saved.school : wants.length ? 'Abu Dhabi' : '',
     wants: wants.map((want) => ({
       id: want.id,
       label: String(want.label ?? ''),

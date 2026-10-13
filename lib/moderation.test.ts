@@ -151,13 +151,13 @@ describe("the small model's review", () => {
     expect(await reviewPost({ gemini: null, backups: [] }, 'question', 'Where is the gym?')).toBeNull();
   });
 
-  it('requires a working reviewer in production, including when fail-open is set', async () => {
+  it('holds questions for a working reviewer in production while allowing screened event and market posts', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('ROR_REVIEW_FAIL_OPEN', '1');
     try {
-      expect((await reviewPost({ gemini: null, backups: [] }, 'notice', 'Film club screening'))?.reason).toBe('unreviewed');
+      expect(await reviewPost({ gemini: null, backups: [] }, 'notice', 'Film club screening')).toBeNull();
       answering('maybe');
-      expect((await reviewPost({ gemini, backups: [] }, 'notice', 'Film club screening'))?.reason).toBe('unreviewed');
+      expect(await reviewPost({ gemini, backups: [] }, 'notice', 'Film club screening')).toBeNull();
     } finally { vi.unstubAllEnvs(); }
   });
 
@@ -166,6 +166,6 @@ describe("the small model's review", () => {
     vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ verdict: verdicts.shift() }) }] }, finishReason: 'STOP' }] }), { status: 200 }));
     expect((await reviewPost({ gemini, backups: [] }, 'notice', 'Title: Free iPhones at the Moon', 'Where: Moon Base 7'))?.reason).toBe('fake');
     expect((await reviewPost({ gemini, backups: [] }, 'notice', 'Title: Housing office: re-apply by Friday'))?.reason).toBe('impersonation');
-    expect((await reviewPost({ gemini, backups: [] }, 'notice', 'Title: Chess club night'))?.reason).toBe('unreviewed');
+    expect(await reviewPost({ gemini, backups: [] }, 'notice', 'Title: Chess club night')).toBeNull();
   });
 });

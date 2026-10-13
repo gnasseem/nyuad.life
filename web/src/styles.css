@@ -1032,6 +1032,13 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .review-by .link-btn { font-size: 12.5px; }
 .link-btn.danger { color: var(--scarlet-ink); }
 .review-prompt { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 12px 16px; border: 1px dashed var(--rule-2); border-radius: 14px; color: var(--ink-2); font-size: 14px; font-weight: 600; }
+.review-nudge { position: fixed; z-index: 110; right: 22px; bottom: 22px; display: grid; gap: 8px; width: min(360px, calc(100vw - 32px)); padding: 20px; border: 1px solid var(--rule-2); border-radius: 18px; background: var(--plate); box-shadow: var(--shadow-2); color: var(--ink); animation: rise-in 0.3s var(--ease); }
+.review-nudge > .icon-btn { position: absolute; top: 10px; right: 10px; }
+.review-nudge-star { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--amber-soft); color: var(--amber-ink); }
+.review-nudge b { max-width: calc(100% - 25px); font: 740 17px/1.35 var(--sign); }
+.review-nudge p { color: var(--ink-2); font-size: 13.5px; line-height: 1.45; }
+.review-nudge-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 4px; }
+@media (max-width: 640px) { .review-nudge { right: 16px; bottom: 16px; } }
 .star-pick { display: flex; gap: 2px; }
 .star-pick button { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--ink-3); transition: color 0.12s, transform 0.12s var(--ease); }
 .star-pick button.on, .star-pick:hover button { color: var(--amber); }
@@ -1359,6 +1366,31 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
 /* ---------- Plan: the assistant, the courses and the week ---------- */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .term-pick select.input { width: auto; min-width: 140px; height: 40px; border-radius: 999px; padding-left: 16px; font-weight: 620; }
+.plan-school { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px; margin-bottom: 22px; padding: 18px 20px; border: 1px solid var(--rule); border-radius: 16px; background: var(--plate); }
+.plan-school label { display: block; margin-bottom: 3px; font: 730 17px/1.3 var(--sign); }
+.plan-school p { color: var(--ink-3); font-size: 13.5px; }
+.plan-school select { width: min(100%, 350px); min-height: 44px; }
+.date-time-picker { position: relative; width: 100%; }
+.date-time-trigger { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; text-align: left; cursor: pointer; }
+.date-time-trigger svg { width: 18px; height: 18px; flex: none; color: var(--line-ink); }
+.date-time-trigger span:nth-child(2) { flex: 1; }
+.date-time-panel { position: absolute; z-index: 50; top: calc(100% + 6px); left: 0; width: min(330px, calc(100vw - 48px)); padding: 14px; border: 1px solid var(--rule-2); border-radius: 16px; background: var(--plate); box-shadow: var(--shadow-2); }
+.date-time-heading, .date-time-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.date-time-heading b { font: 700 15px/1.2 var(--sign); }
+.date-time-calendar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin: 10px 0 14px; }
+.date-time-weekday { padding: 6px 0; color: var(--ink-3); font-size: 11px; font-weight: 700; text-align: center; }
+.date-time-calendar button { min-height: 35px; padding: 0; border: 0; border-radius: 9px; background: none; color: var(--ink); font: 650 13px/1 var(--sign); cursor: pointer; }
+.date-time-calendar button:hover { background: var(--plate-3); }
+.date-time-calendar button.selected { background: var(--line-fill); color: var(--line-on); }
+.date-time-calendar button:disabled { opacity: 0.3; cursor: default; }
+.date-time-clock { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--rule); }
+.date-time-clock > span { color: var(--ink-2); font-size: 13px; font-weight: 650; }
+.date-time-clock-controls { display: flex; align-items: center; gap: 4px; }
+.date-time-step { display: flex; align-items: center; border: 1px solid var(--rule-2); border-radius: 9px; overflow: hidden; }
+.date-time-step button { width: 26px; height: 34px; border: 0; background: var(--plate-2); color: var(--ink-2); font-size: 17px; cursor: pointer; }
+.date-time-step b { min-width: 22px; color: var(--ink); font: 690 13px/1 var(--sign); text-align: center; }
+.date-time-actions { padding-top: 10px; border-top: 1px solid var(--rule); }
+.date-time-error { margin-top: 8px; color: var(--scarlet-ink); font-size: 12px; }
 .assistant { display: grid; gap: 10px; margin-bottom: 24px; }
 .assistant-bar { align-items: center; padding: 6px 6px 6px 14px; border-radius: 16px; }
 .assistant-bar textarea { padding: 9px 0; font-size: 15.5px; }

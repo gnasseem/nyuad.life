@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { clock, DAY_NAMES, DEFAULT_RULES, highlights, lanes, minutes, normalizeRules, PRIMARY, sectionFits, sessionHalf, solve, WEEKDAYS, type Choice, type Fix, type Option, type Quality, type Rules, type SolverCourse, type Want } from '../../../lib/schedule.ts';
+import { PLAN_SCHOOLS } from '../../../lib/plan-schools.ts';
 import { api, ApiError, type CourseRating, type CourseRow, type ProfRating, type Term } from '../api';
 import { Segmented } from '../components/Segmented';
 import { Sign } from '../components/Sign';
@@ -93,7 +94,7 @@ export function PlanPage() {
     setReading(false);
     setText('');
     return () => { requestId.current++; };
-  }, [saved.term]);
+  }, [saved.term, saved.school]);
   const term = saved.term && regularTerms(terms ?? []).some((entry) => entry.name === saved.term) ? saved.term : planTerm(terms ?? []);
 
   const update = (patch: Partial<SavedPlan>) =>
@@ -111,20 +112,25 @@ export function PlanPage() {
   }, []);
 
   useEffect(() => {
-    if (!term) return;
+    if (!term || !saved.school) { setRows(null); return; }
     let live = true;
     setRows(null);
+    setError('');
     api.courses
-      .list(term)
+      .list(term, saved.school)
       .then((result) => live && setRows(result))
       .catch((err) => live && setError(err instanceof Error ? err.message : 'Could not load the courses.'));
     return () => {
       live = false;
     };
-  }, [term]);
+  }, [term, saved.school]);
 
   // "Add to a plan" from a course: add it once the term's courses are in, then take it out of the address.
   const adding = search.get('add');
+  useEffect(() => {
+    if (adding && !saved.school) update({ school: 'Abu Dhabi' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adding, saved.school]);
   useEffect(() => {
     if (!adding || !rows) return;
     const code = termCode(rows.courses, adding);
@@ -197,14 +203,14 @@ export function PlanPage() {
 
   const read = async () => {
     const request = text.trim();
-    if (!request || reading || !term) return;
+    if (!request || reading || !term || !saved.school || !rows?.courses.length) return;
     const id = ++requestId.current;
     const conversation: PlanMessage[] = [...chat, { role: 'user' as const, text: request }].slice(-23);
     update({ chat: conversation });
     setText('');
     setReading(true);
     try {
-      const plan = await api.plan.read({ term, text: request, history: chat.slice(-8), current: { wants: saved.wants.map(({ label, codes, sessions }) => ({ label, codes, sessions })), rules: saved.rules }, major: profile?.major, year: profile?.year });
+      const plan = await api.plan.read({ term, school: saved.school, text: request, history: chat.slice(-8), current: { wants: saved.wants.map(({ label, codes, sessions }) => ({ label, codes, sessions })), rules: saved.rules }, major: profile?.major, year: profile?.year });
       if (requestId.current !== id) return;
       // A reply with no courses at all is a misreading, not a request to empty the plan ("Start over" does that).
       const wants = plan.wants.length || saved.wants.length === 0 ? plan.wants.map((want) => ({ id: uid(), label: want.label, codes: want.codes, sessions: want.sessions })) : saved.wants;
@@ -238,10 +244,10 @@ export function PlanPage() {
   return (
     <div className="page plan-page">
       <Sign title="Plan" ar="الجدول" sub="Say what you need. You get every week that fits, best-rated professors first.">
-        {terms && terms.length > 0 && (
+        {saved.school && terms && terms.length > 0 && (
           <label className="term-pick">
             <span className="sr-only">Semester</span>
-            <select className="input" value={term} onChange={(event) => update({ term: event.target.value, chat: [] })} aria-label="Semester">
+            <select className="input" value={term} onChange={(event) => { setRows(null); update({ term: event.target.value, wants: [], chat: [] }); }} aria-label="Semester">
               {regularTerms(terms).map((entry) => (
                 <option key={entry.name} value={entry.name}>
                   {entry.name}
@@ -257,6 +263,20 @@ export function PlanPage() {
         )}
       </Sign>
       {error && <div className="alert error">{error}</div>}
+
+      <div className="plan-school">
+        <div>
+          <label htmlFor="plan-school">Where are you studying?</label>
+          <p>Choose your school or study away site before finding classes.{saved.school && saved.school !== 'Abu Dhabi' && saved.school !== 'CAS' ? ' Study away shows NYUAD courses taught at this site.' : ''}</p>
+        </div>
+        <select id="plan-school" className="input" value={saved.school} onChange={(event) => { setRows(null); update({ school: event.target.value, wants: [], chat: [], rules: DEFAULT_RULES }); }}>
+          <option value="">Choose a school or site</option>
+          <optgroup label="Schools"><option value="Abu Dhabi">Abu Dhabi</option><option value="CAS">College of Arts and Science (New York)</option></optgroup>
+          <optgroup label="Study away">{PLAN_SCHOOLS.filter((school) => school.id !== 'Abu Dhabi' && school.id !== 'CAS').map((school) => <option key={school.id} value={school.id}>{school.label}</option>)}</optgroup>
+        </select>
+      </div>
+      {saved.school && rows?.courses.length === 0 && <div className="alert">No classes for this school or site are in the catalog for {term}. Try another semester.</div>}
+      {saved.school && rows?.courses.length ? <>
 
       <section className="assistant" aria-label="Plan assistant">
         <div className="composer assistant-bar">
@@ -281,7 +301,7 @@ export function PlanPage() {
             aria-label="Tell the plan assistant what you need"
             enterKeyHint="send"
           />
-          <button type="button" className="send" onClick={() => void read()} disabled={!text.trim() || reading || !rows} aria-label="Send to the plan assistant">
+          <button type="button" className="send" onClick={() => void read()} disabled={!text.trim() || reading || !rows?.courses.length} aria-label="Send to the plan assistant">
             <IconArrow />
           </button>
         </div>
@@ -421,6 +441,7 @@ export function PlanPage() {
           )}
         </div>
       </div>
+      </> : null}
     </div>
   );
 }

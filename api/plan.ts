@@ -7,12 +7,14 @@
  *     -> { wants: [{ label, codes }], rules, missing: [] }
  */
 import { recordEvent } from '../lib/app-usage.ts';
-import { baseCode, CORE_SUBJECTS, courseRows, loadCatalog, type CourseRow } from '../lib/courses.ts';
+import { baseCode, CORE_SUBJECTS, loadCatalog, type CourseRow } from '../lib/courses.ts';
 import { geminiConfig } from '../lib/gemini.ts';
 import { ApiError, rateLimit, readJson, route, sendJson } from '../lib/http.ts';
 import { requireMember } from '../lib/identity.ts';
 import { screenAsk } from '../lib/moderation.ts';
 import { providersFromEnv, siteJson } from '../lib/providers.ts';
+import { schoolRows } from '../lib/plan-school.ts';
+import { isPlanSchool, PLAN_SCHOOLS } from '../lib/plan-schools.ts';
 import { DEFAULT_RULES, namesPerson, sessionHalf, WEEKDAYS, type Rules } from '../lib/schedule.ts';
 import { collapseWhitespace, extractCourseCodes } from '../lib/text.ts';
 
@@ -32,6 +34,7 @@ const PILLARS: Record<string, string> = {
 
 interface Body {
   term?: unknown;
+  school?: unknown;
   text?: unknown;
   history?: unknown;
   current?: { wants?: unknown; rules?: unknown };
@@ -76,7 +79,7 @@ const SCHEMA = {
 };
 
 const SYSTEM = [
-  "You turn an NYU Abu Dhabi student's request into choices for a schedule builder, using only the term's course list below.",
+  "You turn an NYU student's request into choices for a schedule builder, using only the selected school's term course list below. Never borrow a course from another school or study away site.",
   'reply: answer conversationally in one or two short sentences. Explain the edit or answer a follow-up about the current plan. Ask one clear question if the request is ambiguous, preserving the plan until clarified. Do not claim a schedule fits: the solver checks conflicts. Do not invent reviews, requirements, grades, professor quality or courses. Use only the supplied schedule and conversation.',
   'Return the whole plan after the request, starting from the current plan when there is one: keep what the student did not ask to change.',
   'wants: each course or slot the student needs, in their order. label: a few words for it as the student would say it ("Calculus", "an Arts Core"). codes: the course codes from the list that fill it: one for a named course; several for "one of" requests ("any Arts Core" = every course of that Core pillar; "an econ elective" = matching ECON courses), at most 30.',
@@ -98,6 +101,8 @@ export default route(['POST'], async (req, res) => {
   const body = await readJson<Body>(req);
   const catalog = loadCatalog();
   const term = String(body.term ?? '');
+  const school = String(body.school ?? 'Abu Dhabi');
+  if (!isPlanSchool(school)) throw new ApiError(400, 'Choose a school or study away site first.', 'bad_school');
   if (!catalog.terms.some((entry) => entry.name === term)) throw new ApiError(404, 'No such term.', 'not_found');
   const text = collapseWhitespace(String(body.text ?? ''));
   if (!text) throw new ApiError(400, 'Say what you need.', 'empty');
@@ -108,11 +113,13 @@ export default route(['POST'], async (req, res) => {
   const backups = providersFromEnv();
   if (!gemini && backups.length === 0) throw new ApiError(503, 'Planning from a description is off on this server. Add courses from Reviews instead.', 'no_model');
 
-  const rows = courseRows(catalog, term).filter((row) => row.sections.some((section) => section.status !== 'cancelled'));
+  const rows = schoolRows(catalog, term, school).filter((row) => row.sections.some((section) => section.status !== 'cancelled'));
+  if (!rows.length) throw new ApiError(404, `No ${PLAN_SCHOOLS.find((entry) => entry.id === school)?.label} classes are in the catalog for ${term}.`, 'no_school_courses');
   const student = [collapseWhitespace(String(body.major ?? '')).slice(0, 60), collapseWhitespace(String(body.year ?? '')).slice(0, 20)].filter(Boolean).join(', ');
   const current = currentPlan(body.current, rows);
   const history = Array.isArray(body.history) ? body.history.filter((entry) => entry && (entry.role === 'user' || entry.role === 'assistant') && typeof entry.text === 'string').slice(-8).map((entry) => `${entry.role}: ${collapseWhitespace(entry.text).slice(0, 1200)}`).join('\n') : '';
   const prompt = [
+    `School or study away site: ${PLAN_SCHOOLS.find((entry) => entry.id === school)?.label}`,
     `Term: ${term}`,
     student ? `The student: ${student}` : '',
     current ? `Current plan:\n${current}` : '',

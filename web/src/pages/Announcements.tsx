@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, type Announcement } from '../api';
 import { EmptyState } from '../components/EmptyState';
 import { Modal } from '../components/Modal';
+import { DateTimePicker } from '../components/DateTimePicker';
 import { Sign } from '../components/Sign';
 import { AdminRemove, onAdminRemoved } from '../components/AdminRemove';
 import { useApp } from '../context';
@@ -46,6 +47,12 @@ function addToCalendar(entry: Announcement): void {
 
 function dateKey(date: Date): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Dubai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+
+function abuDhabiNow(): string {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Dubai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date());
+  const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? '00';
+  return `${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}`;
 }
 
 export function AnnouncementsPage() {
@@ -227,7 +234,7 @@ function Compose({ onDone, onCancel }: { onDone(announcement: Announcement): voi
       <div className="form-grid">
         <div className="field">
           <label htmlFor="an-when">When · Abu Dhabi time</label>
-          <input id="an-when" className="input" type="datetime-local" required value={startsAt} onChange={(event) => setStartsAt(event.target.value)} />
+          <DateTimePicker id="an-when" value={startsAt} onChange={setStartsAt} min={abuDhabiNow()} zone="Abu Dhabi" />
         </div>
         <div className="field">
           <label htmlFor="an-where">Location</label>
@@ -248,7 +255,7 @@ function Compose({ onDone, onCancel }: { onDone(announcement: Announcement): voi
           Cancel
         </button>
         <span className="spacer" />
-        <button type="button" className="btn primary" onClick={() => void submit()} disabled={busy || title.trim().length < 4 || body.trim().length < 12 || !startsAt || location.trim().length < 2}>
+        <button type="button" className="btn primary" onClick={() => void submit()} disabled={busy || title.trim().length < 4 || body.trim().length < 12 || !startsAt || startsAt < abuDhabiNow() || location.trim().length < 2}>
           {busy ? 'Posting' : 'Post'}
         </button>
       </div>

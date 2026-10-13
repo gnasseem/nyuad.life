@@ -26,6 +26,8 @@ import { limitDurably, requireMember } from '../lib/identity.ts';
 import { normalizeCode } from '../lib/html.ts';
 import { loadOfficial, type OfficialCorpus, type OfficialDoc } from '../lib/official.ts';
 import { providersFromEnv, siteJson } from '../lib/providers.ts';
+import { schoolRows } from '../lib/plan-school.ts';
+import { isPlanSchool, type PlanSchool } from '../lib/plan-schools.ts';
 import { retrieve, sourcesBlock, toSourceCards } from '../lib/rag.ts';
 import { rerankerFromEnv } from '../lib/rerank.ts';
 import type { Hit } from '../lib/search.ts';
@@ -80,7 +82,9 @@ export default route(['GET'], async (req, res) => {
   }
   if (term) {
     if (!catalog.terms.some((entry) => entry.name === term)) throw new ApiError(404, 'No such term.', 'not_found');
-    sendJson(res, 200, { term, courses: courseRows(catalog, term) }, 3600);
+    const school = queryString(req, 'school');
+    if (school && !isPlanSchool(school)) throw new ApiError(400, 'Choose a school or study away site.', 'bad_school');
+    sendJson(res, 200, { term, courses: school ? schoolRows(catalog, term, school as PlanSchool) : courseRows(catalog, term) }, 3600);
     return;
   }
   sendJson(res, 200, { terms: catalog.terms, current: catalog.current, scraped: catalog.scraped }, 3600);

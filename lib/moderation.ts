@@ -224,7 +224,7 @@ const UNREVIEWED = "We couldn't check this post right now, so it hasn't gone up.
 export type ReviewedKind = Exclude<PostKind, 'name'>;
 const BELONGS: Record<ReviewedKind, string> = {
   notice:
-    'a notice on the campus board: ONLY a real scheduled event for NYUAD students, with a future date and time, a real location or named online platform, and a description of the activity and host. Club meetups, shows, workshops, sports and bake sales are fine. Hiring cleaners, service ads, tutoring offers, job vacancies, deadline reminders, requests and general announcements are not events; reject them as offtopic even when they have a date.',
+    'a notice on the campus board: a real scheduled event for NYUAD students, with a future date and time, a location or online platform, and a description of the activity. The host may be implied by the event or club name. Club meetups, shows, workshops, sports and bake sales are fine. Hiring cleaners, service ads, tutoring offers, job vacancies, deadline reminders and requests belong elsewhere.',
   listing:
     'a market post: a student selling, wanting or giving away their own things, or sharing a ride. A student offering a small service of their own (tutoring, haircuts, photography) is fine.',
   offer: 'the note on an offer to trade Falcon Dirhams or Campus Dirhams for cash between students.',
@@ -249,10 +249,10 @@ function reviewSystem(kind: ReviewedKind, today: Date): string {
     `The post is ${BELONGS[kind]}`,
     `Today is ${today.toISOString().slice(0, 10)}. ${PLACES}`,
     'Let ordinary posts through even when informal, short, critical, joking in tone or misspelt. Block a post that clearly is one of:',
-    'advertising: promotes a business, brand, shop, restaurant, agency or paid service that is not a student or campus group; affiliate, referral or promo-code links; sponsored content.',
+    'advertising: promotes an outside business, shop, restaurant, agency or paid service; affiliate, referral or promo-code links; sponsored content. A student naming the brand of their own item for sale is not advertising.',
     'spam: repeated, keyword-stuffed or meaningless text, link dumps, chain messages.',
     'trolling: a mocking or bait post, gibberish, a test post ("asdf", "test 123"), or something plainly not meant seriously.',
-    'fake: made up or impossible: an event or deadline that cannot be real (absurd claims, impossible times such as a party at 4am in the library, prizes too good to be true), a place that does not exist on campus or in the UAE, an item or ride that is obviously a joke, an answer that is clearly invented to mislead.',
+    'fake: clearly impossible from the supplied text alone: an absurd claim, fictional location, or item or ride that is plainly a joke. An unfamiliar building code or venue is not evidence that it is fake.',
     'impersonation: written as if from a university office, staff member or official body (Housing, the Registrar, Student Affairs, Public Safety, the Provost, NYU itself) or as another named person, rather than by a student or student group. A student sharing an office\'s deadline in their own words is fine.',
     'offtopic: plainly does not belong in this place (a rant or a meme as a notice, a question posted as a listing), or has nothing to do with student life.',
     'harassment: insults, mockery, rumours or accusations about a named or identifiable person.',
@@ -277,7 +277,8 @@ export async function reviewPost(models: { gemini: GeminiConfig | null; backups:
     .slice(0, 2500);
   if (!text) return null;
   const production = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
-  if (!models.gemini && models.backups.length === 0) return production ? { reason: 'unreviewed', message: UNREVIEWED } : null;
+  const communityPost = kind === 'notice' || kind === 'listing' || kind === 'offer';
+  if (!models.gemini && models.backups.length === 0) return production && !communityPost ? { reason: 'unreviewed', message: UNREVIEWED } : null;
   let verdict: Verdict;
   try {
     const result = await siteJson<{ verdict?: string }>(models.gemini, models.backups, { system: reviewSystem(kind, new Date()), prompt: `<post>\n${text}\n</post>`, schema: REVIEW_SCHEMA, maxOutputTokens: 64, timeoutMs: 9_000 });
@@ -287,9 +288,11 @@ export async function reviewPost(models: { gemini: GeminiConfig | null; backups:
     verdict = answer as Verdict;
   } catch (error) {
     console.warn(`[moderation] could not review a ${kind}:`, (error as Error).message);
-    return !production && process.env.ROR_REVIEW_FAIL_OPEN === '1' ? null : { reason: 'unreviewed', message: UNREVIEWED };
+    return communityPost || (!production && process.env.ROR_REVIEW_FAIL_OPEN === '1') ? null : { reason: 'unreviewed', message: UNREVIEWED };
   }
   if (verdict === 'ok') return null;
+  // Category judgments are too uncertain to stop a validated event or market post.
+  if (communityPost && verdict === 'offtopic') return null;
   if (verdict === 'spam') return { reason: 'spam', message: 'This looks like spam. Post something specific for students.' };
   if (verdict === 'sexual' || verdict === 'scam' || verdict === 'prohibited') return { reason: verdict, message: MESSAGES[verdict] };
   return { reason: verdict, message: REVIEW_MESSAGES[verdict] };

@@ -1,14 +1,14 @@
 /**
- * Reads every NYU Abu Dhabi class from Albert's Course Search with YOUR signed-in browser and saves it to
+ * Reads a school's classes from Albert's Course Search with YOUR signed-in browser and saves them to
  * data/classes.jsonl, one line per course and term: its sections with their times, rooms, professors and
  * open, closed or waitlist status. Runs on your laptop, never on the server.
  *
  *   npm run scrape:albert                       the newest academic year in Albert
  *   npm run scrape:albert -- --year 2025-2026   another year Albert still lists
+ *   npm run scrape:albert -- --school "College of Arts and Science"  another Albert school
  *
  * A Chromium window opens on Albert. Sign in there with your NetID if it asks; the login is kept in .albert-profile/
- * and the scraper carries on by itself. It reads the signed-in Course Search, which has no reCAPTCHA. If Albert
- * ever shows one, the run stops rather than getting around it. A run is one search per subject (about 45), a couple
+ * and the scraper carries on by itself. If Albert shows a reCAPTCHA, complete it in the same browser window. A run is one search per subject (about 45), a couple
  * of seconds apart.
  *
  * Each subject is saved as soon as it is read. Its rows for the terms it returned replace the earlier ones and
@@ -21,12 +21,13 @@ import { chromium, type Page } from 'playwright';
 
 const args = process.argv.slice(2);
 const YEAR = args.includes('--year') ? args[args.indexOf('--year') + 1] : undefined;
+const SCHOOL = args.includes('--school') ? args[args.indexOf('--school') + 1] ?? '' : 'NYU Abu Dhabi';
 
 const PROFILE_DIR = path.resolve('.albert-profile');
 const OUT_FILE = path.resolve('data/classes.jsonl');
 const SIGN_IN_URL = 'https://sis.portal.nyu.edu/psp/ihprod/EMPLOYEE/EMPL/?cmd=start';
 const SEARCH_URL = 'https://sis.nyu.edu/psc/csprod/EMPLOYEE/SA/c/NYU_SR.NYU_CLS_SRCH.GBL';
-const SCHOOL = 'NYU Abu Dhabi';
+const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const SIGN_IN_MINUTES = 15;
 
 interface Meeting {
@@ -39,6 +40,7 @@ interface Meeting {
 }
 
 interface Section {
+  school?: string;
   classNumber: string;
   section: string;
   component: string;
@@ -60,6 +62,7 @@ interface Section {
 }
 
 interface Course {
+  school?: string;
   term: string;
   code: string;
   title: string;
@@ -186,11 +189,12 @@ function toCourses(raw: RawCourse[], scraped: string): Course[] {
     const [, code = '', title = ''] = /^([A-Z]+-[A-Z]+ \S+)\s+(.*)$/.exec(firstLine) ?? [];
     const description = course.description.replace(/(?:less|more) description for .*$/s, '').replace(/\s+/g, ' ').trim();
     return course.terms.map((term) => ({
+      school: SCHOOL,
       term: term.term,
       code,
       title,
       description,
-      sections: term.classes.map(parseSection).filter((section): section is Section => section !== null),
+      sections: term.classes.map(parseSection).filter((section): section is Section => section !== null).map((section) => ({ ...section, school: SCHOOL })),
       scraped,
     }));
   });
@@ -213,7 +217,7 @@ function readCourses(): Course[] {
 
 /** Replaces the rows of each subject and term in `courses` and keeps every other row in the file. */
 function save(courses: Course[]): void {
-  const key = (course: Course) => `${course.term}|${course.code.split(' ')[0]}`;
+  const key = (course: Course) => `${course.school ?? 'NYU Abu Dhabi'}|${course.term}|${course.code.split(' ')[0]}`;
   const replaced = new Set(courses.map(key));
   const all = [...readCourses().filter((course) => !replaced.has(key(course))), ...courses];
   all.sort((a, b) => termOrder(a.term) - termOrder(b.term) || a.code.localeCompare(b.code));
@@ -256,12 +260,16 @@ async function openSearch(page: Page): Promise<void> {
     .then(() => true)
     .catch(() => false);
   if (ready) return;
-  if (/recaptcha/i.test(await page.content())) throw new Error('Albert showed a reCAPTCHA on the Course Search, so the run stops here.');
+  if (/recaptcha/i.test(await page.content())) {
+    log('Complete Albert’s reCAPTCHA in the browser window. The scraper will continue when Course Search opens.');
+    await page.locator('#NYU_CLS_DERIVED_DESCR100').waitFor({ timeout: SIGN_IN_MINUTES * 60_000 });
+    return;
+  }
   throw new Error(`The Course Search did not load (${page.url()}).`);
 }
 
 async function main(): Promise<void> {
-  const context = await chromium.launchPersistentContext(PROFILE_DIR, { headless: false, viewport: { width: 1280, height: 900 } });
+  const context = await chromium.launchPersistentContext(PROFILE_DIR, { headless: false, viewport: { width: 1280, height: 900 }, ...(existsSync(CHROME) ? { executablePath: CHROME } : {}) });
   const page = context.pages()[0] ?? (await context.newPage());
   const scraped = new Date().toISOString();
   const read: Course[] = [];
@@ -273,7 +281,10 @@ async function main(): Promise<void> {
     const year = YEAR ?? [...years].sort().at(-1);
     if (!year || !years.includes(year)) throw new Error(`Albert lists ${years.join(', ') || 'no academic years'}${YEAR ? `, not ${YEAR}` : ''}.`);
     await act(page, () => page.getByRole('link', { name: year, exact: true }).click());
-    await act(page, () => page.selectOption('select[id^="NYU_CLS_WRK2_DESCR254"]', SCHOOL));
+    const schools = (await page.locator('select[id^="NYU_CLS_WRK2_DESCR254"] option').allInnerTexts()).map((entry) => entry.trim()).filter(Boolean);
+    const matches = schools.filter((entry) => entry.toLowerCase().includes(SCHOOL.toLowerCase()));
+    if (matches.length !== 1) throw new Error(`Expected one school matching "${SCHOOL}"; found ${matches.length}. Available schools: ${schools.join(', ')}`);
+    await act(page, () => page.selectOption('select[id^="NYU_CLS_WRK2_DESCR254"]', { label: matches[0]! }));
 
     const subjects = (await page.locator('a').allInnerTexts())
       .map((text) => text.replace(/\s+/g, ' ').trim())

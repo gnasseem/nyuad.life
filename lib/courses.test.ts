@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { abuDhabiDate, allCourses, buildCatalog, courseRows, courseScheduleText, currentTerm, instructorScheduleText, liveTerms, matchSchedule, seatStatus, termOrder, type Offering } from './courses.ts';
+import { schoolRows } from './plan-school.ts';
 
 function offering(term: string, code: string, title: string, instructors: string[], status = 'Open', dates = ['2026-08-24', '2026-12-14']): Offering {
   return {
@@ -50,6 +51,28 @@ describe('seat status', () => {
 });
 
 describe('course rows', () => {
+  it('keeps only sections taught at the selected site', () => {
+    const mixed = offering('Fall 2026', 'CS-UH 1052G', 'Algorithms', ['Lee, Ana']);
+    mixed.sections.push({ ...mixed.sections[0]!, classNumber: 'paris-1', location: 'NYU Paris (Global)', instructors: ['Martin, Eve'] });
+    const cas = offering('Fall 2026', 'MATH-UA 101', 'Calculus I', ['Diaz, Sol']);
+    cas.sections[0]!.location = 'NYU New York';
+    const source = buildCatalog([mixed, cas]);
+    expect(schoolRows(source, 'Fall 2026', 'Abu Dhabi')[0]!.sections.map((section) => section.classNumber)).toEqual([mixed.sections[0]!.classNumber]);
+    expect(schoolRows(source, 'Fall 2026', 'NYU Paris (Global)')[0]!.sections.map((section) => section.classNumber)).toEqual(['paris-1']);
+    expect(schoolRows(source, 'Fall 2026', 'CAS').map((row) => row.code)).toEqual(['MATH-UA 101']);
+  });
+
+  it('combines the same course from separate school scrapes without mixing their sections', () => {
+    const home = offering('Fall 2026', 'CS-UH 1052G', 'Algorithms', ['Lee, Ana']);
+    const away = offering('Fall 2026', 'CS-UH 1052G', 'Algorithms', ['Martin, Eve']);
+    away.school = 'NYU Paris';
+    away.sections[0]!.school = 'NYU Paris';
+    away.sections[0]!.location = 'NYU Paris (Global)';
+    away.sections[0]!.classNumber = 'paris-2';
+    const source = buildCatalog([home, away]);
+    expect(schoolRows(source, 'Fall 2026', 'Abu Dhabi')[0]!.sections).toHaveLength(1);
+    expect(schoolRows(source, 'Fall 2026', 'NYU Paris (Global)')[0]!.sections.map((section) => section.classNumber)).toEqual(['paris-2']);
+  });
   it('labels both raw and prefixed seven-week session codes', () => {
     for (const session of ['71', 'A71', '72', 'A72']) {
       const row = offering('Fall 2026', 'X-UH 1000', 'Seven-week course', ['Lee, Ana']);
