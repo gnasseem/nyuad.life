@@ -38,9 +38,11 @@ archive browsing, plan reading and contacts to anyone who has not.
   (`/api/cron/warm-ratings`, rewritten to `/api/courses?op=warm`) writes them ahead of time for the term's most
   discussed courses and their professors, about half a minute's worth a night (admins can run more from the admin
   page), so students rarely wait for one to be written. Professors are a second tab.
-- **Plan.** A schedule builder after [Horarium](https://github.com/Phoenix-3139/Horarium). Say what you need ("calc,
-  intro to CS, any Arts Core, nothing before 10, Fridays off") and a model reads it into courses from the term's real list
-  and rules, or add a course from its page in Reviews; the week's rules (hours, days off, classes a day, shape, breaks,
+- **Plan.** A schedule builder after [Horarium](https://github.com/Phoenix-3139/Horarium). Choose any school or study
+  away site in Albert, then say what you need ("calc, intro to CS, any Arts Core, nothing before 10, Fridays off"). A
+  model reads the request against that site's real course list and rules. Students compare its course options with Albert
+  descriptions before building the week, or add a course from its page in Reviews. The week's rules (local class hours,
+  teaching days, days off, classes a day, shape, breaks,
   waitlists) are set beside the courses. The browser then finds every combination where no two classes meet at once
   (`lib/schedule.ts`): one section of every component, lectures paired with their own recitation or lab, seven-week
   halves sharing a slot, closed and waitlisted sections only when allowed. Hard rules (hours, days off, classes a day,
@@ -225,10 +227,11 @@ Classes come from Albert's Course Search, read with your own NetID in a Chromium
 
 ```bash
 npm run scrape:albert                       # the newest academic year
+npm run scrape:albert -- --all               # every school in Albert's selector
 npm run scrape:albert -- --year 2025-2026   # an earlier year Albert still lists
 ```
 
-Sign in when the window asks; the login is kept in `.albert-profile/`. The course search and Ask read the file directly. Every NYU Abu Dhabi subject is searched once,
+Sign in when the window asks; the login is kept in `.albert-profile/`. The course search and Ask read the file directly. Each selected school's subjects are searched once,
 and each course and term becomes a line of `data/classes.jsonl` with its sections' class numbers, times, rooms,
 professors, seven-week sessions and open, closed or waitlist status. A subject's rows replace its earlier rows for the
 same term and everything else is kept. The run stops if Albert ever shows a reCAPTCHA. Commit `data/classes.jsonl`

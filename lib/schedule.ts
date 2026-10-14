@@ -11,7 +11,7 @@
 
 export type Day = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
 export const WEEKDAYS: Day[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-const DAYS: string[] = [...WEEKDAYS, 'Sat', 'Sun'];
+export const DAYS: Day[] = [...WEEKDAYS, 'Sat', 'Sun'];
 export const DAY_NAMES: Record<string, string> = { Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday', Sat: 'Saturday', Sun: 'Sunday' };
 
 export interface SolverMeeting {

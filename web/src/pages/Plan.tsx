@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { clock, DAY_NAMES, DEFAULT_RULES, highlights, lanes, minutes, normalizeRules, PRIMARY, sectionFits, sessionHalf, solve, WEEKDAYS, type Choice, type Fix, type Option, type Quality, type Rules, type SolverCourse, type Want } from '../../../lib/schedule.ts';
-import { PLAN_SCHOOLS } from '../../../lib/plan-schools.ts';
-import { api, ApiError, type CourseRating, type CourseRow, type ProfRating, type Term } from '../api';
+import { clock, DAYS, DAY_NAMES, DEFAULT_RULES, highlights, lanes, minutes, normalizeRules, PRIMARY, sectionFits, sessionHalf, solve, WEEKDAYS, type Choice, type Fix, type Option, type Quality, type Rules, type SolverCourse, type Want } from '../../../lib/schedule.ts';
+import { api, ApiError, type CourseRating, type CourseRow, type PlanSchool, type ProfRating, type Term } from '../api';
 import { Segmented } from '../components/Segmented';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
@@ -21,14 +20,24 @@ const SHAPE_HELP: Record<Rules['shape'], string> = {
   compact: 'Packs classes into as few days on campus as it can, even with gaps.',
   spread: 'Spreads classes over the week so no day is long.',
 };
-const STARTS = ['', '08:30', '09:55', '11:20', '12:45', '13:55', '15:20', '17:00'];
-const ENDS = ['', '09:45', '11:10', '12:35', '14:00', '15:10', '16:50', '18:00', '19:25'];
 const MOST_PER_DAY = 4;
 const SHORT: Record<string, string> = { Lecture: 'Lec', Seminar: 'Sem', Recitation: 'Rec', Laboratory: 'Lab', Studio: 'Studio', Workshop: 'Wksp' };
 /** How far a rating counts, by how sure it is: a thin one is pulled toward average. */
 const TRUST: Record<ProfRating['confidence'], number> = { high: 1, medium: 0.8, low: 0.55 };
 /** NYUAD's usual load is 16 credits a term; under 12 or over 18 is unusual. */
 const LOAD = { usual: 16, low: 12, high: 18 };
+
+interface SiteTimes { starts: string[]; ends: string[]; from: number; to: number; days: string[] }
+
+function siteTimes(courses: CourseRow[]): SiteTimes {
+  const meetings = courses.flatMap((course) => course.sections.filter((section) => section.status !== 'cancelled').flatMap((section) => section.meetings.filter((meeting) => meeting.days.length && meeting.start && meeting.end)));
+  const starts = [...new Set(meetings.map((meeting) => meeting.start).filter(Boolean))].sort();
+  const ends = [...new Set(meetings.map((meeting) => meeting.end).filter(Boolean))].sort();
+  const from = starts.length ? Math.floor(minutes(starts[0]!) / 60) * 60 : 8 * 60;
+  const to = ends.length ? Math.ceil(minutes(ends.at(-1)!) / 60) * 60 : 20 * 60;
+  const taught = new Set(meetings.flatMap((meeting) => meeting.days));
+  return { starts, ends, from, to: Math.max(to, from + 60), days: taught.size ? DAYS.filter((day) => taught.has(day)) : [...WEEKDAYS] };
+}
 
 /** Only regular semesters have the weekly schedule this planner models. */
 function regularTerms(terms: Term[]): Term[] {
@@ -40,9 +49,9 @@ function planTerm(terms: Term[]): string {
   return regularTerms(terms)[0]?.name ?? '';
 }
 
-/** "MATH-UH 1012Q" and "MATH-UH 1012" are one course; the term's own code wins. */
+/** Albert sometimes drops trailing code attributes in a later term; the term's own code wins. */
 function termCode(rows: CourseRow[], code: string): string | null {
-  const base = (value: string) => value.replace(/^([A-Z]+-UH \d{4})[A-Z]*$/, '$1');
+  const base = (value: string) => value.replace(/^(\S+ \d+)[A-Z]+$/, '$1');
   return rows.find((row) => row.code === code)?.code ?? rows.find((row) => base(row.code) === base(code))?.code ?? null;
 }
 
@@ -64,6 +73,7 @@ export function PlanPage() {
   const { search } = useRoute();
   const { profile, toast } = useApp();
   const [saved, setSaved] = useState<SavedPlan>(loadPlan);
+  const [schools, setSchools] = useState<PlanSchool[]>([]);
   const [terms, setTerms] = useState<Term[] | null>(null);
   const [scraped, setScraped] = useState('');
   const [rows, setRows] = useState<{ term: string; courses: CourseRow[] } | null>(null);
@@ -72,6 +82,7 @@ export function PlanPage() {
   const [reading, setReading] = useState(false);
   const [viewing, setViewing] = useState<{ key: string; index: number } | null>(null);
   const [showChat, setShowChat] = useState(false);
+  const [draft, setDraft] = useState<{ wants: PlanWant[]; rules: Rules; missing: string[]; selected: Record<string, string[]> } | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef<HTMLTextAreaElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
@@ -93,7 +104,7 @@ export function PlanPage() {
   useEffect(() => {
     requestId.current++;
     setReading(false);
-    setText('');
+    setDraft(null);
     return () => { requestId.current++; };
   }, [saved.term, saved.school]);
   const term = saved.term && regularTerms(terms ?? []).some((entry) => entry.name === saved.term) ? saved.term : planTerm(terms ?? []);
@@ -104,6 +115,15 @@ export function PlanPage() {
       savePlan(next);
       return next;
     });
+
+  useEffect(() => {
+    api.courses.terms().then((result) => setSchools(result.schools ?? [])).catch((err) => setError(err instanceof Error ? err.message : 'Could not load the schools.'));
+  }, []);
+
+  useEffect(() => {
+    if (schools.length && saved.school && !schools.some((school) => school.id === saved.school)) update({ school: '', term: '', wants: [], chat: [], rules: DEFAULT_RULES });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schools, saved.school]);
 
   useEffect(() => {
     if (!saved.school) { setTerms(null); return; }
@@ -148,6 +168,7 @@ export function PlanPage() {
 
   const catalog = useMemo(() => new Map((rows?.courses ?? []).map((row) => [row.code, row as SolverCourse])), [rows]);
   const titles = useMemo(() => new Map((rows?.courses ?? []).map((row) => [row.code, row.title])), [rows]);
+  const timing = useMemo(() => siteTimes(rows?.courses ?? []), [rows]);
 
   // Who could teach in a plan: the professors of every section the rules allow, lecturers of named courses first.
   const candidates = useMemo(() => {
@@ -216,7 +237,8 @@ export function PlanPage() {
     setText('');
     setReading(true);
     try {
-      const plan = await api.plan.read({ term, school: saved.school, text: request, history: chat.slice(-8), current: { wants: saved.wants.map(({ label, codes, sessions }) => ({ label, codes, sessions })), rules: saved.rules }, major: profile?.major, year: profile?.year });
+      const currentWants = draft ? draft.wants.map((want) => ({ ...want, codes: draft.selected[want.id] ?? want.codes })) : saved.wants;
+      const plan = await api.plan.read({ term, school: saved.school, text: request, history: chat.slice(-8), current: { wants: currentWants.map(({ label, codes, sessions }) => ({ label, codes, sessions })), rules: draft?.rules ?? saved.rules }, major: profile?.major, year: profile?.year });
       if (requestId.current !== id) return;
       // A reply with no courses at all is a misreading, not a request to empty the plan ("Start over" does that).
       const wants = plan.wants.length || saved.wants.length === 0 ? plan.wants.map((want) => ({ id: uid(), label: want.label, codes: want.codes, sessions: want.sessions })) : saved.wants;
@@ -231,7 +253,9 @@ export function PlanPage() {
         ...plan.missing,
       ].filter(Boolean).join(' ');
       const reply = plan.reply ? [plan.reply, ...plan.missing.filter((note) => !plan.reply!.includes(note))].join(' ') : summary;
-      update({ wants, rules, chat: [...conversation, { role: 'assistant', text: reply }] });
+      update({ chat: [...conversation, { role: 'assistant', text: reply }] });
+      if (wants.length) setDraft({ wants, rules, missing: plan.missing, selected: Object.fromEntries(wants.map((want) => [want.id, want.codes])) });
+      else update({ rules });
     } catch (err) {
       if (requestId.current === id) update({ chat: [...conversation, { role: 'assistant', text: err instanceof ApiError || err instanceof Error ? err.message : 'Could not read that. Try again.' }] });
     } finally {
@@ -241,7 +265,15 @@ export function PlanPage() {
 
   const clear = () => {
     update({ wants: [], rules: DEFAULT_RULES, chat: [] });
+    setDraft(null);
     setShowChat(false);
+  };
+
+  const buildDraft = () => {
+    if (!draft || draft.wants.some((want) => !draft.selected[want.id]?.length)) return;
+    update({ wants: draft.wants.map((want) => ({ ...want, codes: draft.selected[want.id]! })), rules: draft.rules, chat: [...chat, { role: 'assistant' as const, text: 'Your week is ready. You can change the course choices or any time preference below.' }].slice(-24) });
+    setDraft(null);
+    mainRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const rated = candidates.filter((name) => profRatings.get(name)).length;
@@ -249,11 +281,11 @@ export function PlanPage() {
 
   return (
     <div className="page plan-page">
-      <Sign title="Plan" ar="الجدول" sub="Say what you need. You get every week that fits, best-rated professors first.">
+      <Sign title="Plan" ar="الجدول" sub="Describe your goals, compare real classes, then build a week that fits.">
         {saved.school && terms && terms.length > 0 && (
           <label className="term-pick">
             <span className="sr-only">Semester</span>
-            <select className="input" value={term} onChange={(event) => { setRows(null); update({ term: event.target.value, wants: [], chat: [] }); }} aria-label="Semester">
+            <select className="input" value={term} onChange={(event) => { setRows(null); setText(''); update({ term: event.target.value, wants: [], chat: [] }); }} aria-label="Semester">
               {regularTerms(terms).map((entry) => (
                 <option key={entry.name} value={entry.name}>
                   {entry.name}{entry.courses !== undefined ? ` · ${entry.courses} ${entry.courses === 1 ? 'course' : 'courses'}` : ''}
@@ -273,17 +305,22 @@ export function PlanPage() {
       <div className="plan-school">
         <div>
           <label htmlFor="plan-school">Where are you studying?</label>
-          <p>Choose your school or study away site before finding classes.{saved.school && saved.school !== 'Abu Dhabi' && saved.school !== 'CAS' ? ' Only sections taught at that site appear.' : ''}{scraped && saved.school ? ` Albert snapshot: ${new Date(scraped).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.` : ''}</p>
+          <p>Only classes taught there appear. Times are local to the selected site.{scraped && saved.school ? ` Catalog updated: ${new Date(scraped).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.` : ''}</p>
         </div>
-        <select id="plan-school" className="input" value={saved.school} onChange={(event) => { setRows(null); update({ school: event.target.value, wants: [], chat: [], rules: DEFAULT_RULES }); }}>
+        <select id="plan-school" className="input" value={saved.school} onChange={(event) => { setRows(null); setText(''); update({ school: event.target.value, wants: [], chat: [], rules: DEFAULT_RULES }); }}>
           <option value="">Choose a school or site</option>
-          <optgroup label="Schools"><option value="Abu Dhabi">Abu Dhabi</option><option value="CAS">College of Arts and Science (New York)</option></optgroup>
-          <optgroup label="Study away">{PLAN_SCHOOLS.filter((school) => school.id !== 'Abu Dhabi' && school.id !== 'CAS').map((school) => <option key={school.id} value={school.id}>{school.label}</option>)}</optgroup>
+          {(['Campus', 'School', 'Study away'] as const).map((group) => <optgroup key={group} label={group === 'Campus' ? 'Degree campuses' : group === 'School' ? 'Schools' : 'Study away sites'}>{schools.filter((school) => school.group === group).map((school) => <option key={school.id} value={school.id}>{school.label}</option>)}</optgroup>)}
         </select>
       </div>
       {saved.school && terms && regularTerms(terms).length === 0 && <div className="alert">No regular semester classes for this school or site are in the catalog yet.</div>}
       {saved.school && rows?.courses.length === 0 && <div className="alert">No classes for this school or site are in the catalog for {term}. Try another semester.</div>}
       {saved.school && rows?.courses.length ? <>
+
+      <nav className="plan-steps" aria-label="Planning steps">
+        <span className="active"><b>1</b> Tell us what you need</span>
+        <span className={draft ? 'active' : ''}><b>2</b> Compare courses</span>
+        <span className={saved.wants.length ? 'active' : ''}><b>3</b> Build your week</span>
+      </nav>
 
       <section className="assistant" aria-label="Plan assistant">
         <div className="composer assistant-bar">
@@ -352,8 +389,31 @@ export function PlanPage() {
         )}
       </section>
 
-      <div className={`plan${option ? ' has-plan' : ''}`}>
-        <fieldset className="plan-side" disabled={reading}>
+      {draft && (
+        <section className="plan-review" aria-labelledby="plan-review-title">
+          <div className="plan-review-head">
+            <div><span className="eyebrow">Step 2 · Compare courses</span><h2 id="plan-review-title">Choose what can fill each slot</h2><p>These options are offered in {term} at {schools.find((school) => school.id === saved.school)?.label ?? saved.school}. Summaries come from Albert. Keep several checked and the planner will find the best fit. Check Degree Progress to confirm what counts toward your degree.</p></div>
+            <button type="button" className="link-btn" onClick={() => setDraft(null)}>Dismiss</button>
+          </div>
+          {draft.wants.map((want, index) => <div className="plan-review-slot" key={want.id}>
+            <h3>{want.label || rows.courses.find((course) => course.code === want.codes[0])?.title || `Course ${index + 1}`}</h3>
+            <div className="plan-review-options">{want.codes.map((code) => {
+              const course = rows.courses.find((entry) => entry.code === code);
+              if (!course) return null;
+              return <label key={code} className="plan-review-course"><input type="checkbox" checked={draft.selected[want.id]?.includes(code) ?? false} onChange={() => setDraft((current) => {
+                if (!current) return null;
+                const selected = current.selected[want.id] ?? [];
+                return { ...current, selected: { ...current.selected, [want.id]: selected.includes(code) ? selected.filter((item) => item !== code) : want.codes.filter((item) => selected.includes(item) || item === code) } };
+              })} /><span><b>{course.code} · {course.title}</b><small>{course.credits ? `${course.credits} credits · ` : ''}{course.sections.filter((section) => section.status === 'open').length} open sections</small><span>{course.description || 'Albert has no description for this course.'}</span></span></label>;
+            })}</div>
+          </div>)}
+          {draft.missing.length > 0 && <p className="plan-review-missing">Needs clarification: {draft.missing.join(', ')}.</p>}
+          <button type="button" className="btn primary" onClick={buildDraft} disabled={draft.wants.some((want) => !draft.selected[want.id]?.length)}>Build my week <IconArrow /></button>
+        </section>
+      )}
+
+      {!draft && <div className={`plan${option ? ' has-plan' : ''}`}>
+        <fieldset className="plan-side" disabled={reading || !!draft}>
           <section className="plan-block" aria-labelledby="plan-courses">
             <div className="plan-block-head">
               <h2 id="plan-courses">Courses</h2>
@@ -390,12 +450,12 @@ export function PlanPage() {
             )}
           </section>
 
-          <WeekFilter rules={saved.rules} onChange={setRules} ratings={saved.rules.bestRated && candidates.length > 0 ? (unread > 0 ? `Reading about ${unread} more professors…` : rated ? `${rated} of ${candidates.length} professors rated.` : 'No professor rated yet.') : 'From what students wrote about them.'} />
+          <WeekFilter rules={saved.rules} timing={timing} onChange={setRules} ratings={saved.rules.bestRated && candidates.length > 0 ? (unread > 0 ? `Reading about ${unread} more professors…` : rated ? `${rated} of ${candidates.length} professors rated.` : 'No professor rated yet.') : 'From what students wrote about them.'} />
         </fieldset>
 
         <div className="plan-main" ref={mainRef}>
           {!rows && !error && <div className="skeleton" style={{ height: 420 }} />}
-          {rows && saved.wants.length === 0 && <WeekGrid option={null} daysOff={saved.rules.daysOff} empty="Tell the assistant what you need to see a week that fits." />}
+          {rows && saved.wants.length === 0 && <WeekGrid option={null} timing={timing} daysOff={saved.rules.daysOff} empty="Compare courses, then build your week." />}
           {result && result.problems.length > 0 && (
             <>
               <div className="alert warn plan-problems" role="status">
@@ -417,7 +477,7 @@ export function PlanPage() {
                   </div>
                 ))}
               </div>
-              <WeekGrid option={null} daysOff={saved.rules.daysOff} empty="Nothing fits yet." />
+              <WeekGrid option={null} timing={timing} daysOff={saved.rules.daysOff} empty="Nothing fits yet." />
             </>
           )}
           {result && option && (
@@ -442,12 +502,12 @@ export function PlanPage() {
                   </button>
                 </div>
               </div>
-              <WeekGrid option={option} daysOff={saved.rules.daysOff} />
+              <WeekGrid option={option} timing={timing} daysOff={saved.rules.daysOff} />
               <PlanList option={option} wants={saved.wants} profs={profRatings} />
             </>
           )}
         </div>
-      </div>
+      </div>}
       </> : null}
     </div>
   );
@@ -561,9 +621,8 @@ function Load({ low, high }: { low: number; high: number }) {
  * The week's rules, always in view: a bar of the teaching day with the hours you keep free hatched, the start and end
  * that set it, the days you want off, how many classes a day, the shape of the week and three switches.
  */
-function WeekFilter({ rules, onChange, ratings }: { rules: Rules; onChange(patch: Partial<Rules>): void; ratings: string }) {
-  const from = DAY_START;
-  const to = DAY_END;
+function WeekFilter({ rules, timing, onChange, ratings }: { rules: Rules; timing: SiteTimes; onChange(patch: Partial<Rules>): void; ratings: string }) {
+  const { from, to } = timing;
   const start = rules.earliest ? minutes(rules.earliest) : from;
   const end = rules.latest ? minutes(rules.latest) : to;
   const share = (time: number) => `${((Math.min(to, Math.max(from, time)) - from) / (to - from)) * 100}%`;
@@ -584,9 +643,7 @@ function WeekFilter({ rules, onChange, ratings }: { rules: Rules; onChange(patch
       <div className="wf-window" aria-hidden="true">
         <div className="wf-track">
           <span className="wf-band" style={{ left: share(start), right: `calc(100% - ${share(end)})` }} />
-          {STARTS.slice(2).map((time) => (
-            <i key={time} style={{ left: share(minutes(time)) }} />
-          ))}
+          {Array.from({ length: Math.floor((to - from) / 60) - 1 }, (_, index) => from + (index + 1) * 60).map((time) => <i key={time} style={{ left: share(time) }} />)}
         </div>
         <div className="wf-ends">
           <span>{clock(from)}</span>
@@ -597,7 +654,7 @@ function WeekFilter({ rules, onChange, ratings }: { rules: Rules; onChange(patch
         <label className="wf-field">
           <span>Start after</span>
           <select className="input" value={rules.earliest} onChange={(event) => onChange({ earliest: event.target.value })}>
-            {[...new Set([...STARTS, rules.earliest])].map((time) => (
+            {['', ...new Set([...timing.starts, rules.earliest].filter(Boolean))].sort((a, b) => a.localeCompare(b)).map((time) => (
               <option key={time} value={time}>
                 {time ? clock(time) : 'Any time'}
               </option>
@@ -607,7 +664,7 @@ function WeekFilter({ rules, onChange, ratings }: { rules: Rules; onChange(patch
         <label className="wf-field">
           <span>Done by</span>
           <select className="input" value={rules.latest} onChange={(event) => onChange({ latest: event.target.value })}>
-            {[...new Set([...ENDS, rules.latest])].map((time) => (
+            {['', ...new Set([...timing.ends, rules.latest].filter(Boolean))].sort((a, b) => a.localeCompare(b)).map((time) => (
               <option key={time} value={time}>
                 {time ? clock(time) : 'Any time'}
               </option>
@@ -621,7 +678,7 @@ function WeekFilter({ rules, onChange, ratings }: { rules: Rules; onChange(patch
           Days on campus
         </span>
         <div className="wf-days" role="group" aria-labelledby="wf-days">
-          {WEEKDAYS.map((day) => {
+          {timing.days.map((day) => {
             const off = rules.daysOff.includes(day);
             return (
               <button key={day} type="button" className={`wf-day${off ? ' off' : ''}`} aria-pressed={off} aria-label={`${DAY_NAMES[day]}: ${off ? 'off' : 'on campus'}`} onClick={() => onChange({ daysOff: off ? rules.daysOff.filter((entry) => entry !== day) : [...rules.daysOff, day] })}>
@@ -730,14 +787,11 @@ function halfOf(session: string): string {
   return sessionHalf(session) === '71' ? '1st half' : sessionHalf(session) === '72' ? '2nd half' : '';
 }
 
-const DAY_START = minutes('08:30');
-const DAY_END = minutes('19:25');
-
 /**
  * The week as a timetable, Monday to Friday and the weekend when a class meets then, with days off shaded. Blocks that
  * overlap (only ever the two seven-week halves) share the column in lanes; sections with no set time are listed below.
  */
-function WeekGrid({ option, daysOff, empty }: { option: Option | null; daysOff: string[]; empty?: string }) {
+function WeekGrid({ option, timing, daysOff, empty }: { option: Option | null; timing: SiteTimes; daysOff: string[]; empty?: string }) {
   const blocks: Block[] = [];
   const untimed: string[] = [];
   option?.choices.forEach((choice, color) => {
@@ -771,14 +825,14 @@ function WeekGrid({ option, daysOff, empty }: { option: Option | null; daysOff: 
       });
     }
   });
-  const days = [...WEEKDAYS, ...(['Sat', 'Sun'] as const).filter((day) => blocks.some((block) => block.day === day))];
+  const days = timing.days;
   for (const day of days) {
     const list = blocks.filter((block) => block.day === day);
     lanes(list).forEach((place, i) => Object.assign(list[i]!, place));
   }
-  const from = Math.min(DAY_START, ...blocks.map((block) => block.start));
-  const to = Math.max(DAY_END, ...blocks.map((block) => block.end));
-  const ticks = STARTS.slice(1).map(minutes).filter((time) => time >= from && time < to);
+  const from = Math.min(timing.from, ...blocks.map((block) => block.start));
+  const to = Math.max(timing.to, ...blocks.map((block) => block.end));
+  const ticks = Array.from({ length: Math.ceil((to - from) / 60) }, (_, index) => Math.ceil(from / 60) * 60 + index * 60).filter((time) => time >= from && time < to);
   const span = to - from;
   return (
     <div className={`week-grid${option ? '' : ' blank'}`} style={{ '--days': days.length, '--hours': span / 60 } as CSSProperties}>

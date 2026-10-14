@@ -81,14 +81,14 @@ export function bestWindow(text: string, terms: string[], size = 320): string {
   return (startAtWord > 0 ? '…' : '') + slice.trimEnd() + (startAtWord + size < clean.length ? '…' : '');
 }
 
-/** Extracts course codes such as "CS-UH 1001", "CSTS-UH 1125X" or "socsc-uh 1310" normalised to "CSTS-UH 1125X". */
+/** Extracts NYU course codes across schools, such as "CS-UH 1001" or "MATH-UA 101". */
 export function extractCourseCodes(text: string): string[] {
   const codes = new Set<string>();
-  // Hyphenated codes in any case ("cs-uh 1001"), and unhyphenated ones only when clearly upper-case ("CS UH 1001").
-  const patterns = [/\b([A-Za-z]{2,7})-UH[-\s]?(\d{4}[A-Za-z]{0,2})\b/gi, /\b([A-Z]{2,7})\s?UH\s?(\d{4}[A-Z]{0,2})\b/g];
+  // Hyphenated codes in any case; unhyphenated codes only when clearly upper-case.
+  const patterns = [/\b([A-Za-z]{2,8})-([A-Za-z]{2,3})[-\s]?(\d{1,4}[A-Za-z]{0,2})\b/gi, /\b([A-Z]{2,8})\s([A-Z]{2,3})\s?(\d{1,4}[A-Z]{0,2})\b/g];
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {
-      codes.add(`${match[1]!.toUpperCase()}-UH ${match[2]!.toUpperCase()}`);
+      codes.add(`${match[1]!.toUpperCase()}-${match[2]!.toUpperCase()} ${match[3]!.toUpperCase()}`);
     }
   }
   return [...codes];

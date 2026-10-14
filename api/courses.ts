@@ -27,7 +27,7 @@ import { normalizeCode } from '../lib/html.ts';
 import { loadOfficial, type OfficialCorpus, type OfficialDoc } from '../lib/official.ts';
 import { providersFromEnv, siteJson } from '../lib/providers.ts';
 import { schoolRows } from '../lib/plan-school.ts';
-import { isPlanSchool, type PlanSchool } from '../lib/plan-schools.ts';
+import { isPlanSchool, planSchools } from '../lib/plan-schools.ts';
 import { retrieve, sourcesBlock, toSourceCards } from '../lib/rag.ts';
 import { rerankerFromEnv } from '../lib/rerank.ts';
 import type { Hit } from '../lib/search.ts';
@@ -83,17 +83,17 @@ export default route(['GET'], async (req, res) => {
   }
   if (term) {
     if (!catalog.terms.some((entry) => entry.name === term)) throw new ApiError(404, 'No such term.', 'not_found');
-    if (school && !isPlanSchool(school)) throw new ApiError(400, 'Choose a school or study away site.', 'bad_school');
-    sendJson(res, 200, { term, courses: school ? schoolRows(catalog, term, school as PlanSchool) : courseRows(catalog, term) }, 3600);
+    if (school && !isPlanSchool(catalog, school)) throw new ApiError(400, 'Choose a school or study away site.', 'bad_school');
+    sendJson(res, 200, { term, courses: school ? schoolRows(catalog, term, school) : courseRows(catalog, term) }, 3600);
     return;
   }
   if (school) {
-    if (!isPlanSchool(school)) throw new ApiError(400, 'Choose a school or study away site.', 'bad_school');
+    if (!isPlanSchool(catalog, school)) throw new ApiError(400, 'Choose a school or study away site.', 'bad_school');
     const terms = catalog.terms.map((entry) => ({ ...entry, courses: schoolRows(catalog, entry.name, school).filter((row) => row.sections.some((section) => section.status !== 'cancelled')).length })).filter((entry) => entry.courses > 0);
     sendJson(res, 200, { terms, current: terms.find((entry) => entry.name === catalog.current)?.name ?? terms[0]?.name ?? '', scraped: catalog.scraped }, 3600);
     return;
   }
-  sendJson(res, 200, { terms: catalog.terms, current: catalog.current, scraped: catalog.scraped }, 3600);
+  sendJson(res, 200, { terms: catalog.terms, current: catalog.current, scraped: catalog.scraped, schools: planSchools(catalog) }, 3600);
 });
 
 function bulletinEntry(official: OfficialCorpus | null, code: string): OfficialDoc | null {

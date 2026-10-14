@@ -365,6 +365,8 @@ export interface Term {
   courses?: number;
 }
 
+export interface PlanSchool { id: string; label: string; group: 'Campus' | 'School' | 'Study away' }
+
 export interface CourseRow {
   code: string;
   title: string;
@@ -606,7 +608,7 @@ export const api = {
       post<{ wants: Array<{ label: string; codes: string[]; sessions?: Array<'71' | '72'> }>; rules: Rules; missing: string[]; reply?: string }>('/api/plan', body),
   },
   courses: {
-    terms: (school?: string) => cached(`terms:${school ?? ''}`, () => request<{ terms: Term[]; current: string; scraped: string }>(`/api/courses${school ? `?school=${encodeURIComponent(school)}` : ''}`)),
+    terms: (school?: string) => cached(`terms:${school ?? ''}`, () => request<{ terms: Term[]; current: string; scraped: string; schools?: PlanSchool[] }>(`/api/courses${school ? `?school=${encodeURIComponent(school)}` : ''}`)),
     list: (term: string, school?: string) => cached(`courses:${term}:${school ?? ''}`, () => request<{ term: string; courses: CourseRow[] }>(`/api/courses?term=${encodeURIComponent(term)}${school ? `&school=${encodeURIComponent(school)}` : ''}`)),
     all: () => cached('courses:all:2', () => request<{ courses: CourseEntry[] }>('/api/courses?all=2')),
     detail: (code: string) => request<CourseDetail>(`/api/courses?code=${encodeURIComponent(code)}`),

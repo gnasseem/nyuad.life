@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { abuDhabiDate, allCourses, buildCatalog, courseRows, courseScheduleText, currentTerm, instructorScheduleText, liveTerms, matchSchedule, seatStatus, termOrder, type Offering } from './courses.ts';
 import { schoolRows } from './plan-school.ts';
+import { planSchools } from './plan-schools.ts';
 
 function offering(term: string, code: string, title: string, instructors: string[], status = 'Open', dates = ['2026-08-24', '2026-12-14']): Offering {
   return {
@@ -74,6 +75,29 @@ describe('course rows', () => {
     const source = buildCatalog([home, away]);
     expect(schoolRows(source, 'Fall 2026', 'Abu Dhabi')[0]!.sections).toHaveLength(1);
     expect(schoolRows(source, 'Fall 2026', 'NYU Paris (Global)')[0]!.sections.map((section) => section.classNumber)).toEqual(['paris-2']);
+  });
+  it('lists every scraped school and keeps study away sections out of home school results', () => {
+    const home = offering('Fall 2026', 'MATH-UA 101', 'Calculus', ['Diaz, Sol']);
+    home.school = 'College of Arts and Science';
+    home.sections[0]!.school = home.school;
+    home.sections[0]!.location = 'New York';
+    const away = offering('Fall 2026', 'MATH-UA 101', 'Calculus', ['Diaz, Sol']);
+    away.school = home.school;
+    away.sections[0]!.school = home.school;
+    away.sections[0]!.location = 'NYU London (Global)';
+    away.sections[0]!.classNumber = 'london-1';
+    const stern = offering('Fall 2026', 'FINC-UB 1001', 'Finance', ['Lee, Ana']);
+    stern.school = 'Leonard N. Stern School of Business';
+    stern.sections[0]!.school = stern.school;
+    stern.sections[0]!.location = 'New York';
+    const source = buildCatalog([home, away, stern]);
+    expect(planSchools(source).map((school) => school.id)).toContain(stern.school);
+    expect(planSchools(source).map((school) => school.id)).toContain('New York');
+    expect(planSchools(source).map((school) => school.id)).toContain('NYU London (Global)');
+    expect(schoolRows(source, 'Fall 2026', 'CAS')[0]!.sections).toHaveLength(1);
+    expect(schoolRows(source, 'Fall 2026', 'New York').map((row) => row.code)).toEqual(['FINC-UB 1001', 'MATH-UA 101']);
+    expect(schoolRows(source, 'Fall 2026', 'NYU London (Global)')[0]!.sections[0]!.classNumber).toBe('london-1');
+    expect(schoolRows(source, 'Fall 2026', stern.school)[0]!.code).toBe('FINC-UB 1001');
   });
   it('labels both raw and prefixed seven-week session codes', () => {
     for (const session of ['71', 'A71', '72', 'A72']) {

@@ -19,6 +19,7 @@ describe('tokenize', () => {
 describe('extractCourseCodes', () => {
   it('normalises spacing and case', () => {
     expect(extractCourseCodes('took cs-uh 1001 and CSTS-UH1125X, also SOCSC-UH 1310')).toEqual(['CS-UH 1001', 'CSTS-UH 1125X', 'SOCSC-UH 1310']);
+    expect(extractCourseCodes('Compare math-ua 101 and FINC-UB 1001')).toEqual(['MATH-UA 101', 'FINC-UB 1001']);
   });
   it('ignores things that are not course codes', () => {
     expect(extractCourseCodes('UH 1001 and A1C dorm')).toEqual([]);

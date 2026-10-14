@@ -4,7 +4,6 @@
  */
 import type { Rules, Want } from '../../lib/schedule.ts';
 import { normalizeRules, sessionHalf } from '../../lib/schedule.ts';
-import { isPlanSchool } from '../../lib/plan-schools.ts';
 import type { ChatTurn, Confidence, ContactKind, Profile, Redirect, SourceCard } from './api';
 
 export interface Message {
@@ -216,30 +215,24 @@ export function saveSeenAnswers(seen: Record<string, number>): void {
 
 /* ---------- Theme ---------- */
 
-/** Light or dark. The device's setting picks the first one; after that it is whatever the student chose. */
+/** Dark mode is temporarily disabled. */
 export type Theme = 'light' | 'dark';
 
 export function loadTheme(): Theme {
-  try {
-    const saved = localStorage.getItem(THEME_KEY);
-    if (saved === 'light' || saved === 'dark') return saved;
-  } catch {
-    // storage unavailable: fall back to the device
-  }
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  return 'light';
 }
 
 /** Shows a theme; `remember` keeps it for next time (a choice, not the device's default). */
 export function applyTheme(theme: Theme, remember = false): void {
   if (remember) {
     try {
-      localStorage.setItem(THEME_KEY, theme);
+      localStorage.setItem(THEME_KEY, 'light');
     } catch {
       // ignore
     }
   }
-  document.documentElement.dataset.theme = theme;
-  document.querySelector('meta[name="theme-color"]:not([media])')?.setAttribute('content', theme === 'dark' ? '#0a1130' : '#eef1f6');
+  document.documentElement.dataset.theme = 'light';
+  document.querySelector('meta[name="theme-color"]:not([media])')?.setAttribute('content', '#eef1f6');
 }
 
 /* ---------- First visit and layout ---------- */
@@ -280,7 +273,7 @@ export function loadPlan(): SavedPlan {
   const chat = Array.isArray(saved.chat) ? saved.chat.filter((entry) => entry && (entry.role === 'user' || entry.role === 'assistant') && typeof entry.text === 'string').slice(-24) : [];
   return {
     term: typeof saved.term === 'string' ? saved.term : '',
-    school: typeof saved.school === 'string' && isPlanSchool(saved.school) ? saved.school : wants.length ? 'Abu Dhabi' : '',
+    school: typeof saved.school === 'string' && saved.school.length < 100 ? saved.school : wants.length ? 'Abu Dhabi' : '',
     wants: wants.map((want) => ({
       id: want.id,
       label: String(want.label ?? ''),

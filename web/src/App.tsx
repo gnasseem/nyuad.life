@@ -7,7 +7,7 @@ import { Wordmark } from './components/Logo';
 import { ProfileModal } from './components/ProfileForm';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
 import { initials } from './format';
-import { IconAsk, IconBag, IconBook, IconCalendar, IconMegaphone, IconMoon, IconQuestions, IconShield, IconSun, IconUser } from './icons';
+import { IconAsk, IconBag, IconBook, IconCalendar, IconMegaphone, IconQuestions, IconShield, IconUser } from './icons';
 import { AskPage } from './pages/Ask';
 import { navigate, onLinkClick, routePath, useRoute, type Route } from './router';
 import { applyTheme, loadActiveConversation, loadConversations, loadOnboarded, loadProfile, loadSidebarClosed, loadTheme, onConversationsChange, saveOnboarded, saveAccountKey, saveProfile, saveSidebarClosed, type Conversation, type Theme } from './store';
@@ -57,8 +57,6 @@ const NAV: Array<{ route: Route; label: string; line: Line; icon: typeof IconAsk
   { route: { name: 'market', tab: 'items' }, label: 'Market', line: 'market', icon: IconBag, matches: ['market'] },
 ];
 
-/** The button names what it switches to. */
-const THEME_LABEL: Record<Theme, string> = { light: 'Switch to dark mode', dark: 'Switch to light mode' };
 const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Events', market: 'Market', courses: 'Reviews', professors: 'Professors', threads: 'Threads', post: 'Thread', plan: 'Plan', settings: 'Settings', admin: 'Admin' };
 const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: '' };
 
@@ -224,8 +222,6 @@ export function App() {
     [health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, chatgpt, refreshChatGPT, admin, refreshAdmin],
   );
 
-  const toggleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
-  const ThemeIcon = theme === 'dark' ? IconMoon : IconSun;
   const currentConversation = route.name === 'ask' ? search.get('c') : null;
   const onAsk = route.name === 'ask';
   const togglePanel = () => {
@@ -302,9 +298,6 @@ export function App() {
                 <IconShield /> <span>Admin</span>
               </a>
             )}
-            <button type="button" className="icon-btn" onClick={toggleTheme} title={THEME_LABEL[theme]} aria-label={THEME_LABEL[theme]}>
-              <ThemeIcon key={theme} className="turn-in" />
-            </button>
             <span className={settingsActive ? 'is-settings' : undefined}>{me}</span>
           </div>
         </header>

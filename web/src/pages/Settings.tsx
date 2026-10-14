@@ -7,41 +7,10 @@ import { useApp } from '../context';
 import { plural, standingLabel } from '../format';
 import { IconExternal, IconShield } from '../icons';
 import { onLinkClick } from '../router';
-import { clearConversations, forgetDevice, loadConversations, onConversationsChange, type Theme } from '../store';
-
-const THEMES: Array<{ id: Theme; label: string }> = [
-  { id: 'light', label: 'Light' },
-  { id: 'dark', label: 'Dark' },
-];
-
-/** A tiny line map in each theme's own colours, so the choice is seen rather than described. */
-function ThemeArt({ theme }: { theme: Theme }) {
-  const day = { ground: '#eef1f6', plate: '#ffffff', ink: '#0b1230' };
-  const night = { ground: '#0a1130', plate: '#0f1839', ink: '#f0f2fa' };
-  const art = (c: typeof day, clip?: string) => (
-    <g clipPath={clip}>
-      <rect width="200" height="80" fill={c.ground} />
-      <path d="M -10 22 H 70 L 100 52 H 210" fill="none" stroke="#e0281e" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M -10 62 H 60 L 90 32 H 210" fill="none" stroke="#1e5bff" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M 140 -10 V 90" fill="none" stroke="#f5b400" strokeWidth="6" strokeLinecap="round" />
-      <circle cx="95" cy="42" r="9" fill={c.plate} stroke={c.ink} strokeWidth="4" />
-      <circle cx="140" cy="52" r="5.5" fill={c.plate} stroke="#f5b400" strokeWidth="3.5" />
-    </g>
-  );
-  return (
-    <svg viewBox="0 0 200 80" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-      <defs>
-        <clipPath id="half">
-          <path d="M 120 0 H 200 V 80 H 80 Z" />
-        </clipPath>
-      </defs>
-      {art(theme === 'dark' ? night : day)}
-    </svg>
-  );
-}
+import { clearConversations, forgetDevice, loadConversations, onConversationsChange } from '../store';
 
 export function SettingsPage() {
-  const { profile, setProfile, requestProfile, theme, setTheme, toast, boardProblem, chatgpt, refreshChatGPT } = useApp();
+  const { profile, setProfile, requestProfile, toast, boardProblem, chatgpt, refreshChatGPT } = useApp();
   const [count, setCount] = useState(() => loadConversations().length);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -82,20 +51,6 @@ export function SettingsPage() {
   return (
     <div className="page settings">
       <Sign title="Settings" ar="الإعدادات" />
-
-      <section className="settings-section">
-        <h2>Theme</h2>
-        <div className="theme-cards" role="radiogroup" aria-label="Theme">
-          {THEMES.map((entry) => (
-            <button key={entry.id} type="button" role="radio" aria-checked={theme === entry.id} className="theme-card" onClick={() => setTheme(entry.id)}>
-              <span className="theme-art">
-                <ThemeArt theme={entry.id} />
-              </span>
-              <b>{entry.label}</b>
-            </button>
-          ))}
-        </div>
-      </section>
 
       {chatgpt?.available && (
         <section className="settings-section">

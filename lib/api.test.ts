@@ -490,8 +490,7 @@ describe('api', () => {
     expect(terms.terms.map((term: { name: string }) => term.name)).toEqual(['Fall 2026']);
     const abuDhabiTerms = await getJson(`${apiUrl}/api/courses?school=Abu%20Dhabi`);
     expect(abuDhabiTerms.terms).toEqual([expect.objectContaining({ name: 'Fall 2026', courses: 1 })]);
-    const parisTerms = await getJson(`${apiUrl}/api/courses?school=NYU%20Paris%20(Global)`);
-    expect(parisTerms.terms).toEqual([]);
+    expect((await fetch(`${apiUrl}/api/courses?school=NYU%20Paris%20(Global)`)).status).toBe(400);
     const list = await getJson(`${apiUrl}/api/courses?term=Fall%202026`);
     expect(list.courses.map((row: { code: string }) => row.code)).toEqual(['MATH-UH 1012']);
     const detail = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012`);
@@ -544,7 +543,7 @@ describe('api', () => {
     expect(plan.wants).toEqual([{ label: '', codes: ['MATH-UH 1012'], sessions: [] }]);
     expect(plan.reply).toBe('I added Calculus and kept your time preferences.');
     expect(plan.missing).toEqual(['an Arts Core', 'Nobody Here is not teaching this term']);
-    expect(plan.rules).toEqual({ earliest: '09:00', latest: '', daysOff: ['Fri'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Rana Dania'], avoid: [] });
+    expect(plan.rules).toEqual({ earliest: '09:00', latest: '', daysOff: ['Fri', 'Sat'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Rana Dania'], avoid: [] });
     const call = geminiCalls.at(-1)!;
     expect(call.prompt).toContain('MATH-UH 1012 · Calculus');
     expect(call.prompt).toContain('Current plan:\n- Calculus: MATH-UH 1012 (sessions 71, 72)');

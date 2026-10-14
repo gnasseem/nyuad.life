@@ -1,5 +1,5 @@
 /**
- * The class schedule from Albert (data/classes.jsonl, written by scripts/scrape-albert.ts): every NYU Abu Dhabi course
+ * The class schedule from Albert (data/classes.jsonl, written by scripts/scrape-albert.ts): courses across NYU schools
  * per term with its sections, times, rooms, professors and seat status. It powers the course search and is the
  * authority Ask cites for who teaches what, when and where. Loaded once per process.
  */

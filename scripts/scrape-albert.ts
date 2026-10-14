@@ -4,6 +4,7 @@
  * open, closed or waitlist status. Runs on your laptop, never on the server.
  *
  *   npm run scrape:albert                       the newest academic year in Albert
+ *   npm run scrape:albert -- --all               every school in Albert's selector
  *   npm run scrape:albert -- --year 2025-2026   another year Albert still lists
  *   npm run scrape:albert -- --school "College of Arts and Science"  another Albert school
  *
@@ -22,6 +23,7 @@ import { chromium, type Page } from 'playwright';
 const args = process.argv.slice(2);
 const YEAR = args.includes('--year') ? args[args.indexOf('--year') + 1] : undefined;
 const SCHOOL = args.includes('--school') ? args[args.indexOf('--school') + 1] ?? '' : 'NYU Abu Dhabi';
+const ALL_SCHOOLS = args.includes('--all');
 
 const PROFILE_DIR = path.resolve('.albert-profile');
 const OUT_FILE = path.resolve('data/classes.jsonl');
@@ -182,19 +184,19 @@ function parseSection(text: string): Section | null {
   };
 }
 
-function toCourses(raw: RawCourse[], scraped: string): Course[] {
+function toCourses(raw: RawCourse[], scraped: string, school: string): Course[] {
   return raw.flatMap((course) => {
     // Special topics put the topic on a second line of the heading; each class repeats it as "Topic:".
     const firstLine = (course.heading.split('\n')[0] ?? '').replace(/\s+/g, ' ').trim();
     const [, code = '', title = ''] = /^([A-Z]+-[A-Z]+ \S+)\s+(.*)$/.exec(firstLine) ?? [];
     const description = course.description.replace(/(?:less|more) description for .*$/s, '').replace(/\s+/g, ' ').trim();
     return course.terms.map((term) => ({
-      school: SCHOOL,
+      school,
       term: term.term,
       code,
       title,
       description,
-      sections: term.classes.map(parseSection).filter((section): section is Section => section !== null).map((section) => ({ ...section, school: SCHOOL })),
+      sections: term.classes.map(parseSection).filter((section): section is Section => section !== null).map((section) => ({ ...section, school })),
       scraped,
     }));
   });
@@ -282,15 +284,16 @@ async function main(): Promise<void> {
     if (!year || !years.includes(year)) throw new Error(`Albert lists ${years.join(', ') || 'no academic years'}${YEAR ? `, not ${YEAR}` : ''}.`);
     await act(page, () => page.getByRole('link', { name: year, exact: true }).click());
     const schools = (await page.locator('select[id^="NYU_CLS_WRK2_DESCR254"] option').allInnerTexts()).map((entry) => entry.trim()).filter(Boolean);
-    const matches = schools.filter((entry) => entry.toLowerCase().includes(SCHOOL.toLowerCase()));
-    if (matches.length !== 1) throw new Error(`Expected one school matching "${SCHOOL}"; found ${matches.length}. Available schools: ${schools.join(', ')}`);
-    await act(page, () => page.selectOption('select[id^="NYU_CLS_WRK2_DESCR254"]', { label: matches[0]! }));
-
+    const selected = ALL_SCHOOLS ? schools : schools.filter((entry) => entry.toLowerCase().includes(SCHOOL.toLowerCase()));
+    if (!ALL_SCHOOLS && selected.length !== 1) throw new Error(`Expected one school matching "${SCHOOL}"; found ${selected.length}. Available schools: ${schools.join(', ')}`);
+    log(`Schools in Albert: ${schools.join(', ')}`);
+    for (const school of selected) {
+    await act(page, () => page.selectOption('select[id^="NYU_CLS_WRK2_DESCR254"]', { label: school }));
     const subjects = (await page.locator('a').allInnerTexts())
       .map((text) => text.replace(/\s+/g, ' ').trim())
       .filter((text) => /\([A-Z]+-[A-Z]+\)$/.test(text));
-    if (subjects.length === 0) throw new Error(`Albert listed no subjects for ${SCHOOL} in ${year}.`);
-    log(`${year}: ${subjects.length} ${SCHOOL} subjects.`);
+    if (subjects.length === 0) { log(`${school}: no subjects in ${year}.`); continue; }
+    log(`${year}: ${subjects.length} ${school} subjects.`);
 
     for (const [index, subject] of subjects.entries()) {
       const code = /\(([A-Z]+-[A-Z]+)\)$/.exec(subject)?.[1] ?? '';
@@ -301,7 +304,7 @@ async function main(): Promise<void> {
         .catch(() => false);
       if (shown) {
         const header = (await page.locator('#RESULT_COUNTlbl').textContent()) ?? '';
-        const courses = toCourses((await page.evaluate(EXTRACT)) as RawCourse[], scraped);
+        const courses = toCourses((await page.evaluate(EXTRACT)) as RawCourse[], scraped, school);
         const classes = courses.reduce((sum, course) => sum + course.sections.length, 0);
         const total = Number(/Total Class Count: (\d+)/.exec(header)?.[1] ?? classes);
         if (classes !== total) log(`${code}: read ${classes} classes but Albert counts ${total}.`);
@@ -312,7 +315,8 @@ async function main(): Promise<void> {
         log(`${code}: no results.`);
       }
       if (await page.locator('#NYU_CLS_DERIVED_BACK').count()) await act(page, () => page.click('#NYU_CLS_DERIVED_BACK'));
-      await sleep(1_500);
+      await sleep(ALL_SCHOOLS ? 500 : 1_500);
+    }
     }
 
     const sections = read.flatMap((course) => course.sections).filter((section) => section.status !== 'Cancelled');
