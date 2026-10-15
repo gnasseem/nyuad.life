@@ -15,8 +15,8 @@ export type Route =
   | { name: 'settings' }
   | { name: 'admin' };
 
-export type MarketTab = 'items' | 'falcons' | 'campus' | 'rides';
-const MARKET_TABS: MarketTab[] = ['items', 'falcons', 'campus', 'rides'];
+export type MarketTab = 'items' | 'falcons' | 'campus' | 'rides' | 'lost-found';
+const MARKET_TABS: MarketTab[] = ['items', 'falcons', 'campus', 'rides', 'lost-found'];
 
 export function parseRoute(pathname: string): Route {
   // A malformed escape ("/post/%E0") would throw outside every error boundary and leave a blank page; keep it as typed.

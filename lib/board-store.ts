@@ -517,8 +517,8 @@ type Row = Record<string, unknown>;
 
 /** Ids are uuid columns: anything else would make Postgres answer 400 instead of "not found". */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** The listing kinds still served; the table's check constraint also allows the retired lost and found. */
-const LISTED_KINDS = 'sell,want,free,ride';
+/** Public market listing kinds. */
+const LISTED_KINDS = 'sell,want,free,ride,lost,found';
 /** Everything about a question but its embedding (a thousand floats): only the answer engine reads that. */
 const QUESTION_COLUMNS = 'select=id,text,summary,topics,courses,majors,years,asker_key,asker_name,status,views,skips,answers,created_at,updated_at';
 

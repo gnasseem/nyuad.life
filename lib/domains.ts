@@ -1,7 +1,6 @@
 /**
  * Questions the archive should not try to answer, and where to send people instead. Falcon and Campus Dirham trades,
- * listings and rides are live requests with their own pages in the market; a lost item, and anything else that needs
- * someone right now, goes to the group.
+ * listings, rides and lost items have their own pages; practical questions still go through search.
  */
 
 type OffTopicDomain = 'falcons' | 'campus' | 'listing' | 'ride' | 'lost-found' | 'live';
@@ -18,11 +17,7 @@ export const FALCONS_PATH = '/market/falcons';
 export const CAMPUS_PATH = '/market/campus';
 export const MARKET_PATH = '/market';
 export const RIDES_PATH = '/market/rides';
-export const DEFAULT_GROUP_URL = 'https://www.facebook.com/groups/nyuad.room.of.requirement';
-
-function groupUrl(env: NodeJS.ProcessEnv = process.env): string {
-  return (env.ROR_GROUP_URL ?? '').trim() || DEFAULT_GROUP_URL;
-}
+export const LOST_FOUND_PATH = '/market/lost-found';
 
 const FALCON = /\bfalcons?\b/i;
 const FALCON_NOT_CURRENCY = /\bfalcons?\s+(?:team|club|society|group|bird|show|hospital|lounge)|\bfalconry|\bfalconer/i;
@@ -41,7 +36,7 @@ const RIDE = [
   /\b(?:carpool|car pool|need a ride|ride to|lift to)\b/i,
 ];
 const LOST_FOUND = [
-  /\b(?:i|we)\s+(?:have\s+)?(?:lost|left|misplaced|forgot)\s+(?:my|our|a|an)\b/i,
+  /\b(?:(?:i|we)\s+(?:have\s+)?)?(?:lost|misplaced|forgot)\s+(?:my|our|a|an)\b/i,
   /\b(?:found|has anyone seen|have you seen|anyone seen)\s+(?:a|an|my|this|someone's|these)\b/i,
   /\bmissing (?:my|our)\b/i,
 ];
@@ -49,10 +44,11 @@ const LIVE = [/\b(?:anyone|anybody|someone)\b.{0,60}\b(?:right now|rn|at the mom
 const LIVE_NEED = /\b(?:have|has|got|lend|borrow|spare|give|bring)\b/i;
 
 /** Returns where to send an off-platform request, or null when the archive should answer it. */
-export function detectRedirect(question: string, env: NodeJS.ProcessEnv = process.env): Redirect | null {
+export function detectRedirect(question: string, _env: NodeJS.ProcessEnv = process.env): Redirect | null {
   const text = question.trim();
   if (!text) return null;
-  const group = { url: groupUrl(env), label: 'Open the group' };
+  // Losing something can be context for a question about replacing it, insurance or access. Answer that question.
+  const procedure = /\b(?:how|where|what|which|who|can i|do i|should i|replace\w*|reissu\w*|renew\w*|new (?:one|id|card|key|passport)|fee|cost|pay|report|block|deactivat\w*|enter|travel|fly)\b/i.test(text);
   if (CAMPUS.test(text) && FALCON_TRADE.test(text.replace(CAMPUS, ''))) {
     return { domain: 'campus', title: 'Trade Campus Dirhams in the market', message: 'Post what you have or want and people contact you directly.', link: { url: CAMPUS_PATH, label: 'Open Campus Dirhams' } };
   }
@@ -65,11 +61,11 @@ export function detectRedirect(question: string, env: NodeJS.ProcessEnv = proces
   if (RIDE.some((pattern) => pattern.test(text))) {
     return { domain: 'ride', title: 'Find a ride in the market', message: 'Rides are listed by day, with seats and a way to reach the driver.', link: { url: RIDES_PATH, label: 'Open rides' } };
   }
-  if (LOST_FOUND.some((pattern) => pattern.test(text))) {
-    return { domain: 'lost-found', title: 'Post it in the group', message: 'Say what it is and where you last had it: people on campus read the group all day.', link: group };
+  if (!procedure && LOST_FOUND.some((pattern) => pattern.test(text))) {
+    return { domain: 'lost-found', title: 'Check Lost & found', message: 'Look for your item or post what was lost or found.', link: { url: LOST_FOUND_PATH, label: 'Open Lost & found' } };
   }
   if (LIVE.some((pattern) => pattern.test(text)) && LIVE_NEED.test(text)) {
-    return { domain: 'live', title: 'Ask the group', message: 'This needs someone who can help right now.', link: group };
+    return { domain: 'live', title: 'Ask students on Questions', message: 'Post your request so someone on campus can help.', link: { url: '/questions', label: 'Open Questions' } };
   }
   return null;
 }

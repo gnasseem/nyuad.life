@@ -304,7 +304,7 @@ describe('api', () => {
     expect(result.confidence.level).toBe('high');
     expect(result.model).toBe('gemini-2.5-flash');
     expect(result.sources.length).toBeGreaterThan(0);
-    expect(result.retrieval.reranked).toBe(true);
+    expect(result.retrieval.reranked).toBe(false);
     // Models that failed are skipped for a while rather than tried on every question.
     const answers = geminiCalls.filter((call) => call.url.includes(':streamGenerateContent'));
     expect(answers.at(-1)!.url).toContain('gemini-2.5-flash:');

@@ -22,6 +22,8 @@ import { classifySection, officialFile, officialId, readOfficialJsonl, writeOffi
 loadDotEnv();
 
 const DEFAULT_SEEDS = [
+  'https://students.nyuad.nyu.edu/services/safety-and-awareness/campus-safety/',
+  'https://students.nyuad.nyu.edu/services/safety-and-awareness/campus-safety/lost-and-found/',
   'https://nyuad.nyu.edu/en/facility-rentals/sports-facilities.html',
   'https://nyuad.nyu.edu/en/campus-life/sports-athletics-and-fitness.html',
   'https://nyuad.nyu.edu/en/campus-life/sports-athletics-and-fitness/athletics-facilities.html',

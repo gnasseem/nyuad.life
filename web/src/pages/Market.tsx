@@ -23,6 +23,7 @@ const TABS: Array<{ id: MarketTab; label: string }> = [
   { id: 'falcons', label: 'Falcons' },
   { id: 'campus', label: 'Campus Dirhams' },
   { id: 'rides', label: 'Rides' },
+  { id: 'lost-found', label: 'Lost & found' },
 ];
 
 const ITEM_KINDS: Array<{ id: ListingKind; label: string }> = [
@@ -31,10 +32,12 @@ const ITEM_KINDS: Array<{ id: ListingKind; label: string }> = [
   { id: 'free', label: 'Free' },
 ];
 
-const KIND_CLASS: Record<ListingKind, string> = { sell: 'tone-line', want: 'tone-info', free: 'tone-ok', ride: 'tone-slate' };
+const LOST_KINDS: Array<{ id: ListingKind; label: string }> = [{ id: 'lost', label: 'Lost' }, { id: 'found', label: 'Found' }];
+
+const KIND_CLASS: Record<ListingKind, string> = { sell: 'tone-line', want: 'tone-info', free: 'tone-ok', ride: 'tone-slate', lost: 'tone-info', found: 'tone-ok' };
 
 function tabOf(kind: ListingKind): MarketTab {
-  return kind === 'ride' ? 'rides' : 'items';
+  return kind === 'ride' ? 'rides' : kind === 'lost' || kind === 'found' ? 'lost-found' : 'items';
 }
 
 /** Things for sale, wanted or free, Falcons and Campus Dirhams, and shared rides: what students post to each other. */
@@ -114,7 +117,7 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
 
   const all = listings?.listings ?? [];
   const mineIds = useMemo(() => new Set((listings?.mine ?? []).map((listing) => listing.id)), [listings]);
-  const defaultKind: ListingKind = tab === 'rides' ? 'ride' : 'sell';
+  const defaultKind: ListingKind = tab === 'rides' ? 'ride' : tab === 'lost-found' ? 'lost' : 'sell';
   const notReady = listingError instanceof ApiError && listingError.code === 'board_schema_missing';
 
   const currency: OfferCurrency | null = tab === 'falcons' ? 'falcon' : tab === 'campus' ? 'campus' : null;
@@ -129,7 +132,7 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
     if (!listings) return <Loading />;
     const props = { listings: all, mineIds, onClose: (listing: Listing, remove: boolean) => void closeListing(listing, remove), onPost: (kind: ListingKind) => void startPosting({ kind }) };
     if (tab === 'rides') return <RidesTab {...props} />;
-    return <ItemsTab {...props} />;
+    return <ItemsTab key={tab} {...props} lostFound={tab === 'lost-found'} />;
   })();
 
   return (
@@ -148,7 +151,7 @@ export function MarketPage({ tab }: { tab: MarketTab }) {
           ) : (
             !notReady && (
               <button type="button" className="btn primary" onClick={() => void startPosting({ kind: defaultKind })}>
-                <IconPlus /> {tab === 'rides' ? 'Post a ride' : 'List something'}
+                <IconPlus /> {tab === 'rides' ? 'Post a ride' : tab === 'lost-found' ? 'Post an item' : 'List something'}
               </button>
             )
           ))}
@@ -264,21 +267,21 @@ function countKinds(listings: Listing[]): Map<string, number> {
   return counts;
 }
 
-function ItemsTab({ listings, mineIds, onClose, onPost }: TabProps) {
+function ItemsTab({ listings, mineIds, onClose, onPost, lostFound = false }: TabProps & { lostFound?: boolean }) {
   const [kind, setKind] = useState<ListingKind | ''>('');
   const [q, setQ] = useState('');
-  const items = listings.filter((listing) => tabOf(listing.kind) === 'items');
+  const items = listings.filter((listing) => tabOf(listing.kind) === (lostFound ? 'lost-found' : 'items'));
   const needle = q.trim().toLowerCase();
   const shown = items.filter((listing) => (!kind || listing.kind === kind) && (!needle || `${listing.title} ${listing.body} ${listing.place}`.toLowerCase().includes(needle)));
 
   if (items.length === 0) {
     return (
-      <EmptyState icon={<IconBag />} title="Nothing listed yet">
-        <button type="button" className="btn" onClick={() => onPost('want')}>
-          Ask for something
+      <EmptyState icon={<IconBag />} title={lostFound ? 'No lost or found items posted' : 'Nothing listed yet'}>
+        <button type="button" className="btn" onClick={() => onPost(lostFound ? 'lost' : 'want')}>
+          {lostFound ? 'I lost something' : 'Ask for something'}
         </button>
-        <button type="button" className="btn primary" onClick={() => onPost('sell')}>
-          List an item
+        <button type="button" className="btn primary" onClick={() => onPost(lostFound ? 'found' : 'sell')}>
+          {lostFound ? 'I found something' : 'List an item'}
         </button>
       </EmptyState>
     );
@@ -286,7 +289,7 @@ function ItemsTab({ listings, mineIds, onClose, onPost }: TabProps) {
   return (
     <>
       <div className="toolbar">
-        <KindFilter kinds={ITEM_KINDS} value={kind} counts={countKinds(items)} onChange={setKind} />
+        <KindFilter kinds={lostFound ? LOST_KINDS : ITEM_KINDS} value={kind} counts={countKinds(items)} onChange={setKind} />
         {items.length > 5 && (
           <div className="search-field">
             <IconSearch />
@@ -308,6 +311,7 @@ function ItemsTab({ listings, mineIds, onClose, onPost }: TabProps) {
 }
 
 function Price({ listing }: { listing: Listing }) {
+  if (listing.kind === 'lost' || listing.kind === 'found') return null;
   if (listing.kind === 'free') return <span className="price free">Free</span>;
   if (listing.price === null) return <span className="price muted">{listing.kind === 'want' ? 'Any price' : 'Make an offer'}</span>;
   const amount = listing.price.toLocaleString('en-GB', { maximumFractionDigits: 2 });
@@ -321,7 +325,7 @@ function Price({ listing }: { listing: Listing }) {
 }
 
 function ItemRow({ listing, mine, onClose }: { listing: Listing; mine: boolean; onClose(listing: Listing, remove: boolean): void }) {
-  const label = ITEM_KINDS.find((entry) => entry.id === listing.kind)?.label ?? listing.kind;
+  const label = [...ITEM_KINDS, ...LOST_KINDS].find((entry) => entry.id === listing.kind)?.label ?? listing.kind;
   return (
     <article className="item">
       <div className="item-top">
@@ -498,7 +502,7 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
       }}
     >
       {group !== 'rides' && (
-        <Segmented<ListingKind> value={kind} onChange={setKind} label="Kind" options={ITEM_KINDS} />
+        <Segmented<ListingKind> value={kind} onChange={setKind} label="Kind" options={group === 'lost-found' ? LOST_KINDS : ITEM_KINDS} />
       )}
       {kind === 'ride' ? (
         <>
@@ -533,7 +537,7 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               maxLength={100}
-              placeholder={kind === 'want' ? 'Desk lamp' : 'Mini fridge'}
+              placeholder={group === 'lost-found' ? 'Black headphones' : kind === 'want' ? 'Desk lamp' : 'Mini fridge'}
             />
           </div>
           <div className="form-grid">
@@ -547,7 +551,7 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
               </div>
             ) : null}
             <div className="field">
-              <label htmlFor="ls-place">Pickup</label>
+              <label htmlFor="ls-place">{group === 'lost-found' ? 'Last seen or handed in at' : 'Pickup'}</label>
               <input id="ls-place" className="input" value={place} onChange={(event) => setPlace(event.target.value)} maxLength={80} placeholder="A2, or any building code" />
             </div>
           </div>
@@ -562,7 +566,7 @@ function ListingCompose({ initialKind, onDone, onCancel }: { initialKind: Listin
           onChange={(event) => setBody(event.target.value)}
           rows={3}
           maxLength={1000}
-          placeholder={kind === 'ride' ? 'Splitting a Careem, back Sunday night' : 'Condition, size, when you can hand it over'}
+          placeholder={group === 'lost-found' ? 'When and where. Hand found IDs to Campus Safety; leave personal details off the post.' : kind === 'ride' ? 'Splitting a Careem, back Sunday night' : 'Condition, size, when you can hand it over'}
         />
       </div>
       <ContactFields kind={contactKind} contact={contact} onKind={setContactKind} onContact={setContact} />

@@ -573,9 +573,7 @@ export function summarizeMarket(offers: Offer[], currency: OfferCurrency = 'falc
 
 /* ---------- Market: things for sale, wanted or free, and shared rides ---------- */
 
-// Lost and found was taken out: anyone could claim to have found an item and ask its owner to describe it. Rows of
-// those kinds still in the database are never served (isListingKind).
-const LISTING_KINDS = ['sell', 'want', 'free', 'ride'] as const;
+const LISTING_KINDS = ['sell', 'want', 'free', 'ride', 'lost', 'found'] as const;
 export type ListingKind = (typeof LISTING_KINDS)[number];
 
 export function isListingKind(kind: unknown): kind is ListingKind {
@@ -608,7 +606,7 @@ export interface Listing {
 }
 
 /** Days a listing stays up. Rides drop off three hours after they leave. */
-const LISTING_DAYS: Record<Exclude<ListingKind, 'ride'>, number> = { sell: 21, want: 14, free: 7 };
+const LISTING_DAYS: Record<Exclude<ListingKind, 'ride'>, number> = { sell: 21, want: 14, free: 7, lost: 14, found: 14 };
 const RIDE_GRACE_MS = 3 * 3_600_000;
 const PRICE_MAX = 100_000;
 

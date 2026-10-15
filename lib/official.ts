@@ -3,7 +3,7 @@
  * scripts/scrape-official.ts into data/official.jsonl and embedded into data/official-index. They are the authority
  * for requirements, policies and programme facts; the group archive supplies experience. Loaded once per process.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { gunzipSync, gzipSync } from 'node:zlib';
@@ -342,6 +342,7 @@ export async function buildOfficialIndex(options: OfficialBuildOptions): Promise
   writeFileSync(path.join(options.outDir, 'docs.json.gz'), gzipSync(JSON.stringify(docs)));
   writeFileSync(path.join(options.outDir, 'chunks.json.gz'), gzipSync(JSON.stringify(chunks)));
   if (table.count > 0) writeFileSync(path.join(options.outDir, 'vectors.bin'), encodeTable(table));
+  else rmSync(path.join(options.outDir, 'vectors.bin'), { force: true });
   writeFileSync(path.join(options.outDir, 'meta.json'), JSON.stringify(meta, null, 2) + '\n');
   return { docs: docs.length, chunks: chunks.length, embedded, reused };
 }

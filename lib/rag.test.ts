@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gatherSources, matchesPerson, personName, safeRewrite, parseConfidence, poolHoursAnswer, searchQueries, systemPrompt } from './rag.ts';
+import { gatherSources, matchesPerson, personName, safeRewrite, parseConfidence, poolHoursAnswer, searchQueries, sourcesBlock, systemPrompt } from './rag.ts';
 import type { OfficialCorpus } from './official.ts';
 import type { Archive } from './store.ts';
 import { buildBm25 } from './search.ts';
@@ -102,4 +102,37 @@ it('keeps current deadline evidence official even when old threads rank highly',
   const archive = { posts: [post], chunks: [chunk], chunkPost: new Int32Array([0]), postChunk: new Int32Array([0]), postPosition: new Map([['old', 0]]), byCourse: new Map(), vectors: emptyTable(0), bm25: buildBm25([chunk.text]), meta: { model: 'none' } } as unknown as Archive;
   const result = await gatherSources(archive, 'Registration deadlines for Fall 2026?', 'Registration deadlines for Fall 2026?', { cfg: null, official: null, catalog: null, board: null, reranker: { name: 'always-perfect', rerank: async (_q, texts) => texts.map(() => 1) } });
   expect(result.cards).toEqual([]);
+});
+
+it('finds Card Services for the misspelled replacement question without a model or group redirect', async () => {
+  const docs = [
+    { id: 'cards', title: 'Campus Safety', text: 'Card Services: 24/7 cardservicelink@nyu.edu or visit Campus Safety located in Building A4 - Level 1.' },
+    { id: 'insurance', title: 'Health Insurance', text: 'Show your digital insurance card. Most services are covered by insurance.' },
+  ].map((doc) => ({ ...doc, url: `https://students.nyuad.nyu.edu/${doc.id}`, section: 'campus', fetchedAt: new Date().toISOString() }));
+  const chunks = docs.map((doc) => ({ id: `${doc.id}#1`, postId: doc.id, n: 1, text: `${doc.title}\n${doc.text}`, hash: doc.id }));
+  const official = { docs, chunks, chunkDoc: new Int32Array([0, 1]), docPosition: new Map(docs.map((doc, i) => [doc.id, i])), vectors: emptyTable(0), bm25: buildBm25(chunks.map((chunk) => chunk.text)), meta: { model: 'none', dimensions: 0 } } as OfficialCorpus;
+  const archive = { posts: [], chunks: [], chunkPost: new Int32Array(), vectors: emptyTable(0), bm25: buildBm25([]), meta: { model: 'none', dimensions: 0 } } as unknown as Archive;
+  const question = 'I lot my ID, where to make a new one';
+  expect(personName(question)).toBeNull();
+  expect(searchQueries(question)).toContain('card services');
+  expect(searchQueries('I lost my Emirates ID, where do I get a new one?')).not.toContain('card services');
+  const result = await gatherSources(archive, question, question, { cfg: null, official, catalog: null, reranker: { name: 'down', rerank: async () => { throw new Error('unavailable'); } }, board: null });
+  expect(result.cards[0]).toMatchObject({ kind: 'official', postId: 'cards' });
+  expect(result.cards[0]?.text).toContain('A4 - Level 1');
+});
+
+it('retains substantive negative reviews and excludes unanswered review questions', async () => {
+  const posts = [
+    { id: 'review', text: 'Thoughts on Prof Testname?', comments: [...Array.from({ length: 24 }, (_, i) => ({ author: `Student ${i}`, date: '2026-04-02', text: 'The exams were fair and the lectures were clear.' })), { author: 'Ben', date: '2026-04-02', text: 'I took his class. Confusing lectures, harsh grading and excessive workload. Avoid.' }] },
+    { id: 'question', text: 'Is Prof Testname a good professor? How are the exams and grading?', comments: [] },
+  ].map((post) => ({ ...post, url: '', author: 'Ana', date: '2026-04-01', courses: [], topics: [], commentCount: post.comments.length }));
+  const chunks = posts.map((post) => ({ id: `${post.id}#1`, postId: post.id, n: 1, text: [post.text, ...post.comments.map((comment) => comment.text)].join('\n'), hash: post.id }));
+  const archive = { posts, chunks, chunkPost: new Int32Array([0, 1]), postChunk: new Int32Array([0, 1]), postPosition: new Map(posts.map((post, i) => [post.id, i])), byCourse: new Map(), vectors: emptyTable(0), bm25: buildBm25(chunks.map((chunk) => chunk.text)), meta: { model: 'none' } } as unknown as Archive;
+  const question = 'How is Morgan Testname as a professor?';
+  const result = await gatherSources(archive, question, question, { cfg: null, official: null, catalog: null, reranker: { name: 'misleading', rerank: async (_q, texts) => texts.map((text) => text.includes('Avoid') ? 0.01 : 1) }, board: null });
+  expect(result.cards.map((card) => card.postId)).toEqual(['review']);
+  expect(sourcesBlock(archive, result.cards, result.entries, undefined, 800)).toContain('harsh grading');
+  const prompt = systemPrompt();
+  expect(prompt).toContain('Negative or mixed evidence must change the opening recommendation');
+  expect(prompt).toContain('Never send students to Facebook, WhatsApp, ROR or a group chat');
 });

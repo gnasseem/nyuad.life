@@ -38,20 +38,24 @@ export function bm25Query(index: Bm25Index, terms: string[], k: number): Array<{
   if (index.n === 0 || terms.length === 0) return [];
   const scores = new Map<number, number>();
   const unique = [...new Set(terms)];
+  const matched = new Map<number, number>();
+  let available = 0;
   for (const term of unique) {
     const list = index.postings.get(term);
     if (!list) continue;
+    available++;
     const df = list.length / 2;
     const idf = Math.log(1 + (index.n - df + 0.5) / (df + 0.5));
     for (let i = 0; i < list.length; i += 2) {
       const row = list[i]!;
+      matched.set(row, (matched.get(row) ?? 0) + 1);
       const tf = list[i + 1]!;
       const norm = tf / (tf + K1 * (1 - B + (B * index.lengths[row]!) / index.avgLength));
       scores.set(row, (scores.get(row) ?? 0) + idf * norm * (K1 + 1));
     }
   }
   return [...scores.entries()]
-    .map(([row, score]) => ({ row, score }))
+    .map(([row, score]) => ({ row, score: score * (0.25 + 0.75 * ((matched.get(row) ?? 0) / available) ** 2) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
 }

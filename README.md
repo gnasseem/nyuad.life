@@ -7,16 +7,15 @@ other students wrote here.
 Everyone signs up once (name, NetID, major and year) after a short animated tour of the site; the API refuses answers,
 archive browsing, plan reading and contacts to anyone who has not.
 
-- **Ask.** Original questions, model rewrites and campus aliases searched together with keyword and vector retrieval over the filtered archive and official pages, reranked by Voyage's cross-encoder
-  and written up by Gemini, with backup models when Gemini is overloaded or spent, or on the student's own ChatGPT plan
+- **Ask.** Original questions and focused campus aliases searched together with keyword coverage and optional archive vectors. Official pages use keyword search; Voyage's cross-encoder has a bounded timeout and falls back to local passage matching.
+  Answers are written by Gemini, with backup models when Gemini is overloaded or spent, or on the student's own ChatGPT plan
   when they sign in with ChatGPT. Past conversations are listed down the left, as in a chat app. A question about a course or a professor gets the Albert schedule first (course codes
   in any spelling, titles the way students say them, "calc", "intro to cs", or a subject for "classes about machine
   learning"), plus every thread that names that course or professor the way students write it (the code, the title,
   "linalg", "MVC", "Prof Gandolfi", or a surname nobody else in the schedule or the group carries; `lib/entities.ts`),
   ranked by how much each says about it and read by the reranker ahead of keyword matches. Newer threads are lifted, more so for questions about
   how things are now, and a thread the reranker finds unrelated is left out rather than padding the answer. Answers lead
-  with a verdict, then at most five specifics (a ranked shortlist for "which is best" questions), the catch and the next
-  step, in about 200 words.
+  with the answer itself, integrate drawbacks into the verdict, and use at most 110 words without forced sections.
 - **Questions.** When the archive falls short, a question goes to students: a feed of every question with its answers,
   newest first, that anyone can answer in place, filtered to the ones for your major and year, the unanswered ones or
   your own; the + button asks a new one. Nobody can answer their own question or answer one twice. Answered questions
@@ -26,9 +25,8 @@ archive browsing, plan reading and contacts to anyone who has not.
 - **Market.** What the group is mostly used for besides questions: things for sale (up for three weeks), wanted (two)
   or free (one), offers to buy or sell Falcons and Campus Dirhams (two separate balances, each with its own order book;
   five days) and shared rides by day (gone three hours after they leave). Contact details are fetched one post at a
-  time, on tap. Ask sends listings, trades and rides here, and lost items to the group. There is no lost and found: anyone
-  could claim to have found an item and ask its owner to describe it, so it was taken out, and the rows it left in
-  `board_listings` are never served.
+  time, on tap. Lost & found posts stay up for two weeks in their own market tab. Ask routes lost-item notices here,
+  while replacement and procedural questions still get an answer. Live requests go to Questions; Ask never sends students to a group chat.
 - **Reviews.** Every course in Albert's schedule once, searchable by code, title or professor, filtered by subject, Core
   or rated, and sortable by rating. Picking one shows an AI rating written from the group's threads about it (a score
   out of five, difficulty and workload, what students liked and what they warn about), who teaches it this term, and
@@ -90,7 +88,6 @@ The group archive and its search index are not in the repository (see "Data and 
    | `VOYAGE_API_KEY` | Semantic search (must be the provider that built the index) and the reranker. |
    | `BLOB_READ_WRITE_TOKEN` | The private Blob store holding the archive and its index, which the build pulls. Connecting a private Blob store to the project sets it. |
    | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | The board: questions, notices, offers, listings, course summaries. |
-   | `ROR_GROUP_URL` | Where listings and rides are sent. Defaults to the group. |
 
 3. Deploy. `GET /api/health` reports what is active: the whole report (model chain, index, database) to an
    administrator's session, and only what the site itself needs to everyone else. In Settings, admin mode's "Check models" sends one tiny request
@@ -299,9 +296,9 @@ records, account widgets and student directories are excluded. Refresh and reind
 stale pages are not treated as evidence for a current deadline. No credentials are sent to the deployed app.
 
 Retrieval preserves full names and course codes during query rewriting, searches the original and expanded queries
-(the original is embedded while the model rewrites it), keeps only threads naming the person asked about (full name, a
+(opening questions need no rewrite model call), keeps only threads naming the person asked about (full name, a
 surname no other professor or group member carries, or "Prof <surname>"; never a first name alone), and reranks all
-source kinds with backup models when needed. Threads naming the course or person asked about clear the reranker on a
+source kinds with a bounded cross-encoder call, falling back to local term coverage and proximity. Threads naming the course or person asked about clear the reranker on a
 lower bar, since "thoughts on Gandolfi?" with five replies is the review a student wants. Keyword
 fallbacks require meaningful term coverage. Current official policy and deadline evidence comes before anecdotes.
 Unanswered board questions enter the first feed page even when older and get priority, then major/year matches.

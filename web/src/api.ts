@@ -271,7 +271,7 @@ export interface Offer {
   createdAt: string;
 }
 
-export type ListingKind = 'sell' | 'want' | 'free' | 'ride';
+export type ListingKind = 'sell' | 'want' | 'free' | 'ride' | 'lost' | 'found';
 
 export interface Listing {
   id: string;

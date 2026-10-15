@@ -17,6 +17,11 @@ describe('bm25', () => {
     expect(rows).not.toContain(3);
   });
 
+  it('ranks coverage of the whole subject above repetitions of one word', () => {
+    const index = buildBm25(['card card card card card', 'Card Services in A4', 'services services services']);
+    expect(bm25Query(index, tokenize('card services'), 3)[0]?.row).toBe(1);
+  });
+
   it('returns nothing for unknown terms', () => {
     expect(bm25Query(index, tokenize('zzzz'), 3)).toEqual([]);
   });

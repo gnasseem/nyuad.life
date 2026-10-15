@@ -26,7 +26,8 @@ export default route(['POST'], async (req, res) => {
   const request = validateAsk(await readJson<Partial<AskRequest>>(req));
   // Answers cost model calls: only students who signed up get them. Meanwhile the model lists are checked against
   // what the keys can use (cached for hours, so this is free after an instance's first question).
-  const [member] = await Promise.all([requireMember(req), warmModels()]);
+  const warming = warmModels().catch(() => undefined);
+  const member = await requireMember(req);
   if (member) {
     rateLimit(req, 10, 6, 'ask-student', member.netId);
     // A daily ceiling per student across every instance, so one account cannot spend the free quota everyone shares.
@@ -65,7 +66,7 @@ export default route(['POST'], async (req, res) => {
   ]);
   const board = boardStore();
   // Saving the answer to the cache happens after the student has it; the function stays up until it is done.
-  const deferred: Array<Promise<unknown>> = [];
+  const deferred: Array<Promise<unknown>> = [warming];
   const defer = (work: Promise<unknown>) => void deferred.push(work.catch(() => undefined));
   const noteFailure = (error: unknown) => {
     if (!(error instanceof ApiError) || !MODELS_DOWN.has(error.code)) return;
