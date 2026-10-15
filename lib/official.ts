@@ -62,6 +62,7 @@ export function officialId(url: string): string {
 
 /** Which guide section a page belongs to, from its URL and title. Order matters: the first match wins. */
 export function classifySection(url: string, title = ''): OfficialSection {
+  if (/^https?:\/\/guides\.nyu\.edu\//i.test(url)) return 'research';
   const haystack = `${url.toLowerCase()} ${title.toLowerCase()}`;
   const rules: Array<[OfficialSection, RegExp]> = [
     ['courses', /bulletins\.nyu\.edu\/.*\/courses|\/courses\/|course-list|course-catalog|course-descriptions/],

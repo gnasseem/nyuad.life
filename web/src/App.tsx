@@ -83,6 +83,7 @@ export function App() {
   const [boardPrefill, setBoardPrefill] = useState('');
   const [chatgpt, setChatGPT] = useState<ChatGPTStatus | null>(null);
   const [admin, setAdmin] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
   // On a wide screen the conversation list stays open unless folded away; on a phone it opens on demand.
   const wide = () => window.matchMedia('(min-width: 1100px)').matches;
   const [panelOpen, setPanelOpen] = useState(() => wide() && loadConversations().length > 0 && !loadSidebarClosed());
@@ -135,7 +136,7 @@ export function App() {
     void api.auth.me().then((result) => {
       if (result.profile) { saveAccountKey(result.key); setProfileState(result.profile); saveProfile(result.profile); }
       else if (profile) setResignup(true);
-    }).catch(() => { if (profile) setResignup(true); });
+    }).catch(() => { if (profile) setResignup(true); }).finally(() => setAuthLoading(false));
   }, []);
 
   useEffect(() => onSignupRequired(() => setResignup(true)), []);
@@ -332,7 +333,7 @@ export function App() {
         </div>
       )}
       <ProfileModal open={profileAsk !== null && !gate} title={profileAsk?.title ?? ''} reason={profileAsk?.reason ?? ''} onClose={() => finishProfile(false)} onDone={() => finishProfile(true)} />
-      {gate && (
+      {gate && !authLoading && (
         <Suspense fallback={null}>
           <Welcome
             tour={!onboarded && !resignup}

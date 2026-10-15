@@ -12,10 +12,17 @@ import { clearConversations, forgetDevice, loadConversations, onConversationsCha
 export function SettingsPage() {
   const { profile, setProfile, requestProfile, toast, boardProblem, chatgpt, refreshChatGPT } = useApp();
   const [count, setCount] = useState(() => loadConversations().length);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
 
   useEffect(() => onConversationsChange(() => setCount(loadConversations().length)), []);
+
+  const logout = async () => {
+    setLoggingOut(true);
+    try { await api.auth.logout(); setProfile(null); window.location.href = '/'; }
+    catch (error) { toast(error instanceof Error ? error.message : 'Could not log out. Try again.'); setLoggingOut(false); }
+  };
 
   const clear = () => {
     if (!window.confirm('Delete all saved conversations?')) return;
@@ -86,7 +93,7 @@ export function SettingsPage() {
       <section className="settings-section">
         <h2>Account</h2>
         <div className="settings-row"><div className="text"><b>{profile ? `${profile.netId}@nyu.edu` : 'Not logged in'}</b><span>Use this email to log in on your phone or laptop.</span></div>
-          <button type="button" className="btn" onClick={async () => { await api.auth.logout(); setProfile(null); window.location.href = '/'; }}>Log out</button>
+          <button type="button" className="btn" onClick={() => void logout()} disabled={loggingOut}>{loggingOut ? 'Logging out…' : 'Log out'}</button>
         </div>
       </section>
       <section className="settings-section">
@@ -103,16 +110,6 @@ export function SettingsPage() {
               <div className="actions">
                 <button type="button" className="btn sm" onClick={() => void requestProfile({ title: 'Edit details' })}>
                   Edit
-                </button>
-                <button
-                  type="button"
-                  className="btn sm ghost"
-                  onClick={() => {
-                    if (!window.confirm('Sign out on this browser? You will need to add your details again to use the site.')) return;
-                    setProfile(null);
-                  }}
-                >
-                  Sign out
                 </button>
                 <button type="button" className="btn sm danger" onClick={() => void deleteAccount()} disabled={deleting}>
                   {deleting ? 'Deleting…' : 'Delete account'}
@@ -151,7 +148,7 @@ export function SettingsPage() {
           <div className="settings-row">
             <div className="text">
               <b>Local data</b>
-              <span>Clear conversations, your plan, details and preferences. Your sign-in key stays so your NetID still works here.</span>
+              <span>Clear conversations, your plan and preferences, then log out of this browser.</span>
             </div>
             <button type="button" className="btn sm danger" onClick={forget}>
               Clear

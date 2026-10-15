@@ -43,6 +43,7 @@ export function Segmented<T extends string>({ value, options, onChange, label, v
 
   const onKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+    event.preventDefault();
     const index = options.findIndex((option) => option.id === value);
     const next = options[(index + (event.key === 'ArrowRight' ? 1 : options.length - 1)) % options.length]!;
     onChange(next.id);

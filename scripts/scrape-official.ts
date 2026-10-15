@@ -49,10 +49,13 @@ const DEFAULT_SEEDS = [
   'https://nyuad.nyu.edu/en/academics/undergraduate/academic-calendar.html',
   'https://nyuad.nyu.edu/en/academics/undergraduate/academic-resources/registrar.html',
   'https://bulletins.nyu.edu/undergraduate/abu-dhabi/',
+  // Guides linked by the Abu Dhabi Library, including writing, research and subject support.
+  ...['fos1', 'fyws', 'legalstudiesnyuad', 'nyuadarabiclearning', 'modernarabiclit', 'polisci', 'srpp', 'litreviews', 'digitalhumanities', 'IM', 'nyuad-mba', 'chineselanguagelearning', 'japanese-language-learning'].map((guide) => `https://guides.nyu.edu/${guide}`),
 ];
 
 /** Path prefixes worth crawling per host; anything else on the host is skipped. */
 const ALLOWED: Record<string, RegExp[]> = {
+  'guides.nyu.edu': [/^\/(?:fos1|fyws|legalstudiesnyuad|nyuadarabiclearning|modernarabiclit|polisci|srpp|litreviews|digitalhumanities|IM|nyuad-mba|chineselanguagelearning|japanese-language-learning)(?:\/|$)/],
   'nyuad.nyu.edu': [/^\/en\/(?:academics|campus-life|library|admissions|about\/(?:campus|visit|facts))/, /^\/en\/facility-rentals\/sports-facilities\.html$/],
   'students.nyuad.nyu.edu': [/^\//],
   'bulletins.nyu.edu': [/^\/undergraduate\/abu-dhabi\//, /^\/courses\/[a-z]{2,7}_uh\//i],
@@ -139,7 +142,8 @@ async function main(): Promise<void> {
       await page.close();
     }
   }
-  const existing = new Map(readOfficialJsonl(file).filter((doc) => !/[{}]|%7[bd]/i.test(doc.url) && !/^(?:404|page not found)/i.test(doc.title)).map((doc) => [doc.url, doc]));
+  // Course descriptions share their bulletin URL; preserve each course when resuming a crawl.
+  const existing = new Map(readOfficialJsonl(file).filter((doc) => !/[{}]|%7[bd]/i.test(doc.url) && !/^(?:404|page not found)/i.test(doc.title)).map((doc) => [doc.code ? `${doc.url}#${doc.code.replace(/\s+/g, '-')}` : doc.url, doc]));
   console.log(`[official] ${existing.size} pages on disk; crawling from ${seeds.length} seeds (max ${max}, ${delay} ms apart).`);
   const queue: string[] = [];
   const seen = new Set<string>();

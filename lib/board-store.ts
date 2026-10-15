@@ -782,7 +782,7 @@ export class SupabaseBoardStore implements BoardStore {
   }
   async listSummaryFields(prefix: string, fields: string[]): Promise<Array<{ key: string; createdAt: string; fields: Record<string, unknown> }>> {
     const columns = fields.filter((field) => /^[a-z]+$/i.test(field)).map((field) => `${field}:payload->${field}`);
-    const rows = await this.select('guide_summaries', `select=key,created_at,${columns.join(',')}&key=like.${enc(`${prefix}*`)}&limit=10000`);
+    const rows = await this.selectAll('guide_summaries', `select=key,created_at,${columns.join(',')}&key=like.${enc(`${prefix}*`)}&order=key.asc`);
     return rows.map((row) => ({ key: String(row.key), createdAt: String(row.created_at), fields: Object.fromEntries(fields.map((field) => [field, row[field] ?? null])) }));
   }
   async hit(bucket: string, max: number, windowSeconds: number): Promise<boolean> {
@@ -870,7 +870,7 @@ export class SupabaseBoardStore implements BoardStore {
   async adminOverview(now: Date): Promise<AdminOverview> {
     const live = enc(now.toISOString());
     const [members, stats, questions, reviews, listings, offers, events, bans] = await Promise.all([
-      this.select('board_profiles', 'select=net_id,name,major,class_of,answers,created_at,last_seen_at&order=created_at.desc&limit=10000'),
+      this.selectAll('board_profiles', 'select=net_id,name,major,class_of,answers,created_at,last_seen_at&order=created_at.desc,net_id.asc'),
       this.stats(),
       this.count('board_questions', ''),
       this.count('course_reviews', ''),
@@ -901,6 +901,15 @@ export class SupabaseBoardStore implements BoardStore {
   private async select(table: string, query: string): Promise<Row[]> {
     const rows = await this.call(`${table}?${query}`, { headers: this.headers() });
     return Array.isArray(rows) ? (rows as Row[]) : [];
+  }
+  /** The Data API caps a single response, even when a larger limit is requested. */
+  private async selectAll(table: string, query: string): Promise<Row[]> {
+    const rows: Row[] = [];
+    while (true) {
+      const page = await this.select(table, `${query}&limit=500&offset=${rows.length}`);
+      if (!page.length) return rows;
+      rows.push(...page);
+    }
   }
   private async write(method: 'POST' | 'PATCH', path: string, body: unknown, prefer = 'return=representation'): Promise<Row[]> {
     const parsed = await this.call(path, { method, headers: this.headers(prefer), body: JSON.stringify(body) });

@@ -128,6 +128,14 @@ describe('the crawler and the index', () => {
     expect(docs.find((doc) => doc.code === 'CS-UH 1001')?.credits).toBe(4);
     expect(docs.find((doc) => doc.title === 'Study Away')?.section).toBe('study-away');
 
+    // A later refresh of an unrelated page must not collapse courses sharing a bulletin URL.
+    const rerun = await new Promise<number>((resolve) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/scrape-official.ts', '--out', file, '--host', siteHost, '--seed-only', '--seed', `http://${siteHost}/en/academics.html`, '--max', '1'], { cwd: process.cwd(), stdio: 'ignore' });
+      child.on('close', (status) => resolve(status ?? 1));
+    });
+    expect(rerun).toBe(0);
+    expect(readOfficialJsonl(file).map((doc) => doc.id).sort()).toEqual(docs.map((doc) => doc.id).sort());
+
     const outDir = path.join(workDir, 'official-index');
     const built = await buildOfficialIndex({ file, outDir, embedder: null });
     expect(built.docs).toBe(docs.length);

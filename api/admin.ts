@@ -2,7 +2,7 @@
  * The admin page, for verified accounts on ROR_ADMIN_NETIDS: how the site is used (op=stats), what the answer models
  * are doing (models, usage), moderation (bans, audit, remove, unban) and the outage email test.
  */
-import { adminConfig, adminEmails, adminSession, dashboard, emailAdmins, requireAdmin, usageText } from '../lib/admin.ts';
+import { adminConfig, adminEmails, adminSession, dashboard, dataOverview, emailAdmins, requireAdmin, usageText } from '../lib/admin.ts';
 import { appUsage } from '../lib/app-usage.ts';
 import { validateNetId } from '../lib/board.ts';
 import { boardStore, type AdminTarget, type BoardStore } from '../lib/board-store.ts';
@@ -35,13 +35,30 @@ export default route(['GET', 'POST'], async (req, res) => {
       sendJson(res, 200, dashboard(usage, overview, now));
       return;
     }
+    case 'data': {
+      sendJson(res, 200, await dataOverview());
+      return;
+    }
     case 'audit': {
       sendJson(res, 200, { audit: await need(store).listAudit(40) });
       return;
     }
     case 'ask-reports': {
-      const entries = await need(store).listSummaryFields('ask-report:', ['question', 'answer', 'reason', 'sources']);
-      sendJson(res, 200, { reports: entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100).map((entry) => ({ id: entry.key, createdAt: entry.createdAt, ...entry.fields })) });
+      const entries = await need(store).listSummaryFields('ask-report:', ['question', 'answer', 'reason', 'sources', 'resolvedAt', 'reportedAt']);
+      sendJson(res, 200, { reports: entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((entry) => ({ id: entry.key, ...entry.fields, createdAt: entry.fields.reportedAt || entry.createdAt })) });
+      return;
+    }
+    case 'resolve-report': {
+      if (req.method !== 'POST') break;
+      const id = String(body.id ?? '');
+      if (!/^ask-report:[a-zA-Z0-9-]+$/.test(id) || typeof body.resolved !== 'boolean') throw new ApiError(400, 'Choose an Ask report and its status.', 'bad_report');
+      const board = need(store);
+      const entry = await board.getSummary(id);
+      if (!entry) throw new ApiError(404, 'This report no longer exists.', 'not_found');
+      const payload = entry.payload as Record<string, unknown>;
+      await board.putSummary(id, { ...payload, reportedAt: payload.reportedAt || entry.createdAt, resolvedAt: body.resolved ? new Date().toISOString() : null });
+      await board.recordAudit({ action: body.resolved ? 'resolve_report' : 'reopen_report', target: id, snapshot: { by: session.jti }, ip });
+      sendJson(res, 200, { ok: true });
       return;
     }
     case 'models': {

@@ -441,6 +441,20 @@ describe('api', () => {
       const result = await getJson(`${apiUrl}/api/admin?op=ask-reports`, { headers });
       expect(result.reports[0]).toMatchObject({ question: 'Who teaches MVC?', answer: 'The wrong professor.', reason: 'The Fall section is wrong.', sources: ['https://example.com/source'] });
       expect(JSON.stringify(result.reports[0])).not.toContain(MEMBER.netId);
+      const id = result.reports[0].id;
+      const change = (body: unknown) => fetch(`${apiUrl}/api/admin`, { method: 'POST', headers, body: JSON.stringify(body) });
+      expect((await change({ op: 'resolve-report', id: 'models:usage:other', resolved: true })).status).toBe(400);
+      expect((await change({ op: 'resolve-report', id, resolved: true })).status).toBe(200);
+      const resolved = await getJson(`${apiUrl}/api/admin?op=ask-reports`, { headers });
+      expect(resolved.reports[0].resolvedAt).toBeTruthy();
+      expect(resolved.reports[0].createdAt).toBe(result.reports[0].createdAt);
+      expect((await change({ op: 'resolve-report', id, resolved: false })).status).toBe(200);
+      expect((await getJson(`${apiUrl}/api/admin?op=ask-reports`, { headers })).reports[0].resolvedAt).toBeNull();
+      expect((await fetch(`${apiUrl}/api/admin?op=data`)).status).toBe(403);
+      const data = await getJson(`${apiUrl}/api/admin?op=data`, { headers });
+      expect(data.sources).toHaveLength(3);
+      expect(data.terms.some((term: { name: string }) => term.name === 'Fall 2026')).toBe(true);
+
     } finally {
       process.env.ROR_ADMIN_NETIDS = '';
     }

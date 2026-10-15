@@ -7,11 +7,12 @@ import { useApp } from '../context';
 import { plural, relativeDate } from '../format';
 import { IconRefresh, IconShield } from '../icons';
 
-type Tab = 'usage' | 'members' | 'models' | 'moderation' | 'reports';
+type Tab = 'usage' | 'members' | 'data' | 'models' | 'moderation' | 'reports';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'usage', label: 'Usage' },
   { id: 'members', label: 'Members' },
+  { id: 'data', label: 'Data sources' },
   { id: 'models', label: 'Models' },
   { id: 'moderation', label: 'Moderation' },
   { id: 'reports', label: 'Ask reports' },
@@ -66,6 +67,7 @@ export function AdminPage() {
   const [stats, setStats] = useState<AdminDashboard | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [refresh, setRefresh] = useState(0);
   const [loadedAt, setLoadedAt] = useState<Date | null>(null);
 
   const load = useCallback(async () => {
@@ -84,6 +86,12 @@ export function AdminPage() {
   useEffect(() => {
     if (admin) void load();
   }, [admin, load]);
+
+  useEffect(() => {
+    const sync = () => setTab(tabFromHash());
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
 
   const pick = (next: Tab) => {
     setTab(next);
@@ -110,18 +118,20 @@ export function AdminPage() {
   return (
     <div className="page admin-page">
       <Sign title="Admin" ar="الإدارة" sub="How nyuad.life is used today and over the last 30 days, what the answer models are doing, and moderation.">
-        <button type="button" className="btn sm" onClick={() => void load()} disabled={loading}>
-          <IconRefresh className={loading ? 'spin' : undefined} /> {loadedAt ? `Updated ${loadedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : 'Refresh'}
+        <button type="button" className="btn sm" onClick={() => { void load(); setRefresh((value) => value + 1); }} disabled={loading}>
+          <IconRefresh className={loading ? 'spin' : undefined} /> {loading ? 'Refreshing…' : 'Refresh'}
         </button>
       </Sign>
-      {error && <div className="alert error">{error}</div>}
+      {loadedAt && <p className="admin-updated muted small" role="status">Updated {loadedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Dubai' })} · Abu Dhabi time</p>}
+      {error && <div className="alert error" role="alert">{error}</div>}
       <Board stats={stats} />
       <div className="tabs-wrap">
         <Segmented variant="tabs" label="Admin" value={tab} onChange={pick} options={TABS} />
       </div>
-      <div className="tab-body" key={tab}>
+      <div className="tab-body" key={`${tab}-${refresh}`}>
         {tab === 'usage' && <UsageTab stats={stats} />}
         {tab === 'members' && <MembersTab stats={stats} />}
+        {tab === 'data' && <DataTab />}
         {tab === 'models' && <ModelsTab />}
         {tab === 'moderation' && <ModerationTab stats={stats} />}
         {tab === 'reports' && <ReportsTab />}
@@ -131,23 +141,74 @@ export function AdminPage() {
 }
 
 function ReportsTab() {
-  const [reports, setReports] = useState<Array<{ id: string; createdAt: string; question: string; answer: string; reason: string; sources: string[] }> | null>(null);
+  const { toast } = useApp();
+  const [reports, setReports] = useState<Awaited<ReturnType<typeof api.admin.askReports>>['reports'] | null>(null);
   const [error, setError] = useState('');
-  useEffect(() => {
-    api.admin.askReports().then((result) => setReports(result.reports)).catch((problem) => setError(problem instanceof Error ? problem.message : 'Could not load reports.'));
+  const [busy, setBusy] = useState('');
+  const [resolved, setResolved] = useState(false);
+  const load = useCallback(async () => {
+    setError('');
+    try { setReports((await api.admin.askReports()).reports); }
+    catch (problem) { setError(problem instanceof Error ? problem.message : 'Could not load reports.'); }
   }, []);
+  useEffect(() => { void load(); }, [load]);
+  const change = async (id: string, done: boolean) => {
+    setBusy(id);
+    try {
+      await api.admin.resolveReport(id, done);
+      setReports((rows) => rows?.map((row) => row.id === id ? { ...row, resolvedAt: done ? new Date().toISOString() : null } : row) ?? null);
+      toast(done ? 'Report resolved' : 'Report reopened');
+    } catch (problem) { setError(problem instanceof Error ? problem.message : 'Could not update this report.'); }
+    finally { setBusy(''); }
+  };
+  const shown = reports?.filter((report) => Boolean(report.resolvedAt) === resolved);
   return <section className="admin-block">
-    <h2>Reported Ask answers</h2>
-    {error && <div className="alert error">{error}</div>}
-    {reports === null && !error && <p className="muted">Loading reports…</p>}
-    {reports?.length === 0 && <p className="muted">No reports yet.</p>}
-    {reports?.map((report) => <article key={report.id} className="report-example">
-      <p className="faint small">{relativeDate(report.createdAt)}</p>
+    <div className="admin-block-head"><h2>Reported Ask answers</h2><button type="button" className="btn sm" onClick={() => setResolved(!resolved)}>{resolved ? 'Show open reports' : 'Show resolved reports'}</button></div>
+    <p className="muted small">{reports ? `${reports.filter((report) => !report.resolvedAt).length} open · ${reports.filter((report) => report.resolvedAt).length} resolved` : 'Loading reports…'}</p>
+    {error && <div className="alert error" role="alert">{error} <button type="button" className="btn sm" onClick={() => void load()}>Retry</button></div>}
+    {shown?.length === 0 && <p className="muted">{resolved ? 'No resolved reports yet.' : 'No open reports. You’re caught up.'}</p>}
+    {shown?.map((report) => <article key={report.id} className="report-example">
+      <p className="faint small">Reported {relativeDate(report.createdAt)}{report.resolvedAt ? ` · Resolved ${relativeDate(report.resolvedAt)}` : ''}</p>
       <h3>{report.question}</h3>
       <p><strong>Reported issue:</strong> {report.reason}</p>
-      <details><summary>Answer and sources</summary><p className="report-answer-text">{report.answer}</p>{report.sources?.map((url) => <p key={url}><a href={url} target="_blank" rel="noopener noreferrer">{url}</a></p>)}</details>
+      <details><summary>Answer and sources</summary><p className="report-answer-text">{report.answer}</p>{report.sources?.filter((url) => /^https?:\/\//.test(url)).map((url) => <p key={url}><a href={url} target="_blank" rel="noopener noreferrer">{url}</a></p>)}</details>
+      <button type="button" className="btn sm" disabled={busy !== ''} onClick={() => void change(report.id, !resolved)}>{busy === report.id ? 'Saving…' : resolved ? 'Reopen report' : 'Mark resolved'}</button>
     </article>)}
   </section>;
+}
+
+function DataTab() {
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.admin.data>> | null>(null);
+  const [error, setError] = useState('');
+  const load = useCallback(async () => {
+    setError('');
+    try { setData(await api.admin.data()); }
+    catch (problem) { setError(problem instanceof Error ? problem.message : 'Could not load data sources.'); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const date = (value: string) => value ? new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Dubai' }) : 'Not available';
+  return <div className="admin-stack">
+    {error && <div className="alert error" role="alert">{error} <button type="button" className="btn sm" onClick={() => void load()}>Retry</button></div>}
+    {!data && !error && <Loading />}
+    {data && <>
+      <section className="admin-block">
+        <h2>What answers are based on</h2>
+        <p className="muted small">The data currently served to students. A recent refresh can still contain older references; check both dates before relying on coverage.</p>
+        <div className="data-sources">{data.sources.map((source) => <article className="data-source" key={source.name}>
+          <div><h3>{source.name}</h3><p>{source.count.toLocaleString()} {source.unit}</p></div>
+          <dl><div><dt>{source.name === 'Room of Requirement' ? 'Newest post' : 'Latest refresh'}</dt><dd>{date(source.updated)}</dd></div>
+          {source.oldest && <div><dt>{source.name === 'Room of Requirement' ? 'Oldest post' : 'Oldest reference refresh'}</dt><dd>{date(source.oldest)}</dd></div>}
+          {source.indexed && <div><dt>Search index built</dt><dd>{date(source.indexed)}</dd></div>}
+          {source.semantic !== null && <div><dt>Search</dt><dd>{source.semantic ? 'Keyword + semantic index' : 'Keyword only'}</dd></div>}</dl>
+          {source.problem ? <p className="alert error">{source.problem}</p> : source.count === 0 ? <p className="alert">No data loaded for this source.</p> : source.updated && Date.now() - Date.parse(source.updated) > 30 * 86_400_000 ? <p className="alert">No update in over 30 days. Refresh this source.</p> : null}
+        </article>)}</div>
+      </section>
+      <div className="admin-split"><Shares title="Official reference topics" rows={data.sections} total={data.sections.reduce((n, row) => n + row.n, 0)} /><Shares title="Official source websites" rows={data.hosts} total={data.hosts.reduce((n, row) => n + row.n, 0)} /></div>
+      <section className="admin-block"><h2>Albert coverage by term</h2><p className="muted small">Counts include all schools and study away sites in the imported schedule.</p>
+        {data.terms.length === 0 ? <p className="muted">No terms have been imported.</p> : <div className="table-wrap" tabIndex={0} role="region" aria-label="Albert term coverage"><table className="data-table"><thead><tr><th>Term</th><th>Courses</th><th>Sections</th><th>Last refreshed</th></tr></thead><tbody>{data.terms.map((term) => <tr key={term.name}><td>{term.name}{term.current ? ' · Current' : ''}</td><td>{term.courses.toLocaleString()}</td><td>{term.sections.toLocaleString()}</td><td>{date(term.updated)}</td></tr>)}</tbody></table></div>}
+      </section>
+    </>}
+  </div>;
 }
 
 /** Today's headline numbers on a departure board. */
@@ -396,35 +457,40 @@ function Shares({ title, rows, total }: { title: string; rows: Array<{ name: str
 
 function MembersTab({ stats }: { stats: AdminDashboard | null }) {
   const [query, setQuery] = useState('');
+  const [sort, setSort] = useState('joined');
+  const [page, setPage] = useState(0);
   const shown = useMemo(() => {
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-    return (stats?.newest ?? []).filter((member) => words.every((word) => `${member.name} ${member.netId} ${member.major}`.toLowerCase().includes(word)));
-  }, [stats, query]);
+    return (stats?.directory ?? stats?.newest ?? []).filter((member) => words.every((word) => `${member.name} ${member.netId} ${member.major} ${member.classOf} ${member.standing}`.toLowerCase().includes(word))).sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : sort === 'answers' ? b.answers - a.answers : (sort === 'active' ? b.lastSeenAt.localeCompare(a.lastSeenAt) : b.createdAt.localeCompare(a.createdAt)));
+  }, [stats, query, sort]);
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(shown.length / 50) - 1));
   if (!stats) return <Loading />;
   return (
     <div className="admin-stack">
       <section className="admin-block">
         <div className="admin-block-head">
-          <h2>Newest members</h2>
-          {stats.newest.length > 6 && <input className="input admin-filter" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by name, NetID or major" aria-label="Filter members" />}
+          <h2>Members · {stats.members.total.toLocaleString()}</h2>
+          <div className="admin-controls"><input className="input admin-filter" type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} placeholder="Name, NetID, major or year" aria-label="Filter members" />
+          <select className="input admin-sort" aria-label="Sort members" value={sort} onChange={(event) => { setSort(event.target.value); setPage(0); }}><option value="joined">Newest members</option><option value="active">Recently active</option><option value="answers">Most answers</option><option value="name">Name A–Z</option></select></div>
         </div>
-        {stats.newest.length === 0 ? (
+        {stats.members.total === 0 ? (
           <p className="muted small">Nobody has signed up yet.</p>
         ) : (
-          <div className="table-wrap">
-            <table className="data-table">
+          <div className="table-wrap" tabIndex={0} role="region" aria-label="Member directory">
+            <table className="data-table member-table">
               <thead>
                 <tr>
                   <th>Name</th>
                   <th>NetID</th>
                   <th>Major</th>
                   <th>Year</th>
+                  <th>Answers</th>
                   <th>Joined</th>
                   <th>Last seen</th>
                 </tr>
               </thead>
               <tbody>
-                {shown.map((member) => (
+                {shown.slice(currentPage * 50, (currentPage + 1) * 50).map((member) => (
                   <tr key={member.netId}>
                     <td>
                       <b>{member.name}</b>
@@ -433,15 +499,18 @@ function MembersTab({ stats }: { stats: AdminDashboard | null }) {
                       <code>{member.netId}</code>
                     </td>
                     <td>{member.major}</td>
-                    <td>{member.standing}</td>
+                    <td>{member.standing} · {member.classOf}</td>
+                    <td>{member.answers}</td>
                     <td title={new Date(member.createdAt).toLocaleString('en-GB')}>{relativeDate(member.createdAt)}</td>
                     <td title={new Date(member.lastSeenAt).toLocaleString('en-GB')}>{relativeDate(member.lastSeenAt)}</td>
                   </tr>
                 ))}
+                {shown.length === 0 && <tr><td colSpan={7}>No members match “{query}”. Try a name, NetID, major or year.</td></tr>}
               </tbody>
             </table>
           </div>
         )}
+        {shown.length > 0 && <div className="admin-block-head"><p className="muted small" role="status">Showing {currentPage * 50 + 1}–{Math.min((currentPage + 1) * 50, shown.length)} of {shown.length} members</p>{shown.length > 50 && <div className="actions"><button type="button" className="btn sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button><button type="button" className="btn sm" disabled={(currentPage + 1) * 50 >= shown.length} onClick={() => setPage(currentPage + 1)}>Next</button></div>}</div>}
       </section>
       <div className="admin-split">
         <Shares title="Majors" rows={stats.majors} total={stats.members.total} />
@@ -597,38 +666,46 @@ const ACTION_LABEL: Record<string, string> = {
   remove_offer: 'Removed an offer',
   remove_review: 'Removed a review',
   unban: 'Let post again',
+  resolve_report: 'Resolved an Ask report',
+  reopen_report: 'Reopened an Ask report',
 };
 
 function ModerationTab({ stats }: { stats: AdminDashboard | null }) {
   const { toast } = useApp();
   const [bans, setBans] = useState<Array<{ netId: string; reason: string; createdAt: string }> | null>(null);
   const [audit, setAudit] = useState<Array<{ action: string; target: string; createdAt: string }> | null>(null);
-  useEffect(() => {
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState('');
+  const load = useCallback(() => {
+    setError('');
     api.admin
       .bans()
       .then((result) => setBans(result.bans))
-      .catch(() => setBans([]));
+      .catch((problem) => setError(problem instanceof Error ? problem.message : 'Could not load barred accounts.'));
     api.admin
       .audit()
       .then((result) => setAudit(result.audit))
-      .catch(() => setAudit([]));
+      .catch((problem) => setError(problem instanceof Error ? problem.message : 'Could not load admin actions.'));
   }, []);
+  useEffect(load, [load]);
   const unban = async (netId: string) => {
+    setBusy(netId);
     try {
       await api.admin.unban(netId);
       setBans((current) => current?.filter((ban) => ban.netId !== netId) ?? null);
       toast(`${netId} can post again`);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not let them post again.');
-    }
+    } finally { setBusy(''); }
   };
   return (
     <div className="admin-stack">
+      {error && <div className="alert error" role="alert">{error} <button type="button" className="btn sm" onClick={load}>Retry</button></div>}
       <p className="muted small">Every post on the site shows a dashed remove button while you are an administrator. Removing can also bar the writer.{stats ? ` ${plural(stats.board.bans, 'account is', 'accounts are')} barred.` : ''}</p>
       <section className="admin-block">
         <h2>Barred from posting</h2>
         {bans === null ? (
-          <Loading />
+          error ? null : <Loading />
         ) : bans.length === 0 ? (
           <p className="muted small">Nobody. “Remove and bar” on a post adds its writer here.</p>
         ) : (
@@ -643,7 +720,7 @@ function ModerationTab({ stats }: { stats: AdminDashboard | null }) {
                     {ban.reason || 'No reason given'} · {relativeDate(ban.createdAt)}
                   </span>
                 </div>
-                <button type="button" className="btn sm ghost" onClick={() => void unban(ban.netId)}>
+                <button type="button" className="btn sm ghost" onClick={() => void unban(ban.netId)} disabled={busy !== ''}>
                   Let post again
                 </button>
               </div>
@@ -654,7 +731,7 @@ function ModerationTab({ stats }: { stats: AdminDashboard | null }) {
       <section className="admin-block">
         <h2>Recent admin actions</h2>
         {audit === null ? (
-          <Loading />
+          error ? null : <Loading />
         ) : audit.length === 0 ? (
           <p className="muted small">No removals yet.</p>
         ) : (

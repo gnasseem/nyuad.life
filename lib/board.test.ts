@@ -451,3 +451,23 @@ describe('the admin page', () => {
     expect(view.majors.map((major) => major.name).sort()).toEqual(['Computer Science', 'Economics']);
   });
 });
+
+
+it('reads every member when the Data API caps pages below the requested limit', async () => {
+  const offsets: number[] = [];
+  vi.stubGlobal('fetch', async (input: string) => {
+    const url = new URL(input);
+    if (url.pathname.endsWith('/board_profiles')) {
+      const offset = Number(url.searchParams.get('offset'));
+      offsets.push(offset);
+      const rows = Array.from({ length: Math.max(0, Math.min(2, 5 - offset)) }, (_, i) => ({ net_id: `test${offset + i}`, name: `Member ${offset + i}`, major: 'Mathematics', class_of: 2027, answers: 0, created_at: now.toISOString(), last_seen_at: now.toISOString() }));
+      return new Response(JSON.stringify(rows));
+    }
+    return new Response('[]', { headers: { 'content-range': '0-0/0' } });
+  });
+  try {
+    const store = new SupabaseBoardStore({ url: 'https://database.example', serviceKey: 'server-only-test-key' });
+    expect((await store.adminOverview(now)).members).toHaveLength(5);
+    expect(offsets).toEqual([0, 2, 4, 5]);
+  } finally { vi.unstubAllGlobals(); }
+});

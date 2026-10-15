@@ -121,3 +121,10 @@ export interface AskResponse {
     ms: number;
   };
 }
+
+export interface AdminData {
+  sources: Array<{ name: string; count: number; unit: string; updated: string; oldest: string; indexed: string; semantic: boolean | null; problem: string | null }>;
+  sections: Array<{ name: string; n: number }>;
+  hosts: Array<{ name: string; n: number }>;
+  terms: Array<{ name: string; courses: number; sections: number; updated: string; current: boolean }>;
+}

@@ -1,10 +1,14 @@
 /** Admin privileges follow verified NYU accounts, checked against the deployment allowlist on every request. */
+import type { AdminData } from './types.ts';
 import type { IncomingMessage } from 'node:http';
 import type { AppUsageReport, UsageDay } from './app-usage.ts';
 import { emailSession } from './auth.ts';
 import { STANDING_LABELS, standingFor } from './board.ts';
 import { boardStore, type AdminMember, type AdminOverview } from './board-store.ts';
 import { ApiError } from './http.ts';
+import { loadCatalog } from './courses.ts';
+import { loadOfficial, SECTION_LABELS } from './official.ts';
+import { loadArchive } from './store.ts';
 import { modelUsage, noteAlert, saveModelUsage, usageDay, type UsageState } from './model-usage.ts';
 import { modelKeys } from './providers.ts';
 
@@ -117,6 +121,7 @@ export interface Dashboard {
   hours: number[];
   shared: boolean;
   newest: Array<AdminMember & { standing: string }>;
+  directory: Array<AdminMember & { standing: string }>;
   majors: Array<{ name: string; n: number }>;
   standings: Array<{ name: string; n: number }>;
   board: AdminOverview['counts'];
@@ -141,9 +146,37 @@ export function dashboard(usage: AppUsageReport, overview: AdminOverview, now = 
     routes: usage.routes,
     hours: usage.hours,
     shared: usage.shared,
+    directory: members.map((member) => ({ ...member, standing: STANDING_LABELS[standingFor(member.classOf, new Date(now))] })),
     newest: members.slice(0, 12).map((member) => ({ ...member, standing: STANDING_LABELS[standingFor(member.classOf, new Date(now))] })),
     majors: tally(members.map((member) => member.major)).slice(0, 10),
     standings: tally(members.map((member) => STANDING_LABELS[standingFor(member.classOf, new Date(now))])),
     board: overview.counts,
   };
+}
+
+/** Describe the data actually served, including partial failures and the oldest official reference. */
+export async function dataOverview(): Promise<AdminData> {
+  const [archive, official, catalog] = await Promise.allSettled([loadArchive(), loadOfficial(), Promise.resolve().then(() => loadCatalog())]);
+  const data: AdminData = { sources: [], sections: [], hosts: [], terms: [] };
+  const problem = (result: PromiseSettledResult<unknown>) => result.status === 'rejected' ? (result.reason instanceof Error ? result.reason.message : 'Could not read this source.') : null;
+  const a = archive.status === 'fulfilled' ? archive.value : null;
+  data.sources.push({ name: 'Room of Requirement', count: a?.posts.length ?? 0, unit: 'posts', updated: a?.meta.newestPost ?? '', oldest: a?.meta.oldestPost ?? '', indexed: a?.meta.builtAt ?? '', semantic: a ? a.vectors.count > 0 : null, problem: problem(archive) });
+  const o = official.status === 'fulfilled' ? official.value : null;
+  data.sources.push({ name: 'Official NYU references', count: o?.docs.length ?? 0, unit: 'pages and course descriptions', updated: o?.meta.newestPost ?? '', oldest: o?.meta.oldestPost ?? '', indexed: o?.meta.builtAt ?? '', semantic: o ? o.vectors.count > 0 : null, problem: problem(official) });
+  if (o) {
+    data.sections = [...o.bySection].map(([section, rows]) => ({ name: SECTION_LABELS[section], n: rows.length })).sort((a, b) => b.n - a.n);
+    const hosts = new Map<string, number>();
+    for (const doc of o.docs) { const host = new URL(doc.url).host; hosts.set(host, (hosts.get(host) ?? 0) + 1); }
+    data.hosts = [...hosts].map(([name, n]) => ({ name, n })).sort((a, b) => b.n - a.n);
+  }
+  const c = catalog.status === 'fulfilled' ? catalog.value : null;
+  data.sources.push({ name: 'Albert class schedule', count: c?.byCode.size ?? 0, unit: 'courses across all terms', updated: c?.scraped ?? '', oldest: '', indexed: '', semantic: null, problem: problem(catalog) });
+  if (c) {
+    const offerings = [...c.byCode.values()].flat();
+    data.terms = c.terms.map((term) => {
+      const rows = offerings.filter((row) => row.term === term.name);
+      return { name: term.name, courses: rows.length, sections: rows.reduce((n, row) => n + row.sections.length, 0), updated: rows.map((row) => row.scraped).sort().at(-1) ?? '', current: term.name === c.current };
+    });
+  }
+  return data;
 }

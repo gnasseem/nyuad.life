@@ -1,3 +1,4 @@
+import type { AdminData } from '../../lib/types';
 /** Typed client for the API, including the streaming /api/ask protocol and the student board. */
 import type { Rules } from '../../lib/schedule.ts';
 import { askerKey, loadProfile } from './store';
@@ -227,6 +228,7 @@ export interface AdminDashboard {
   hours: number[];
   shared: boolean;
   newest: AdminMember[];
+  directory: AdminMember[];
   majors: Array<{ name: string; n: number }>;
   standings: Array<{ name: string; n: number }>;
   board: { questions: number; openQuestions: number; answers: number; reviews: number; listings: number; offers: number; events: number; bans: number };
@@ -561,6 +563,8 @@ export const api = {
     logout: () => post<{ ok: boolean }>('/api/board', { op: 'auth_logout' }),
   },
   board: {
+    data: () => request<AdminData>('/api/admin?op=data'),
+    resolveReport: (id: string, resolved: boolean) => post<{ ok: true }>('/api/admin', { op: 'resolve-report', id, resolved }),
     stats: () => request<{ open: number; answered: number; answers: number; helpers: number }>('/api/board?op=stats'),
     recent: () => request<{ questions: QuestionWithAnswers[] }>('/api/board?op=recent'),
     question: (id: string) => request<{ question: Question; answers: Answer[] }>(`/api/board?op=question&id=${encodeURIComponent(id)}`),
@@ -598,9 +602,11 @@ export const api = {
     models: () => request<{ geminiKeyProblem: string | null; results: ModelCheck[] }>('/api/admin?op=models'),
     usage: () => request<UsageReport>('/api/admin?op=usage'),
     alertTest: () => post<{ ok: true; to: string[] }>('/api/admin', { op: 'alert-test' }),
+    data: () => request<AdminData>('/api/admin?op=data'),
+    resolveReport: (id: string, resolved: boolean) => post<{ ok: true }>('/api/admin', { op: 'resolve-report', id, resolved }),
     stats: () => request<AdminDashboard>('/api/admin?op=stats'),
     audit: () => request<{ audit: Array<{ action: string; target: string; createdAt: string }> }>('/api/admin?op=audit'),
-    askReports: () => request<{ reports: Array<{ id: string; createdAt: string; question: string; answer: string; reason: string; sources: string[] }> }>('/api/admin?op=ask-reports'),
+    askReports: () => request<{ reports: Array<{ id: string; createdAt: string; question: string; answer: string; reason: string; sources: string[]; resolvedAt: string | null }> }>('/api/admin?op=ask-reports'),
     warm: () => request<{ rated: number; none: number; failed: number; left: number; ms: number }>('/api/courses?op=warm'),
   },
   plan: {
