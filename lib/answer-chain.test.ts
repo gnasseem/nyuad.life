@@ -7,12 +7,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { answerKey, resetAnswerCache } from './answer-cache.ts';
 import { MemoryBoardStore } from './board-store.ts';
-import { geminiConfig, resetModelState } from './gemini.ts';
+import { geminiConfig, GeminiError, markUnavailable, resetModelState } from './gemini.ts';
 import { buildIndex } from './indexer.ts';
-import { atCapacity, markFailed, modelOrder, ProviderError, providersFromEnv, resetProviderState, streamChat, ThinkFilter, usable, type Provider } from './providers.ts';
+import { atCapacity, checkModels, liteChat, markFailed, modelOrder, ProviderError, providersFromEnv, resetProviderState, siteJson, streamChat, ThinkFilter, usable, type Provider } from './providers.ts';
 import { answerWriters, ask } from './rag.ts';
 import { loadArchive, resetArchive, type Archive } from './store.ts';
 
@@ -123,6 +123,11 @@ beforeEach(() => {
   resetAnswerCache();
 });
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
 function groq(models = ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'], maxPromptChars = 20_000): Provider {
   return { id: 'groq', family: 'groq', label: 'Groq', baseUrl: backupUrl, apiKey: 'groq-key', models, liteModels: ['llama-3.1-8b-instant'], maxPromptChars, maxOutputTokens: 1_600, freeTier: '' };
 }
@@ -191,7 +196,8 @@ describe('the answer model chain', () => {
     expect(error!.message).not.toMatch(/gemini|503/i);
   });
 
-  it('tries GLM first, passes over a GLM key that is answering someone else, and falls to Gemini when both are', async () => {
+  it('honors a GLM-first override, passes over busy GLM keys, and falls to Gemini when both are busy', async () => {
+    vi.stubEnv('ROR_MODEL_ORDER', 'zai,gemini');
     const [first, second] = [zai('zai'), zai('zai-2')];
     expect(answerWriters({ gemini: geminiConfig(), chatgpt: null, backups: [groq(), first], order: modelOrder() }).map((writer) => writer.name).slice(0, 2)).toEqual(['zai:glm-4.7-flash', 'gemini-3.5-flash']);
     const ask1 = () => ask(archive, geminiConfig()!, { question: 'best calculus professor?', stream: true }, {}, undefined, { ...context, backups: [first, second] });
@@ -213,6 +219,7 @@ describe('the answer model chain', () => {
   });
 
   it('starts the next model beside one that has not written within a few seconds, and leaves the slow one out for a while', async () => {
+    vi.stubEnv('ROR_MODEL_ORDER', 'zai,gemini');
     backupBehaviour['glm-4.7-flash'] = 'slow';
     const started = Date.now();
     const result = await ask(archive, geminiConfig()!, { question: 'best calculus professor?', stream: true }, {}, undefined, { ...context, backups: [zai('zai')] });
@@ -266,7 +273,7 @@ describe('backup providers', () => {
     expect(providers.find((provider) => provider.id === 'groq')!.models).toEqual(['a', 'b']);
     expect(providersFromEnv({ MISTRAL_API_KEY: 'm', ROR_MODEL_ORDER: 'mistral,gemini' }).map((provider) => provider.id)).toEqual(['mistral']);
     expect(providersFromEnv({})).toEqual([]);
-    // Several keys in one variable are separate quotas, tried in turn under the same provider.
+    // Several keys are accepted; keys in the same organization still share its quota.
     expect(providersFromEnv({ GROQ_API_KEY: 'k1, k2' }).map((provider) => [provider.id, provider.family, provider.apiKey])).toEqual([['groq', 'groq', 'k1'], ['groq-2', 'groq', 'k2']]);
   });
 
@@ -291,5 +298,128 @@ describe('backup providers', () => {
     expect(out).toBe('The answer is **yes**.\n\n- one\n- two <b>');
     const plain = new ThinkFilter();
     expect(['Para one.', '\n\n', 'Para two.'].map((chunk) => plain.push(chunk)).join('') + plain.flush()).toBe('Para one.\n\nPara two.');
+  });
+
+  it('uses separate orders for small tasks and answers, while honoring explicit overrides', () => {
+    expect(modelOrder({}).slice(0, 3)).toEqual(['gemini', 'groq', 'cloudflare']);
+    expect(modelOrder({}, 'lite').slice(0, 3)).toEqual(['groq', 'gemini', 'cloudflare']);
+    expect(modelOrder({ ROR_MODEL_ORDER: 'zai,gemini' }, 'lite').slice(0, 2)).toEqual(['zai', 'gemini']);
+    expect(modelOrder({ ROR_MODEL_ORDER: 'zai', ROR_LITE_MODEL_ORDER: 'cloudflare' }, 'lite')[0]).toBe('cloudflare');
+  });
+
+  it('does not revive known exhausted or refused models when every writer is resting', () => {
+    const provider = groq(['spent']);
+    markFailed(provider, 'spent', new ProviderError('Groq 429: daily quota spent', 429));
+    expect(answerWriters({ gemini: null, chatgpt: null, backups: [provider], order: ['groq'] })).toEqual([]);
+  });
+
+  it('rests all OpenRouter models until UTC midnight after the daily allowance is spent', async () => {
+    const provider = { ...groq(['one', 'two']), id: 'openrouter', family: 'openrouter', liteModels: ['one', 'two'] };
+    const send = vi.fn(async () => new Response(JSON.stringify({ error: { message: 'Free requests per day exhausted' } }), { status: 429 }));
+    vi.stubGlobal('fetch', send);
+    await expect(liteChat([provider], { system: 's', messages: [{ role: 'user', text: 'q' }] })).rejects.toMatchObject({ status: 429 });
+    expect(send).toHaveBeenCalledTimes(1);
+    const midnight = new Date().setUTCHours(24, 0, 0, 0);
+    expect(usable(provider, provider.models, midnight - 1)).toEqual([]);
+    expect(usable(provider, provider.models, midnight + 1)).toEqual(['one', 'two']);
+  });
+
+  it('keeps an OpenRouter upstream limit local to that model', async () => {
+    const provider = { ...groq(['one', 'two']), id: 'openrouter', family: 'openrouter', liteModels: ['one', 'two'] };
+    const send = vi.fn(async (_url: string, init: RequestInit) => {
+      const { model } = JSON.parse(String(init.body));
+      return model === 'one'
+        ? new Response(JSON.stringify({ error: { message: 'Daily quota exhausted', metadata: { provider_name: 'upstream' } } }), { status: 429 })
+        : Response.json({ choices: [{ message: { content: 'OK' } }] });
+    });
+    vi.stubGlobal('fetch', send);
+    expect(await liteChat([provider], { system: 's', messages: [{ role: 'user', text: 'q' }] })).toBe('OK');
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('honors an HTTP-date Retry-After longer than ten minutes', async () => {
+    const provider = groq(['one']);
+    provider.liteModels = provider.models;
+    const reset = new Date(Date.now() + 1_800_000).toUTCString();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":{"message":"rate limited"}}', { status: 429, headers: { 'retry-after': reset } })));
+    await expect(liteChat([provider], { system: 's', messages: [] })).rejects.toMatchObject({ status: 429 });
+    expect(usable(provider, ['one'], Date.parse(reset) - 1_000)).toEqual([]);
+    expect(usable(provider, ['one'], Date.parse(reset) + 1_000)).toEqual(['one']);
+  });
+
+  it('skips a known insufficient Groq minute budget until its reset', async () => {
+    const provider = groq(['one']);
+    provider.liteModels = provider.models;
+    const send = vi.fn(async () => Response.json({ choices: [{ message: { content: 'OK' } }] }, { headers: { 'x-ratelimit-remaining-tokens': '200', 'x-ratelimit-reset-tokens': '0.05s' } }));
+    vi.stubGlobal('fetch', send);
+    await liteChat([provider], { system: 's', messages: [], maxOutputTokens: 16 });
+    await expect(liteChat([provider], { system: 's', messages: [{ role: 'user', text: 'q'.repeat(600) }], maxOutputTokens: 16 })).rejects.toMatchObject({ status: 429 });
+    expect(send).toHaveBeenCalledTimes(1);
+    // The refusal respects the reset with a one-second minimum cooldown.
+    expect(usable(provider, ['one'], Date.now() + 1_100)).toEqual(['one']);
+  });
+
+  it('tries the next model for malformed or truncated JSON and preserves the requested plan output budget', async () => {
+    const provider = groq(['bad', 'short', 'ok']);
+    provider.liteModels = provider.models;
+    const seen: Array<{ model: string; max_tokens: number }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      seen.push(body);
+      return Response.json({ choices: [{ message: { content: body.model === 'bad' ? '{' : '{"courses":[]}' }, finish_reason: body.model === 'short' ? 'length' : 'stop' }] });
+    }));
+    expect(await siteJson(null, [provider], { system: 's', prompt: 'Read a study plan', schema: { type: 'object' }, maxOutputTokens: 4096 })).toEqual({ courses: [] });
+    expect(seen.map((call) => call.model)).toEqual(['bad', 'short', 'ok']);
+    expect(seen.every((call) => call.max_tokens === 4096)).toBe(true);
+  });
+
+  it('limits small-call races to two providers and enforces the deadline even if a request ignores abort', async () => {
+    const providers = providersFromEnv({ GROQ_API_KEY: 'g', ZAI_API_KEY: 'z', MISTRAL_API_KEY: 'm', OPENROUTER_API_KEY: 'o' });
+    const send = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal('fetch', send);
+    await expect(siteJson(null, providers, { system: 's', prompt: 'q', schema: {}, timeoutMs: 150, stepMs: 20 })).rejects.toMatchObject({ status: 504 });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives the next model in a provider time to answer after a slow small call', async () => {
+    const provider = groq(['slow', 'ok']);
+    provider.liteModels = provider.models;
+    const send = vi.fn(async (_url: string, init: RequestInit) => {
+      if (JSON.parse(String(init.body)).model === 'slow') return new Promise<Response>((_resolve, reject) => init.signal!.addEventListener('abort', () => reject(new Error('aborted')), { once: true }));
+      return Response.json({ choices: [{ message: { content: 'OK' } }] });
+    });
+    vi.stubGlobal('fetch', send);
+    expect(await liteChat([provider], { system: 's', messages: [], timeoutMs: 6_000 })).toBe('OK');
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(usable(provider, ['slow', 'ok'])).toEqual(['ok']);
+  });
+
+  it('skips exhausted Gemini small-call models and still reaches the next provider', async () => {
+    vi.stubEnv('ROR_LITE_MODEL_ORDER', 'gemini,groq');
+    const cfg = geminiConfig({ GEMINI_API_KEY: 'key', GEMINI_LITE_MODEL: 'spent', GEMINI_LITE_FALLBACK_MODELS: '' })!;
+    markUnavailable('spent', new GeminiError('Daily quota exhausted', 429));
+    const send = vi.fn(async () => Response.json({ choices: [{ message: { content: '{"ok":true}' } }] }));
+    vi.stubGlobal('fetch', send);
+    expect(await siteJson(cfg, [groq()], { system: 's', prompt: 'q', schema: {} })).toEqual({ ok: true });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('checks single-concurrency models sequentially and counts probes as occupying the key', async () => {
+    const provider = zai('zai');
+    let open = 0;
+    let most = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      open++;
+      most = Math.max(most, open);
+      expect(atCapacity(provider)).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      open--;
+      return Response.json({ choices: [{ message: { content: 'OK' } }] });
+    }));
+    const checks = await checkModels(null, [provider]);
+    expect(checks).toHaveLength(2);
+    expect(checks.every((check) => check.ok)).toBe(true);
+    expect(most).toBe(1);
+    expect(atCapacity(provider)).toBe(false);
   });
 });

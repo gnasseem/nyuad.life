@@ -393,7 +393,7 @@ function allow(kind: PostKind, ...parts: Array<string | null | undefined>): void
 
 /** The model's read of a post the rules let through (lib/moderation.ts); refuses it the same way. */
 async function review(kind: ReviewedKind, ...parts: Array<string | null | undefined>): Promise<void> {
-  await warmModels(1_500);
+  await warmModels();
   const screened = await reviewPost({ gemini: geminiConfig(), backups: providersFromEnv() }, kind, ...parts);
   if (screened) throw new ApiError(screened.reason === 'unreviewed' ? 503 : 422, screened.message, `blocked_${screened.reason}`);
 }

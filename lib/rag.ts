@@ -1183,10 +1183,10 @@ interface AnswerWriter {
 
 /**
  * Gemini's answer models, then each backup provider's (or the other way round, per ROR_MODEL_ORDER), then Gemini's
- * lite models as the last resort. Models resting after a recent failure are left out, unless that leaves nothing.
+ * lite models as the last resort. Models resting after a recent failure are left out until their cooldown expires.
  */
 export function answerWriters(writers: Writers, now = Date.now()): AnswerWriter[] {
-  const build = (strict: boolean): AnswerWriter[] => {
+  const build = (): AnswerWriter[] => {
     const out: AnswerWriter[] = [];
     const cfg = writers.gemini;
     const gemini = (models: string[]) => {
@@ -1195,7 +1195,7 @@ export function answerWriters(writers: Writers, now = Date.now()): AnswerWriter[
       for (const model of models) {
         for (const key of geminiKeys(cfg)) {
           const tag = keyTag(key);
-          if (strict && !liveModels([model], now, tag).length) continue;
+          if (!liveModels([model], now, tag).length) continue;
           out.push({
             name: model + tag,
             stream: (system, messages, signal, last) => geminiChunks(key, model, system, messages, signal, last),
@@ -1216,7 +1216,7 @@ export function answerWriters(writers: Writers, now = Date.now()): AnswerWriter[
       const family = writers.backups.filter((entry) => entry.family === id);
       const models = [...new Set(family.flatMap((provider) => provider.models))];
       for (const [provider, model] of models.flatMap((model) => family.filter((provider) => provider.models.includes(model)).map((provider) => [provider, model] as const))) {
-        if (strict && !usable(provider, [model], now).length) continue;
+        if (!usable(provider, [model], now).length) continue;
         out.push({
           name: `${provider.id}:${model}`,
           maxPromptChars: provider.maxPromptChars,
@@ -1231,8 +1231,10 @@ export function answerWriters(writers: Writers, now = Date.now()): AnswerWriter[
     gemini(lite);
     return out;
   };
-  const strict = build(true).filter((writer) => (slowUntil.get(writer.name) ?? 0) <= now);
-  return strict.length ? strict : build(false);
+  const healthy = build();
+  const quick = healthy.filter((writer) => (slowUntil.get(writer.name) ?? 0) <= now);
+  // Slow models can be retried as a last resort; a known exhausted quota or refused key must wait for its reset.
+  return quick.length ? quick : healthy;
 }
 
 async function* geminiChunks(cfg: GeminiConfig, model: string, system: string, messages: Message[], signal: AbortSignal, last: boolean): AsyncGenerator<Chunk> {
@@ -1289,7 +1291,7 @@ async function writeAnswer(writers: Writers, system: string, prompt: (maxChars?:
       const last = next === chain.length - 1;
       next++;
       // A key already answering someone else is passed over at once rather than waited on.
-      if (!last && writer.full?.()) continue;
+      if (writer.full?.()) continue;
       void run(writer, last);
       if (next < chain.length) hedge = setTimeout(startNext, HEDGE_MS);
       return;

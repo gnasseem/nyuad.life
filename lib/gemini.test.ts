@@ -1,7 +1,24 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { GeminiError, geminiConfig, markUnavailable, resetModelState, thinkingFor, usableModels, withDiscovered } from './gemini.ts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { generateJson, GeminiError, geminiConfig, markUnavailable, resetModelState, thinkingFor, usableModels, withDiscovered } from './gemini.ts';
 
-afterEach(() => resetModelState());
+afterEach(() => {
+  resetModelState();
+  vi.unstubAllGlobals();
+});
+
+describe('JSON fallback', () => {
+  it('tries another Gemini model when JSON is malformed or truncated', async () => {
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const model = /models\/([^:]+):/.exec(url)?.[1] ?? '';
+      seen.push(model);
+      return Response.json({ candidates: [{ content: { parts: [{ text: model === 'bad' ? '{' : '{"ok":true}' }] }, finishReason: model === 'short' ? 'MAX_TOKENS' : 'STOP' }] });
+    }));
+    const cfg = geminiConfig({ GEMINI_API_KEY: 'key' })!;
+    expect(await generateJson(cfg, { model: ['bad', 'short', 'ok'], messages: [{ role: 'user', text: 'q' }], responseSchema: { type: 'object' } }, { retries: 0 })).toEqual({ ok: true });
+    expect(seen).toEqual(['bad', 'short', 'ok']);
+  });
+});
 
 describe('geminiConfig', () => {
   it('starts answers with the free models that work on the production key, and never Gemma', () => {

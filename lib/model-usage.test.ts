@@ -22,6 +22,8 @@ describe('model usage', () => {
     expect(failed(429, 'Gemini 429: quota [GenerateRequestsPerDayPerProjectPerModel-FreeTier]')).toBe('spent');
     expect(failed(429, 'Rate limit exceeded: free-models-per-day')).toBe('spent');
     expect(failed(429, 'Rate limit reached for model on tokens per minute')).toBe('limited');
+    expect(failed(402, 'Credit balance exhausted')).toBe('spent');
+    expect(failed(429, 'Z.ai 429: Insufficient balance (code 1113)')).toBe('spent');
     expect(failed(503, 'The model is overloaded')).toBe('overloaded');
     expect(usageState({ ok: 2, failed: 1, lastOkAt: '2026-10-10T10:00:00Z', lastErrorAt: '2026-10-10T09:00:00Z', lastStatus: 503, lastError: '' })).toBe('ok');
     expect(usageState({ ok: 0, failed: 0, lastOkAt: null, lastErrorAt: null, lastStatus: null, lastError: null })).toBe('idle');
@@ -53,6 +55,14 @@ describe('model usage', () => {
     expect(byKey['gemini-2']).toMatchObject({ hint: '2222', state: 'ok', ok: 1 });
     const used = byKey.groq!.models.find((model) => model.ok);
     expect(used).toMatchObject({ state: 'ok', remaining: 987, limit: 1000 });
+  });
+
+  it('keeps daily quota headers on a failed Groq request', async () => {
+    const providers = providersFromEnv({ GROQ_API_KEY: 'key', GROQ_MODELS: 'one', GROQ_LITE_MODELS: 'one' });
+    vi.stubGlobal('fetch', async () => json(429, { error: { message: 'Requests per day exhausted' } }, { 'x-ratelimit-remaining-requests': '0', 'x-ratelimit-limit-requests': '1000', 'x-ratelimit-reset-requests': '2h' }));
+    await expect(liteChat(providers, { system: 's', messages: [] })).rejects.toMatchObject({ status: 429, retryAfterMs: 7_200_000 });
+    const report = await modelUsage(modelKeys(null, providers));
+    expect(report.keys[0]!.models[0]).toMatchObject({ failed: 1, remaining: 0, limit: 1000, state: 'spent' });
   });
 
   it('emails the administrators once about an outage, with what each key did', async () => {

@@ -1,22 +1,21 @@
 /**
  * Models besides Gemini, over the OpenAI-compatible chat completions API. Each provider whose key is set joins the
- * chain in ROR_MODEL_ORDER (Z.ai's GLM before Gemini, the rest after it), so an overloaded, busy or spent model moves the
- * answer to the next one instead of failing. Free tiers are counted per provider, and mostly per model, so every key
- * and every model adds capacity.
+ * chain in ROR_MODEL_ORDER, so an overloaded, busy or spent model moves the answer to the next one instead of failing.
+ * Quotas belong to a project, organization or account; extra keys from the same account do not add capacity.
  *
  *   GROQ_API_KEY                 console.groq.com: 1,000 requests and 200,000 tokens a day per model, no card.
- *   CLOUDFLARE_API_TOKEN         Workers AI (with CLOUDFLARE_ACCOUNT_ID): 10,000 free neurons a day, about 90 answers.
- *   ZAI_API_KEY                  z.ai: GLM Flash models free, one request at a time per key. First by default.
+ *   CLOUDFLARE_API_TOKEN         Workers AI (with CLOUDFLARE_ACCOUNT_ID): 10,000 free neurons a day across models.
+ *   ZAI_API_KEY                  z.ai: GLM Flash models free; one local request at a time per key.
  *   OPENROUTER_API_KEY           openrouter.ai, models ending in ":free": 50 requests a day in all (1,000 after $10).
- *   MISTRAL_API_KEY              console.mistral.ai "Experiment" plan.
+ *   MISTRAL_API_KEY              Mistral Free mode; limits depend on the organization.
  *   AI_GATEWAY_API_KEY           Vercel AI Gateway: a monthly free credit, never charged unless credit is bought.
  *
  * Any key variable may hold several keys separated by commas (GEMINI_API_KEY too, in lib/gemini.ts): each key is
- * a separate free quota, tried in turn.
+ * tried in turn, subject to the provider's shared account limits.
  * `<PROVIDER>_MODELS` overrides a provider's answer models and `<PROVIDER>_LITE_MODELS` its models for small calls.
  * `ROR_MODEL_ORDER` (default below) sets which goes first.
  */
-import { discoverGeminiModels, GEMINI_FREE_TIER, geminiConfig, GeminiError, geminiKeys, generateJson, generateStream, generateText, keyTag, markUnavailable, type GeminiConfig, type Message } from './gemini.ts';
+import { discoverGeminiModels, GEMINI_FREE_TIER, geminiConfig, GeminiError, geminiKeys, generateJson, generateStream, generateText, keyTag, liveModels, markUnavailable, type GeminiConfig, type Message } from './gemini.ts';
 import { recordModelCall, todaysUsage, type ModelKey } from './model-usage.ts';
 
 export interface Provider {
@@ -78,7 +77,7 @@ const PRESETS: Preset[] = [
       return /^[a-f0-9]{32}$/i.test(account) ? `https://api.cloudflare.com/client/v4/accounts/${account}/ai/v1` : null;
     },
     models: ['@cf/openai/gpt-oss-120b', '@cf/zai-org/glm-4.7-flash'],
-    liteModels: ['@cf/zai-org/glm-4.7-flash', '@cf/openai/gpt-oss-20b'],
+    liteModels: ['@cf/openai/gpt-oss-20b', '@cf/zai-org/glm-4.7-flash'],
     maxPromptChars: 40_000,
     maxOutputTokens: 1_600,
     freeTier: '10,000 neurons a day; resets 04:00 Abu Dhabi',
@@ -87,12 +86,14 @@ const PRESETS: Preset[] = [
   },
   { id: 'zai', label: 'Z.ai', key: 'ZAI_API_KEY', baseUrl: 'https://api.z.ai/api/paas/v4', models: ['glm-4.7-flash'], liteModels: ['glm-4.5-flash', 'glm-4.7-flash'], maxPromptChars: 60_000, maxOutputTokens: 2_000, freeTier: 'GLM Flash models free, one request at a time', concurrency: 1, listsModels: false, extra: () => ({ thinking: { type: 'disabled' } }) },
   { id: 'openrouter', label: 'OpenRouter', key: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', models: ['nvidia/nemotron-3-super-120b-a12b:free', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'openai/gpt-oss-120b:free'], liteModels: ['nvidia/nemotron-3-super-120b-a12b:free', 'openai/gpt-oss-20b:free'], maxPromptChars: 60_000, maxOutputTokens: 2_000, freeTier: '50 requests a day across all :free models', listsModels: true, fallbackPattern: /:free$/, extra: (model) => (/gpt-oss|nemotron|inkling/.test(model) ? { reasoning: { effort: 'low', exclude: true } } : {}) },
-  { id: 'mistral', label: 'Mistral', key: 'MISTRAL_API_KEY', baseUrl: 'https://api.mistral.ai/v1', models: ['mistral-medium-latest', 'mistral-small-latest'], liteModels: ['mistral-small-latest'], maxPromptChars: 60_000, maxOutputTokens: 2_000, freeTier: 'Experiment plan', listsModels: true, fallbackPattern: /^mistral-(medium|small)/i },
+  { id: 'mistral', label: 'Mistral', key: 'MISTRAL_API_KEY', baseUrl: 'https://api.mistral.ai/v1', models: ['mistral-medium-latest', 'mistral-small-latest'], liteModels: ['mistral-small-latest'], maxPromptChars: 60_000, maxOutputTokens: 2_000, freeTier: 'Free mode; organization limits shown in the Mistral console', listsModels: true, fallbackPattern: /^mistral-(medium|small)/i },
   { id: 'gateway', label: 'Vercel AI Gateway', key: 'AI_GATEWAY_API_KEY', baseUrl: 'https://ai-gateway.vercel.sh/v1', models: ['openai/gpt-oss-120b'], liteModels: ['openai/gpt-oss-20b'], maxPromptChars: 80_000, maxOutputTokens: 2_000, freeTier: '$5 of credit every 30 days', listsModels: false, extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}) },
 ];
 
-// GLM goes first: free, strong, and a busy key is passed over at once (see atCapacity), so it never holds anyone up.
-export const DEFAULT_ORDER = ['zai', 'gemini', 'groq', 'cloudflare', 'openrouter', 'mistral', 'gateway'];
+// Flash-Lite answered the production probe; GLM's free tier repeatedly waited past the answer hedge.
+export const DEFAULT_ORDER = ['gemini', 'groq', 'cloudflare', 'zai', 'openrouter', 'mistral', 'gateway'];
+// Small tasks use Groq's 20B model before spending an answer request or OpenRouter's small account-wide allowance.
+const LITE_ORDER = ['groq', 'gemini', 'cloudflare', 'zai', 'mistral', 'openrouter', 'gateway'];
 const ALL_IDS = ['gemini', ...PRESETS.map((preset) => preset.id)];
 
 /** Models never tried unless an environment list names them: free Gemma accepted requests and then never answered. */
@@ -164,7 +165,7 @@ export function resetProviderListings(): void {
  * Brings every model list up to date with what the keys can use (Gemini's and each provider's listing), waiting up to
  * `waitMs`. Cheap after the first call on an instance; call it before geminiConfig() and providersFromEnv().
  */
-export async function warmModels(waitMs = 2_500): Promise<void> {
+export async function warmModels(waitMs = 250): Promise<void> {
   await Promise.all([discoverGeminiModels(geminiConfig(), waitMs), discoverProviderModels(providersFromEnv(), waitMs), learnFromOtherInstances(waitMs)]);
 }
 
@@ -206,11 +207,12 @@ async function learnFromOtherInstances(waitMs: number, now = Date.now()): Promis
 }
 
 /** The order to try writers in: `gemini` and the provider ids, from ROR_MODEL_ORDER, with any left out appended. */
-export function modelOrder(env: NodeJS.ProcessEnv = process.env): string[] {
-  const chosen = list(env.ROR_MODEL_ORDER, DEFAULT_ORDER)
+export function modelOrder(env: NodeJS.ProcessEnv = process.env, tier: 'lite' | 'main' = 'main'): string[] {
+  const defaults = tier === 'lite' ? LITE_ORDER : DEFAULT_ORDER;
+  const chosen = list((tier === 'lite' ? env.ROR_LITE_MODEL_ORDER : undefined) ?? env.ROR_MODEL_ORDER, defaults)
     .map((id) => id.toLowerCase())
     .filter((id) => ALL_IDS.includes(id));
-  return [...new Set([...chosen, ...DEFAULT_ORDER])];
+  return [...new Set([...chosen, ...defaults])];
 }
 
 /** Every model key the server has, Gemini's first, with the models each is asked for: for the admins' usage view. */
@@ -257,6 +259,7 @@ export class ProviderError extends Error {
     message: string,
     readonly status: number,
     readonly retryAfterMs?: number,
+    readonly headers?: Headers,
   ) {
     super(message);
     this.name = 'ProviderError';
@@ -269,6 +272,8 @@ export class ProviderError extends Error {
 const unavailable = new Map<string, number>();
 /** Models that rejected the reasoning setting; called without it from then on. */
 const noReasoning = new Set<string>();
+/** Groq's remaining minute tokens, from its response headers; expires at the provider's reset. */
+const tokens = new Map<string, { remaining: number; until: number }>();
 
 export function usable(provider: Provider, models: string[], now = Date.now()): string[] {
   if ((unavailable.get(`${provider.id}:*`) ?? 0) > now) return [];
@@ -285,6 +290,8 @@ export function usable(provider: Provider, models: string[], now = Date.now()): 
 export function markFailed(provider: Provider, model: string, error: unknown, now = Date.now(), quiet = false): void {
   if (!(error instanceof ProviderError)) return void unavailable.set(`${provider.id}:${model}`, now + 30_000);
   const { status } = error;
+  // Keep upstream provenance in the message too, so replayed usage rows preserve the scope on other instances.
+  const sharedLimit = provider.family === 'openrouter' && !/\bupstream\b/i.test(error.message);
   if (status === 401 || status === 403) {
     if (!quiet) console.error(`[models] ${provider.label} refused the key (${status}); check ${PRESETS.find((preset) => preset.id === provider.family)?.key ?? provider.family}.`);
     unavailable.set(`${provider.id}:*`, now + 3_600_000);
@@ -294,10 +301,15 @@ export function markFailed(provider: Provider, model: string, error: unknown, no
     unavailable.set(`${provider.id}:${model}`, now + 6 * 3_600_000);
   } else if (status === 413) {
     return;
-  } else if (status === 429 && /per ?day|daily|tokens per day|requests per day|\bRPD\b|\bTPD\b/i.test(error.message)) {
-    unavailable.set(`${provider.id}:${model}`, now + 3_600_000);
+  } else if (status === 402 || (status === 429 && /insufficient (?:balance|credits)|\b1113\b/i.test(error.message))) {
+    unavailable.set(`${provider.id}:*`, now + Math.max(3_600_000, error.retryAfterMs ?? 0));
+  } else if (status === 429 && /per[ -]?day|daily|\bRPD\b|\bTPD\b/i.test(error.message)) {
+    // Free OpenRouter requests and Cloudflare neurons are shared by every model on this account.
+    const scope = provider.family === 'cloudflare' || sharedLimit ? '*' : model;
+    const midnight = new Date(now).setUTCHours(24, 0, 0, 0) - now;
+    unavailable.set(`${provider.id}:${scope}`, now + (error.retryAfterMs ?? (scope === '*' ? midnight : 3_600_000)));
   } else {
-    unavailable.set(`${provider.id}:${model}`, now + Math.max(10_000, Math.min(error.retryAfterMs ?? 60_000, 10 * 60_000)));
+    unavailable.set(`${provider.id}:${status === 429 && sharedLimit ? '*' : model}`, now + Math.max(1_000, error.retryAfterMs ?? 60_000));
   }
 }
 
@@ -306,6 +318,7 @@ export function resetProviderState(): void {
   unavailable.clear();
   noReasoning.clear();
   open.clear();
+  tokens.clear();
 }
 
 /* ---------- Keys that take one request at a time ---------- */
@@ -362,13 +375,20 @@ function body(provider: Provider, model: string, params: ChatParams, stream: boo
     messages: [{ role: 'system', content: params.system }, ...params.messages.map((message) => ({ role: message.role === 'model' ? 'assistant' : 'user', content: message.text }))],
     stream,
     temperature: params.temperature ?? 0.3,
-    max_tokens: Math.min(params.maxOutputTokens ?? provider.maxOutputTokens, provider.maxOutputTokens),
+    // Plans need up to 4K of JSON; the prose-answer cap used to silently truncate them at 1.4K–2K.
+    max_tokens: Math.min(params.maxOutputTokens ?? provider.maxOutputTokens, params.json ? 8_192 : provider.maxOutputTokens),
     ...(params.json ? { response_format: { type: 'json_object' } } : {}),
     ...(withReasoning ? reasoning(provider, model) : {}),
   });
 }
 
 async function post(provider: Provider, model: string, params: ChatParams, stream: boolean): Promise<Response> {
+  const budget = tokens.get(`${provider.id}:${model}`);
+  // Conservative estimate, including UTF-8 text and output, used only while a live header budget is known.
+  const needed = Math.ceil(Buffer.byteLength(params.system + params.messages.map((message) => message.text).join('\n')) / 3) + (params.maxOutputTokens ?? provider.maxOutputTokens) + 128;
+  if (budget && budget.until > Date.now() && needed > budget.remaining) {
+    throw new ProviderError(`${provider.label} 429: Not enough tokens remain this minute.`, 429, budget.until - Date.now());
+  }
   const send = (withReasoning: boolean) =>
     fetch(`${provider.baseUrl}/chat/completions`, {
       method: 'POST',
@@ -410,9 +430,16 @@ async function post(provider: Provider, model: string, params: ChatParams, strea
  * x-ratelimit-*-requests headers count the day). Returns the response, so a success can be passed straight on.
  */
 function record<T extends Response | ProviderError>(provider: Provider, model: string, outcome: T): T {
-  const header = (name: string) => (outcome instanceof Response ? outcome.headers.get(`x-ratelimit-${name}-requests-day`) ?? outcome.headers.get(`x-ratelimit-${name}-requests`) : null);
+  const headers = outcome.headers;
+  const header = (name: string) => headers?.get(`x-ratelimit-${name}-requests-day`) ?? (provider.family === 'groq' ? headers?.get(`x-ratelimit-${name}-requests`) : null);
   const remaining = Number(header('remaining') ?? NaN);
   const limit = Number(header('limit') ?? NaN);
+  if (provider.family === 'groq' && headers) {
+    const remainingTokens = Number(headers.get('x-ratelimit-remaining-tokens') ?? NaN);
+    const reset = resetDelay(headers.get('x-ratelimit-reset-tokens'));
+    if (Number.isFinite(remainingTokens) && reset !== undefined) tokens.set(`${provider.id}:${model}`, { remaining: remainingTokens, until: Date.now() + reset });
+    if (remaining === 0) unavailable.set(`${provider.id}:${model}`, Date.now() + (resetDelay(headers.get('x-ratelimit-reset-requests')) ?? 60_000));
+  }
   recordModelCall({
     key: provider.id,
     provider: provider.family,
@@ -426,20 +453,36 @@ function record<T extends Response | ProviderError>(provider: Provider, model: s
   return outcome;
 }
 
+/** A Retry-After number/date or Groq's duration ("2m59.56s"). */
+function resetDelay(value: string | null): number | undefined {
+  if (!value) return undefined;
+  if (/^\d+(?:\.\d+)?$/.test(value)) return Number(value) * 1000;
+  if (/^(?:\d+(?:\.\d+)?[hms])+$/.test(value)) {
+    return [...value.matchAll(/(\d+(?:\.\d+)?)([hms])/g)].reduce((sum, part) => sum + Number(part[1]) * ({ h: 3_600_000, m: 60_000, s: 1000 }[part[2]!] ?? 0), 0);
+  }
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
 async function toError(provider: Provider, response: Response): Promise<ProviderError> {
   const text = await response.text().catch(() => '');
   let message = text.slice(0, 300);
   try {
-    const json = JSON.parse(text) as { error?: { message?: string; code?: string | number } | string; message?: string };
+    const json = JSON.parse(text) as { error?: { message?: string; code?: string | number; metadata?: { provider_name?: string } } | string; message?: string };
     message = (typeof json.error === 'string' ? json.error : json.error?.message) ?? json.message ?? message;
     // Z.ai says what went wrong in a code of its own ("1302": a request is already open on this key).
     const code = typeof json.error === 'object' ? json.error?.code : undefined;
     if (code !== undefined && !message.includes(String(code))) message = `${message} (code ${code})`;
+    const upstream = typeof json.error === 'object' ? json.error?.metadata?.provider_name : undefined;
+    if (provider.family === 'openrouter' && upstream) message = `Upstream ${upstream}: ${message}`;
   } catch {
     // not JSON
   }
-  const header = Number(response.headers.get('retry-after'));
-  return new ProviderError(`${provider.label} ${response.status}: ${message}`, response.status, header > 0 ? Math.min(600_000, header * 1000) : undefined);
+  let retryAfterMs = resetDelay(response.headers.get('retry-after'));
+  if (provider.family === 'groq' && response.headers.get('x-ratelimit-remaining-requests') === '0') {
+    retryAfterMs = Math.max(retryAfterMs ?? 0, resetDelay(response.headers.get('x-ratelimit-reset-requests')) ?? 60_000);
+  }
+  return new ProviderError(`${provider.label} ${response.status}: ${message}`, response.status, retryAfterMs, response.headers);
 }
 
 /** Streams one answer from one model, yielding text as it arrives. Thinking a model writes inline is left out. */
@@ -504,19 +547,24 @@ export async function liteChat(providers: Provider[], params: ChatParams & { tim
     // A prompt over this provider's per-request limit would only be refused (Groq's free tier, for long ones).
     if (size > provider.maxPromptChars) continue;
     for (const model of usable(provider, params.tier === 'main' ? provider.models : provider.liteModels)) {
+      // A prior model may just have exhausted a quota shared by the whole account.
+      if (!usable(provider, [model]).length) continue;
       // A key busy with another request is passed over; the next key or provider answers instead of waiting.
       if (atCapacity(provider)) break;
       const release = occupy(provider);
+      const attempt = AbortSignal.any([signal, AbortSignal.timeout(params.tier === 'main' || (params.maxOutputTokens ?? 0) > 1_024 ? 8_000 : 2_500)]);
       try {
-        const response = await post(provider, model, { ...params, signal }, false);
-        const json = (await response.json()) as { choices?: Array<{ message?: { content?: string | null } }> };
+        const response = await post(provider, model, { ...params, signal: attempt }, false);
+        const json = (await response.json()) as { choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }> };
         const filter = new ThinkFilter();
         const text = filter.push(json.choices?.[0]?.message?.content ?? '') + filter.flush();
-        if (text.trim()) return text;
+        if (!text.trim() || json.choices?.[0]?.finish_reason === 'length') throw new ProviderError(`${provider.label} returned an empty or truncated reply.`, 502);
+        if (params.json) JSON.parse(text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, ''));
+        return text;
       } catch (error) {
         if (signal.aborted) throw error;
-        markFailed(provider, model, error);
-        lastError = error;
+        lastError = attempt.aborted ? new ProviderError(`${provider.label} timed out before replying.`, 504) : error;
+        markFailed(provider, model, lastError);
       } finally {
         release();
       }
@@ -595,11 +643,11 @@ function partialTag(text: string): number {
 async function downTheOrder<T>(
   gemini: GeminiConfig | null,
   backups: Provider[],
-  limits: { totalMs: number; stepMs: number; hedgeMs?: number },
+  limits: { totalMs: number; stepMs: number; hedgeMs?: number; tier?: 'lite' | 'main' },
   viaGemini: (cfg: GeminiConfig, signal: AbortSignal) => Promise<T>,
   viaBackups: (family: Provider[], signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
-  const ids = modelOrder().filter((id) => (id === 'gemini' ? Boolean(gemini) : backups.some((provider) => provider.family === id)));
+  const ids = modelOrder(process.env, limits.tier).filter((id) => (id === 'gemini' ? Boolean(gemini) : backups.some((provider) => provider.family === id)));
   if (ids.length === 0) throw new ProviderError('No model is set up.', 503);
   const deadline = AbortSignal.timeout(limits.totalMs);
   const stops: AbortController[] = [];
@@ -613,12 +661,17 @@ async function downTheOrder<T>(
       if (done) return;
       done = true;
       clearTimeout(hedge);
+      deadline.removeEventListener('abort', expired);
       stops.forEach((stop) => stop.abort());
       settle();
     };
+    const expired = () => finish(() => reject(new ProviderError('No model answered before the deadline.', 504)));
+    deadline.addEventListener('abort', expired, { once: true });
     const launch = () => {
       clearTimeout(hedge);
       if (done) return;
+      // Racing every provider spends several free requests for one tiny task. Two leave room for a fallback.
+      if (open >= 2) return;
       if (next >= ids.length || deadline.aborted) {
         if (open === 0) finish(() => reject(lastError));
         return;
@@ -628,7 +681,7 @@ async function downTheOrder<T>(
       stops.push(stop);
       const signal = AbortSignal.any([deadline, stop.signal, AbortSignal.timeout(limits.stepMs)]);
       open++;
-      (id === 'gemini' ? viaGemini(gemini!, signal) : viaBackups(backups.filter((provider) => provider.family === id), signal)).then(
+      Promise.resolve().then(() => id === 'gemini' ? viaGemini(gemini!, signal) : viaBackups(backups.filter((provider) => provider.family === id), signal)).then(
         (value) => finish(() => resolve(value)),
         (error: unknown) => {
           open--;
@@ -662,9 +715,9 @@ export async function siteJson<T>(
   return downTheOrder<T>(
     gemini,
     backups,
-    { totalMs: timeoutMs, stepMs: params.stepMs ?? Math.ceil(timeoutMs * 0.6), hedgeMs: Math.min(params.stepMs ?? timeoutMs, 6_000) },
+    { totalMs: timeoutMs, stepMs: params.stepMs ?? Math.ceil(timeoutMs * 0.6), hedgeMs: Math.min(params.stepMs ?? timeoutMs, maxOutputTokens <= 1_024 && params.tier !== 'main' ? 1_500 : 6_000), tier: params.tier ?? 'lite' },
     (cfg, signal) => {
-      const model = params.tier === 'main' ? [cfg.chatModel, ...cfg.chatFallbacks] : cfg.liteModels;
+      const model = availableGemini(cfg, params.tier);
       return generateJson<T>(cfg, { model, system: params.system, messages, responseSchema: params.schema, temperature, maxOutputTokens }, { retries: 0, signal, timeoutMs });
     },
     async (family, signal) => {
@@ -685,14 +738,21 @@ export async function siteText(gemini: GeminiConfig | null, backups: Provider[],
   return downTheOrder<string>(
     gemini,
     backups,
-    { totalMs: params.timeoutMs * 2, stepMs: params.timeoutMs, hedgeMs: Math.min(params.timeoutMs, 1_500) },
+    { totalMs: params.timeoutMs * 2, stepMs: params.timeoutMs, hedgeMs: Math.min(params.timeoutMs, 1_500), tier: 'lite' },
     async (cfg, signal) => {
-      const { text } = await generateText(cfg, { model: cfg.liteModels, temperature, maxOutputTokens, system, messages }, { retries: 0, signal, timeoutMs: params.timeoutMs });
+      const { text } = await generateText(cfg, { model: availableGemini(cfg), temperature, maxOutputTokens, system, messages }, { retries: 0, signal, timeoutMs: params.timeoutMs });
       if (!text.trim()) throw new ProviderError('Gemini returned an empty reply.', 502);
       return text;
     },
     (family, signal) => liteChat(family, { system, messages, temperature, maxOutputTokens, signal }),
   );
+}
+
+function availableGemini(cfg: GeminiConfig, tier: 'lite' | 'main' = 'lite'): string[] {
+  const models = tier === 'main' ? [cfg.chatModel, ...cfg.chatFallbacks] : cfg.liteModels;
+  const available = models.filter((model) => geminiKeys(cfg).some((key) => liveModels([model], Date.now(), keyTag(key)).length));
+  if (!available.length) throw new GeminiError('Gemini models are resting after recent failures.', 503);
+  return available;
 }
 
 /* ---------- For admins: which models answer right now ---------- */
@@ -710,7 +770,7 @@ export interface ModelCheck {
  */
 export async function checkModels(gemini: GeminiConfig | null, backups: Provider[]): Promise<ModelCheck[]> {
   const ask: Message[] = [{ role: 'user', text: 'Reply with the word OK.' }];
-  const jobs: Array<{ name: string; run(signal: AbortSignal): Promise<unknown> }> = [];
+  const jobs: Array<{ name: string; group?: string; run(signal: AbortSignal): Promise<unknown> }> = [];
   if (gemini) {
     for (const key of geminiKeys(gemini)) {
       for (const model of new Set([gemini.chatModel, ...gemini.chatFallbacks, ...gemini.liteModels])) {
@@ -724,18 +784,37 @@ export async function checkModels(gemini: GeminiConfig | null, backups: Provider
   }
   for (const provider of backups) {
     for (const model of new Set([...provider.models, ...provider.liteModels])) {
-      jobs.push({ name: `${provider.id}:${model}`, run: (signal) => post(provider, model, { system: 'Be brief.', messages: ask, maxOutputTokens: 64, signal }, false).then((response) => response.json()) });
+      jobs.push({
+        name: `${provider.id}:${model}`,
+        ...(provider.concurrency === 1 ? { group: provider.id } : {}),
+        run: async (signal) => {
+          if (atCapacity(provider)) throw new ProviderError(`${provider.label} is already answering another request.`, 429);
+          const release = occupy(provider);
+          try {
+            return await post(provider, model, { system: 'Be brief.', messages: ask, maxOutputTokens: 64, signal }, false).then((response) => response.json());
+          } finally {
+            release();
+          }
+        },
+      });
     }
   }
+  const groups = new Map<string, Promise<ModelCheck>>();
+  const run = async (job: typeof jobs[number]): Promise<ModelCheck> => {
+    const started = Date.now();
+    try {
+      await job.run(AbortSignal.timeout(15_000));
+      return { name: job.name, ok: true, ms: Date.now() - started };
+    } catch (error) {
+      return { name: job.name, ok: false, ms: Date.now() - started, error: String((error as Error).message ?? error).slice(0, 240) };
+    }
+  };
   return Promise.all(
-    jobs.map(async (job): Promise<ModelCheck> => {
-      const started = Date.now();
-      try {
-        await job.run(AbortSignal.timeout(15_000));
-        return { name: job.name, ok: true, ms: Date.now() - started };
-      } catch (error) {
-        return { name: job.name, ok: false, ms: Date.now() - started, error: String((error as Error).message ?? error).slice(0, 240) };
-      }
+    jobs.map((job) => {
+      // Probe single-concurrency keys sequentially; parallel checks used to manufacture their own 429s.
+      const pending = job.group && groups.has(job.group) ? groups.get(job.group)!.then(() => run(job)) : run(job);
+      if (job.group) groups.set(job.group, pending);
+      return pending;
     }),
   );
 }

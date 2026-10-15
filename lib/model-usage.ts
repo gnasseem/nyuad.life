@@ -127,6 +127,7 @@ export function usageState(row: Pick<UsageRow, 'ok' | 'failed' | 'lastOkAt' | 'l
   if (!row.lastErrorAt || (row.lastOkAt && row.lastOkAt >= row.lastErrorAt)) return 'ok';
   const status = row.lastStatus ?? 0;
   const error = row.lastError ?? '';
+  if (status === 402 || (status === 429 && /insufficient (?:balance|credits)|\b1113\b/i.test(error))) return 'spent';
   if (status === 401 || status === 403 || (status === 400 && /api.?key/i.test(error))) return 'refused';
   if (status === 429) return /per[ -]?day|daily|\bRPD\b|\bTPD\b|\blimit: ?0\b/i.test(error) ? 'spent' : 'limited';
   if (status === 404) return 'gone';

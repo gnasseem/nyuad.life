@@ -9,7 +9,7 @@ export interface GeminiConfig {
   apiKey: string;
   /**
    * Every key GEMINI_API_KEY holds (several, separated by commas): each Google project has its own free quota per
-   * model, so each key is more answers a day. Spent or overloaded models are tracked per key.
+   * model; keys from the same project share it. Spent or overloaded models are tracked per key.
    */
   keys: string[];
   baseUrl: string;
@@ -355,6 +355,15 @@ async function generateOnce(cfg: GeminiConfig, name: string, params: GeneratePar
   const text = candidate?.content?.parts?.map((part) => part.text ?? '').join('') ?? '';
   if (!text && json.promptFeedback?.blockReason) {
     throw new GeminiError(`Gemini blocked the request: ${json.promptFeedback.blockReason}`, 422);
+  }
+  if (params.responseSchema) {
+    if (candidate?.finishReason === 'MAX_TOKENS') throw new GeminiError('Gemini returned truncated JSON.', 502);
+    try {
+      JSON.parse(text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, ''));
+    } catch {
+      // Validate before generateText chooses a winner, so the next Gemini model/key still gets a chance.
+      throw new GeminiError('Gemini returned invalid JSON.', 502);
+    }
   }
   return { text, usage: usage(json), finishReason: candidate?.finishReason ?? 'UNKNOWN', model: model.replace(/^models\//, '') };
 }

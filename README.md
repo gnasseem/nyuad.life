@@ -82,7 +82,7 @@ The group archive and its search index are not in the repository (see "Data and 
    | Variable | Needed for |
    | --- | --- |
    | `GEMINI_API_KEY` | Answers for students not signed in with ChatGPT, question tagging, course summaries. Several keys from different Google projects, separated by commas, multiply the free quota. |
-   | `ZAI_API_KEY`, `GROQ_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY` | Free models for answers: Z.ai's GLM first, the rest when Gemini is overloaded or out of quota (below). Any or all; each variable takes several keys separated by commas. |
+   | `ZAI_API_KEY`, `GROQ_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY` | Backup models when Gemini is overloaded or out of quota (below). Any or all; each variable takes several keys separated by commas, subject to shared account limits. |
    | `ROR_ADMIN_NETIDS` | Comma-separated verified administrator NetIDs, for example `gnn9245`. |
    | `CRON_SECRET` | Lets only Vercel's daily cron warm course ratings (admins can too). Without it the job is open but held to three runs a day. |
    | `RESEND_API_KEY`, `RESEND_FROM`, `SESSION_SECRET` | NYU email login: a verified Resend sender and a 32+ character session secret. |
@@ -114,33 +114,37 @@ half seconds, the next one starts beside it (at most three at once) and the firs
 stopped. A model beaten that way is left out of the chain for ten minutes, so the next questions go straight to the
 quicker one.
 
-1. Z.ai's GLM 4.7 Flash, on each key in `ZAI_API_KEY`. Its free tier takes one request at a time per key, so a key
-   already answering someone is passed over at once for the next key, and with every key busy the question goes on
-   down the chain; nobody waits for GLM. An open request from another instance comes back as a 429 (code 1302), which
-   rests that key for 15 seconds.
-2. Gemini 3.5 Flash-Lite and Gemini 3.1 Flash-Lite: each has its own daily quota, and each is tried on every key in
-   `GEMINI_API_KEY` before the next model. A model spent on one key rests on that key only.
-3. Groq (gpt-oss 120B, Qwen 3.8 27B, gpt-oss 20B), Cloudflare Workers AI (gpt-oss 120B, GLM 4.7 Flash), OpenRouter's
-   free models (Nemotron, gpt-oss), Mistral and Vercel AI Gateway, for each key that is set. Groq's free tier caps
+1. Gemini 3.5 Flash-Lite and Gemini 3.1 Flash-Lite, the models that answered the production probe. Each is tried on
+   every configured key before the next model; keys from the same Google project share its quota.
+2. Groq (gpt-oss 120B, Qwen 3.8 27B, gpt-oss 20B), then Cloudflare Workers AI (gpt-oss 120B, GLM 4.7 Flash).
+3. Z.ai's free GLM 4.7 Flash. It repeatedly exceeded the answer hedge in the production probe, so it follows the
+   faster options. The router allows one local request per key and skips busy keys, including the last fallback.
+   A concurrency error from another instance rests the key for 15 seconds.
+4. OpenRouter's free models (Nemotron, gpt-oss), Mistral and Vercel AI Gateway. Groq's free tier caps
    tokens per minute, so its prompts are shortened to fit; a prompt still too long for a provider skips it.
 
 Gemma is not called anywhere: on Gemini's and OpenRouter's free tiers it accepted requests and never answered, so every
 question waited out a timeout before moving on. Built-in lists leave it out and a listing that offers it as a stand-in
 is ignored; only a model list set in the environment can name it.
 
-Small calls (query rewrites, reranking, moderation, ratings, plan reading) go down the same order the same way: a
-provider that fails hands over at once, one still silent after a second and a half (six for JSON calls) gets the next
-started beside it, and no provider may take more than its share of the call's time (12 seconds for a course or professor rating),
-so a slow one leaves the next a chance.
+Query rewrites, follow-ups, model reranking, moderation and plan reading prefer Groq's gpt-oss 20B, then Gemini
+Flash-Lite, Cloudflare's gpt-oss 20B, Z.ai, Mistral, OpenRouter and Gateway. This saves the larger answer models and
+OpenRouter's small daily allowance. Ratings use the answer order and stronger models. Explicit provider order
+overrides still apply; `ROR_LITE_MODEL_ORDER` can override only the small tasks.
+
+Small text calls and JSON calls up to 1K output tokens start a second provider after 1.5 seconds of silence;
+larger JSON calls and ratings hedge after six seconds. At most two providers race. Each backup model gets 2.5 seconds
+for a small task or eight for ratings and larger outputs, within the provider step and overall deadline. Empty,
+malformed or truncated JSON falls through to the next model. Plan reading keeps its requested 4K output allowance,
+instead of inheriting the shorter prose-answer cap.
 
 Instances also learn from each other: every couple of minutes each one reads today's usage (below) and rests the
 models and keys that failed elsewhere and have not worked since (a spent Gemini model, a refused key, a retired
 model), from when the failure happened, so a fresh instance does not spend its first questions finding out again.
 
 Every key variable takes several keys separated by commas, with no spaces needed (`GEMINI_API_KEY=AIza…1,AIza…2`,
-`GROQ_API_KEY=gsk_a,gsk_b`): free tiers are counted per Google project or per account, so each key is another quota,
-tried model by model across the keys. Two keys from the same Google project or the same account share one quota and
-add nothing. Reasoning models are asked to think
+`GROQ_API_KEY=gsk_a,gsk_b`), tried model by model across the keys. Quotas belong to Google projects, organizations or
+accounts; rotating keys in the same quota pool adds no capacity. Reasoning models are asked to think
 little or not at all, so answers start quickly. A JSON call (ratings, plan reading, moderation) has one deadline for
 the whole chain, so falling back from model to model cannot outlast the function.
 
@@ -149,8 +153,15 @@ instance asks Gemini and each provider which models its key can actually use (`G
 and drops the ones it cannot. A model that answers "no free tier"
 (`limit: 0`) or "out of today's quota" is skipped for hours rather than tried on every question.
 
-A model that failed rests for a while (a minute when overloaded, an hour when its day's quota is spent, hours when it
-no longer exists), and one that has not started writing within 15 seconds is given up on while there is time for the next.
+A model that failed rests for a while (usually a minute when overloaded, an hour when its day's quota is spent, hours
+when it no longer exists), and one that has not started writing within 15 seconds is given up on while there is time
+for the next. `Retry-After` durations and HTTP dates are honored. OpenRouter platform limits rest every model on the key;
+upstream limits rest only the affected model. OpenRouter and Cloudflare daily exhaustion rests until midnight UTC
+unless the provider supplies a reset. A spent credit balance rests the whole key. Groq response headers supply both
+daily request counts and a minute token budget, so calls that cannot fit are skipped without another network request.
+Daily header values are retained even on errors. Known exhausted answer models are never revived just because every
+other model is resting. Model discovery and shared-usage learning wait at most 250ms on user requests (admin checks
+can wait longer).
 If every model is down, the student is told answers are busy and offered a retry, and every NetID on
 `ROR_ADMIN_NETIDS` gets an email at its NYU address (through Resend, the login sender) saying what each key did today;
 at most one every three hours. Settings has a button to send a test. `GET /api/health` shows the chain as it stands
@@ -162,21 +173,25 @@ instances never overwrite each other. Rows older than eight days are removed.
 
 | Provider | Free tier, roughly (they change) | Key |
 | --- | --- | --- |
-| Gemini | per model, resets daily | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
-| Groq | about 1,000 requests a day per model, no card | [console.groq.com/keys](https://console.groq.com/keys) |
-| Mistral | "Experiment" plan, phone check | [console.mistral.ai](https://console.mistral.ai) |
-| OpenRouter | `:free` models, 50 requests a day without paying (1,000 a day only after a $10 top-up) | [openrouter.ai/keys](https://openrouter.ai/keys) |
-| Cloudflare | 10,000 neurons a day | [dash.cloudflare.com](https://dash.cloudflare.com) → AI → Workers AI |
-| Z.ai | GLM Flash models free, one request at a time | [z.ai](https://z.ai) |
-| Vercel AI Gateway | $5 of credit every 30 days, never charged unless you buy credit | [vercel.com](https://vercel.com) → AI Gateway → API keys |
+| Gemini | per model/project; RPM, input TPM and RPD; daily reset at midnight Pacific; active amounts in AI Studio | [limits](https://ai.google.dev/gemini-api/docs/rate-limits) |
+| Groq | current gpt-oss/Qwen defaults: 30 RPM, 1,000 RPD, 8,000 TPM, 200,000 TPD per model, organization-wide | [limits and reset headers](https://console.groq.com/docs/rate-limits) |
+| Mistral | Free mode; included usage and per-model TPS/TPM limits belong to the organization and vary | [usage and limits](https://docs.mistral.ai/admin/billing-usage/usage-limits) |
+| OpenRouter | `:free` models typically 50 requests/day, 1,000 after the qualifying credit purchase; account-wide, actual counter in `GET /api/v1/key` | [limits](https://openrouter.ai/docs/api_reference/limits) |
+| Cloudflare | 10,000 neurons/day/account across models; reset 00:00 UTC; answers per day depend on model and token lengths | [pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) |
+| Z.ai | GLM 4.7 Flash and 4.5 Flash free; actual concurrency/rate limits depend on the account | [pricing](https://docs.z.ai/guides/overview/pricing), [error codes](https://docs.z.ai/api-reference/api-code) |
+| Vercel AI Gateway | $5/month for free-tier accounts; purchasing credits ends the monthly free credit | [pricing](https://vercel.com/docs/ai-gateway/pricing) |
+
+Limits checked against official documentation on 2026-10-15. Production keys are non-exportable Vercel secrets, so
+local tests use fake providers; an administrator can run Settings → Check models for current live latency and availability.
 
 Opening questions are also cached for six hours (`lib/answer-cache.ts`): the same question asked again, in any case or
 punctuation, is answered from the cache with no model call. Registration-week questions are asked many times a day, so
 this saves much of the quota. The cache lives in memory and in the board's `guide_summaries` table when Supabase is set
 up, so every serverless instance shares it; expired entries are removed.
 
-Settings: `ROR_MODEL_ORDER=gemini,zai` puts Gemini before GLM (the default is
-`zai,gemini,groq,cloudflare,openrouter,mistral,gateway`); `ROR_MODEL_DISCOVERY=0` turns the model listing off; `<PROVIDER>_MODELS` and `<PROVIDER>_LITE_MODELS` (for
+Settings: `ROR_MODEL_ORDER=zai,gemini` puts GLM before Gemini (the default is
+`gemini,groq,cloudflare,zai,openrouter,mistral,gateway`); `ROR_LITE_MODEL_ORDER` selects a separate small-task order;
+`ROR_MODEL_DISCOVERY=0` turns the model listing off; `<PROVIDER>_MODELS` and `<PROVIDER>_LITE_MODELS` (for
 example `GROQ_MODELS`) replace a provider's model lists; `ROR_ANSWER_CACHE=0` turns the cache off. Gemini's own lists
 are `GEMINI_CHAT_MODEL`, `GEMINI_CHAT_FALLBACK_MODELS`, `GEMINI_LITE_MODEL` and `GEMINI_LITE_FALLBACK_MODELS`.
 
