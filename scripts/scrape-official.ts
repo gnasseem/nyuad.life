@@ -8,12 +8,16 @@
  *   npm run scrape:official -- --seed URL       add a start page; repeatable
  *   npm run scrape:official -- --portal-login   sign in to the protected portal once
  *   npm run scrape:official -- --portal-browser reuse the saved portal login
+ *   npm run scrape:official -- --portal-browser --browser-channel chrome  use installed Chrome
  *   npm run scrape:official -- --host HOST      only crawl this host (repeatable)
  *
  * The run is resumable: pages already in the file are refreshed, pages that fail keep their last good copy.
  * Then `npm run index:official` embeds the result into data/official-index.
  */
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import type { BrowserContext } from 'playwright';
 import { loadDotEnv } from '../lib/env.ts';
 import { breadcrumbsOf, coursesOf, linksOf, mainHtml, sectionsOf, textOf, titleOf } from '../lib/html.ts';
@@ -22,6 +26,14 @@ import { classifySection, officialFile, officialId, readOfficialJsonl, writeOffi
 loadDotEnv();
 
 const DEFAULT_SEEDS = [
+  'https://students.nyuad.nyu.edu/services/dining/whats-open/',
+  'https://students.nyuad.nyu.edu/services/transportation-services/shuttle-schedule/',
+  'https://students.nyuad.nyu.edu/services/technology-and-support/',
+  'https://students.nyuad.nyu.edu/student-affairs/health-center/appointments/',
+  'https://students.nyuad.nyu.edu/services/dining/',
+  'https://students.nyuad.nyu.edu/services/',
+  'https://students.nyuad.nyu.edu/student-affairs/',
+  'https://students.nyuad.nyu.edu/academics/registration/',
   'https://students.nyuad.nyu.edu/services/safety-and-awareness/campus-safety/',
   'https://students.nyuad.nyu.edu/services/safety-and-awareness/campus-safety/lost-and-found/',
   'https://nyuad.nyu.edu/en/facility-rentals/sports-facilities.html',
@@ -62,6 +74,8 @@ const ALLOWED: Record<string, RegExp[]> = {
   'students.nyuad.nyu.edu': [/^\//],
   'bulletins.nyu.edu': [/^\/undergraduate\/abu-dhabi\//, /^\/courses\/[a-z]{2,7}_uh\//i],
 };
+const REFERENCE_PDF = /(?:shuttle|transport|schedule|operating.?hours|handbook|calendar)[^/]*\.pdf$/i;
+const pdfParents = new Map<string, { title: string; context: string }>();
 const PERSONAL_PORTAL = /\/(?:my-|my\/|profile|directory|people|student-record|grades|transcript|billing|account|financial-account|personal|appointments|logout|signout|forms)(?:[-/?.]|$)/i;
 const SKIP = /\/(?:news|events|media|press|faculty-directory|people|profiles|gallery|videos|podcast|newsletter|search|login|sitemap)(?:\/|\.|$)|\.(?:pdf|jpe?g|png|gif|svg|mp4|zip|docx?|pptx?|xlsx?)$|\?/i;
 
@@ -81,37 +95,84 @@ function allowed(url: URL): boolean {
   const rules = ALLOWED[url.host] ?? (hosts.has(url.host) ? [/^\//] : undefined);
   if (!rules) return false;
   if (/[{}]|%7[bd]/i.test(url.pathname)) return false;
-  if (url.host === 'students.nyuad.nyu.edu' && PERSONAL_PORTAL.test(url.pathname)) return false;
+  if (url.host === 'students.nyuad.nyu.edu' && PERSONAL_PORTAL.test(url.pathname) && !/^\/student-affairs\/health-center\/appointments\/?$/.test(url.pathname)) return false;
   if (url.host === 'students.nyuad.nyu.edu' && /^\/announcements\/(?:update|create|edit)(?:\/|$)/i.test(url.pathname)) return false;
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && /^(?:127\.0\.0\.1|localhost)$/.test(url.hostname))) return false;
+  if (url.host === 'students.nyuad.nyu.edu' && url.pathname.startsWith('/files/resources/') && REFERENCE_PDF.test(url.pathname)) return true;
   if (SKIP.test(url.pathname + url.search)) return false;
   return rules.some((rule) => rule.test(url.pathname));
 }
 
 let portal: BrowserContext | null = null;
+let portalUnavailable = false;
+let protectedPages = 0;
 async function fetchPortal(url: string): Promise<string | null> {
-  if (!portal) return null;
+  if (!portal || portalUnavailable) return null;
   const page = await portal.newPage();
   try {
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25_000 });
     if (!response?.ok()) return null;
     // Wait for SSO redirects and for Angular to fill announcement titles, bodies and permalinks.
-    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
-    if (new URL(page.url()).host !== 'students.nyuad.nyu.edu') { console.warn('[official] Portal sign-in is required. Run scrape:official with --portal-login once.'); return null; }
+    await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
+    if (new URL(page.url()).host !== 'students.nyuad.nyu.edu') { portalUnavailable = true; return null; }
     const main = page.locator('main, [role="main"], #content').first();
     if (!await main.count()) return null;
     // Only shared reference content enters the index; headers and account widgets never do.
-    return `<html><head><title>${await page.title()}</title></head><body><main>${await main.innerHTML()}</main></body></html>`;
+    // Discover shared services from navigation as well as main content; only main content is indexed.
+    const links = (await page.locator('a[href]').evaluateAll((nodes) => nodes.map((node) => (node as unknown as { href: string }).href)))
+      .filter((href) => { try { return allowed(new URL(href)); } catch { return false; } });
+    const navigation = [...new Set(links)].map((href) => `<a href="${href.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"></a>`).join('');
+    return `<html><head><title>${await page.title()}</title></head><body><nav>${navigation}</nav><main>${await main.innerHTML()}</main></body></html>`;
   } finally { await page.close(); }
 }
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** Timetables linked from reference pages need to be searchable too; no portal credentials enter the corpus. */
+async function fetchPdf(url: string): Promise<string | null> {
+  let bytes: Buffer;
+  if (portal) {
+    const response = await portal.request.get(url, { timeout: 25_000 });
+    if (!response.ok()) return null;
+    bytes = await response.body();
+  } else {
+    const response = await fetch(url, { signal: AbortSignal.timeout(25_000) });
+    if (!response.ok) return null;
+    bytes = Buffer.from(await response.arrayBuffer());
+  }
+  if (bytes.length > 8_000_000 || !bytes.subarray(0, 5).equals(Buffer.from('%PDF-'))) return null;
+  const directory = mkdtempSync(path.join(tmpdir(), 'nyuad-reference-'));
+  try {
+    const file = path.join(directory, 'source.pdf');
+    writeFileSync(file, bytes);
+    const extracted = execFileSync('pdftotext', ['-layout', file, '-'], { encoding: 'utf8', timeout: 15_000, maxBuffer: 4_000_000 });
+    const text = extracted.split(/\r?\n/).map((line) => line.trim().replace(/[ \t]{2,}/g, ' | ')).join('\n');
+    if (text.trim().length < 80) throw new Error(`The reference PDF has no searchable text: ${url}`);
+    const parent = pdfParents.get(url);
+    const title = parent?.title ?? decodeURIComponent(path.basename(new URL(url).pathname, '.pdf')).replace(/[-_]/g, ' ');
+    const effective = text.match(/^.*\beffective\b[^\n]*20\d{2}.*$/im)?.[0];
+    const blocks = text.split(/(?=^[^\n]+\bRoute\s*\|)/m);
+    const body = blocks.map((block) => {
+      const [heading = '', ...lines] = block.trim().split('\n');
+      return /\bRoute\s*\|/.test(heading) ? `<h2>${escapeHtml(heading)}</h2><pre>${escapeHtml(lines.join('\n'))}</pre>` : `<pre>${escapeHtml(block)}</pre>`;
+    }).join('');
+    return `<html><head><title>${escapeHtml(title)}</title></head><body><main><h1>${escapeHtml(title)}</h1>${effective ? `<h2>${escapeHtml(effective)}</h2>` : ''}${body}</main></body></html>`;
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+}
+
 async function fetchPage(url: string): Promise<string | null> {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
+      if (/\.pdf$/i.test(new URL(url).pathname)) return await fetchPdf(url);
       if (portal && new URL(url).host === 'students.nyuad.nyu.edu') return await fetchPortal(url);
       const response = await fetch(url, { headers: { 'user-agent': 'nyuad.life crawler (+https://nyuad.life; student project; contact via the site)', accept: 'text/html' }, redirect: 'follow', signal: AbortSignal.timeout(25_000) });
       if (response.status === 404 || response.status === 410) return null;
       const target = new URL(response.url);
-      if (target.host !== new URL(url).host || /\/(?:login|signin|sso|auth)(?:\/|$)/i.test(target.pathname)) return null;
+      if (target.host !== new URL(url).host || /\/(?:login|signin|sso|auth)(?:\/|$)/i.test(target.pathname)) {
+        if (new URL(url).host === 'students.nyuad.nyu.edu') protectedPages++;
+        return null;
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       if (!(response.headers.get('content-type') ?? '').includes('html')) return null;
       return await response.text();
@@ -135,7 +196,7 @@ async function sitemapUrls(host: string): Promise<string[]> {
 async function main(): Promise<void> {
   if (flag('portal-browser') || flag('portal-login')) {
     const { chromium } = await import('playwright');
-    portal = await chromium.launchPersistentContext(path.resolve(value('portal-profile') ?? '.portal-profile'), { headless: !flag('portal-login') });
+    portal = await chromium.launchPersistentContext(path.resolve(value('portal-profile') ?? '.portal-profile'), { headless: !flag('portal-login'), channel: value('browser-channel') });
     if (flag('portal-login')) {
       const page = await portal.newPage();
       await page.goto('https://students.nyuad.nyu.edu/');
@@ -148,6 +209,7 @@ async function main(): Promise<void> {
   const existing = new Map(readOfficialJsonl(file).filter((doc) => !/[{}]|%7[bd]/i.test(doc.url) && !/^(?:404|page not found)/i.test(doc.title)).map((doc) => [doc.code ? `${doc.url}#${doc.code.replace(/\s+/g, '-')}` : doc.url, doc]));
   console.log(`[official] ${existing.size} pages on disk; crawling from ${seeds.length} seeds (max ${max}, ${delay} ms apart).`);
   const queue: string[] = [];
+  const serviceQueue: string[] = [];
   const seen = new Set<string>();
   const enqueue = (raw: string) => {
     try {
@@ -158,7 +220,8 @@ async function main(): Promise<void> {
       const key = url.toString().replace(/\/$/, '');
       if (seen.has(key) || !allowed(url)) return;
       seen.add(key);
-      queue.push(url.toString());
+      if (url.host === 'students.nyuad.nyu.edu' && !url.pathname.startsWith('/announcements')) serviceQueue.push(url.toString());
+      else queue.push(url.toString());
     } catch {
       // ignore
     }
@@ -186,60 +249,67 @@ async function main(): Promise<void> {
     process.exit(0);
   });
 
-  while (queue.length && fetched < max) {
-    const url = queue.shift()!;
-    const html = await fetchPage(url);
-    fetched++;
-    if (html) {
-      if (!flag('seed-only')) linksOf(html, url).forEach(enqueue);
-      const announcementTitle = /^https:\/\/students\.nyuad\.nyu\.edu\/announcements\/\d+\/?$/.test(url) ? /<h2\b[^>]*>([\s\S]*?)<\/h2>/i.exec(html)?.[1] : null;
-      const title = announcementTitle ? textOf(announcementTitle) : titleOf(html);
-      // Bulletin listings (CourseLeaf "courseblock"s) and any page that reads as a course list become one document per course.
-      const looksLikeCourses = /courseblock/.test(html) || /bulletins\.nyu\.edu|\/courses?(?:\/|\.|$)/i.test(url);
-      const courses = looksLikeCourses ? coursesOf(html) : [];
-      if (courses.length >= 3) {
-        for (const course of courses) {
-          if (course.description.length < 40) continue;
-          const courseUrl = `${url}#${course.code.replace(/\s+/g, '-')}`;
-          docs.set(courseUrl, {
-            id: officialId(courseUrl),
-            url,
-            title: `${course.code} ${course.title}`,
-            section: 'courses',
-            breadcrumbs: ['Bulletin', title],
-            text: `${course.code} ${course.title}${course.credits ? ` (${course.credits} credits)` : ''}\n${course.description}`,
-            code: course.code,
-            credits: course.credits,
-            fetchedAt,
-          });
+  const worker = async () => {
+    while ((serviceQueue.length || queue.length) && fetched < max) {
+      const url = serviceQueue.shift() ?? queue.shift()!;
+      const ordinal = ++fetched;
+      const html = await fetchPage(url);
+      if (html) {
+        const discovered = linksOf(html, url);
+        for (const link of discovered) if (REFERENCE_PDF.test(link)) pdfParents.set(link, { title: titleOf(html), context: textOf(mainHtml(html)).slice(0, 300) });
+        if (!flag('seed-only')) discovered.forEach(enqueue);
+        const announcementTitle = /^https:\/\/students\.nyuad\.nyu\.edu\/announcements\/\d+\/?$/.test(url) ? /<h2\b[^>]*>([\s\S]*?)<\/h2>/i.exec(html)?.[1] : null;
+        const title = announcementTitle ? textOf(announcementTitle) : titleOf(html);
+        // Bulletin listings (CourseLeaf "courseblock"s) and any page that reads as a course list become one document per course.
+        const looksLikeCourses = /courseblock/.test(html) || /bulletins\.nyu\.edu|\/courses?(?:\/|\.|$)/i.test(url);
+        const courses = looksLikeCourses ? coursesOf(html) : [];
+        if (courses.length >= 3) {
+          for (const course of courses) {
+            if (course.description.length < 40) continue;
+            const courseUrl = `${url}#${course.code.replace(/\s+/g, '-')}`;
+            docs.set(courseUrl, {
+              id: officialId(courseUrl),
+              url,
+              title: `${course.code} ${course.title}`,
+              section: 'courses',
+              breadcrumbs: ['Bulletin', title],
+              text: `${course.code} ${course.title}${course.credits ? ` (${course.credits} credits)` : ''}\n${course.description}`,
+              code: course.code,
+              credits: course.credits,
+              fetchedAt,
+            });
+            kept++;
+          }
+        }
+        const content = mainHtml(html);
+        const references = linksOf(content, url).filter((link) => {
+          try { const target = new URL(link); return target.protocol === 'https:' && (allowed(target) || ['albert.nyu.edu', 'nyu.service-now.com'].includes(target.host)); } catch { return false; }
+        }).slice(0, 20);
+        const bodyText = textOf(content);
+        const text = bodyText + (references.length ? `\n\nRelated official links:\n${references.join('\n')}` : '');
+        if (title && bodyText.length >= 80 && !/^(?:404|page not found)/i.test(title) && !/sign in to your account|enter your netid|access denied|enable javascript and cookies to continue/i.test(text)) {
+          const doc: OfficialDoc = { id: officialId(url), url, title, section: classifySection(url, title), breadcrumbs: breadcrumbsOf(html), text: text.slice(0, 60_000), sections: sectionsOf(html), fetchedAt };
+          docs.set(url, doc);
           kept++;
         }
       }
-      const content = mainHtml(html);
-      const references = linksOf(content, url).filter((link) => {
-        try { const target = new URL(link); return target.protocol === 'https:' && (allowed(target) || ['albert.nyu.edu', 'nyu.service-now.com'].includes(target.host)); } catch { return false; }
-      }).slice(0, 20);
-      const bodyText = textOf(content);
-      const text = bodyText + (references.length ? `\n\nRelated official links:\n${references.join('\n')}` : '');
-      if (title && bodyText.length >= 200 && !/^(?:404|page not found)/i.test(title) && !(new URL(url).host === 'students.nyuad.nyu.edu' && /(?:student ID|your (?:account balance|grades|netid|student record))/i.test(text)) && !/sign in to your account|enter your netid|access denied|enable javascript and cookies to continue/i.test(text)) {
-        const doc: OfficialDoc = { id: officialId(url), url, title, section: classifySection(url, title), breadcrumbs: breadcrumbsOf(html), text: text.slice(0, 60_000), sections: sectionsOf(html), fetchedAt };
-        docs.set(url, doc);
-        kept++;
+      if (ordinal % 25 === 0) {
+        const rate = fetched / ((Date.now() - started) / 1000);
+        console.log(`[official] ${fetched} fetched, ${kept} kept, ${serviceQueue.length + queue.length} queued (${rate.toFixed(1)}/s)`);
       }
+      if (Date.now() - lastSave > 60_000) save();
+      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     }
-    if (fetched % 25 === 0) {
-      const rate = fetched / ((Date.now() - started) / 1000);
-      console.log(`[official] ${fetched} fetched, ${kept} kept, ${queue.length} queued (${rate.toFixed(1)}/s)`);
-    }
-    if (Date.now() - lastSave > 60_000) save();
-    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-  }
+  };
+  await Promise.all(Array.from({ length: portal ? 3 : 1 }, worker));
   save();
   const sections = new Map<string, number>();
   for (const doc of docs.values()) sections.set(doc.section, (sections.get(doc.section) ?? 0) + 1);
   console.log(`[official] Done: ${fetched} pages fetched, ${docs.size} documents in ${file}.`);
   console.log(`[official] By section: ${[...sections.entries()].sort((a, b) => b[1] - a[1]).map(([section, count]) => `${section} ${count}`).join(', ')}`);
   await portal?.close();
+  if (portalUnavailable) throw new Error('Portal session expired. Existing snapshots were preserved; run scrape:official -- --portal-login to refresh the login.');
+  if (protectedPages) console.warn(`[official] ${protectedPages} protected portal pages could not be refreshed; existing snapshots were preserved. Use --portal-browser for an authenticated refresh.`);
   if (flag('json')) console.log(JSON.stringify({ fetched, documents: docs.size }));
 }
 

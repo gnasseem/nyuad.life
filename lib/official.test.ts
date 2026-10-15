@@ -1,12 +1,13 @@
 /** The official-page pipeline against a fake university site: extraction, the crawler script, the index, retrieval. */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
+import { gunzipSync } from 'node:zlib';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { breadcrumbsOf, coursesOf, linksOf, mainHtml, sectionsOf, textOf, titleOf } from './html.ts';
-import { buildOfficialIndex, classifySection, loadOfficial, officialCards, readOfficialJsonl, resetOfficial, retrieveOfficial } from './official.ts';
+import { buildOfficialIndex, classifySection, loadOfficial, officialCards, readOfficialJsonl, resetOfficial, retrieveOfficial, writeOfficialJsonl } from './official.ts';
 
 const PAGE = (title: string, body: string, links: string[] = []) => `<!doctype html><html><head><title>${title} | NYU Abu Dhabi</title><script>var x=1</script></head><body>
 <header><nav><ul><li><a href="/en/academics.html">Academics</a></li><li><a href="/en/news/today.html">News</a></li></ul></nav></header>
@@ -154,4 +155,28 @@ describe('the crawler and the index', () => {
     delete process.env.ROR_OFFICIAL_INDEX_DIR;
     resetOfficial();
   }, 60_000);
+});
+
+it('keeps schedule cells on their row, removes commented old menus and carries the posted term into venue passages', () => {
+  const html = PAGE("What's Open", '<h2>Fall Semester 2026</h2><h2>Campus West Restaurant (D1)</h2><h3>Ground Floor</h3><table><tr><th>Counter</th><th>Days</th><th>Hours</th></tr><tr><td><p>Greens</p></td><td><p>Mon-Fri</p></td><td><p>11.30am - 8pm</p></td></tr><tr><td>All Counters</td><td>Sat-Sun</td><td>Closed</td></tr></table><!-- <p>Summer 2018: 24 hours</p> --><h2>Marketplace</h2><table><tr><td>Coffee Shot</td><td>Sun-Fri</td><td>8am - 8.30pm</td></tr></table>');
+  const text = textOf(mainHtml(html));
+  expect(text).toContain('Greens | Mon-Fri | 11.30am - 8pm');
+  expect(text).not.toContain('Summer 2018');
+  const sections = sectionsOf(html);
+  expect(sections[0]?.title).toBe('Fall Semester 2026 · Campus West Restaurant (D1) · Ground Floor');
+  expect(sections[0]?.text).toContain('All Counters | Sat-Sun | Closed');
+  expect(sections[0]?.text).not.toContain('Coffee Shot');
+  expect(sections[1]?.title).toBe('Fall Semester 2026 · Marketplace');
+});
+
+
+it('keeps a document’s actual update date on every indexed passage', async () => {
+  const file = path.join(workDir, 'dated.jsonl');
+  const outDir = path.join(workDir, 'dated-index');
+  const text = 'Last updated: June 29, 2026\n' + 'Student services are available on campus during their posted operating hours. '.repeat(80);
+  writeOfficialJsonl(file, [{ id: 'dated', url: 'https://students.nyuad.nyu.edu/services/', title: 'Campus Services', section: 'campus', breadcrumbs: [], fetchedAt: '2026-10-15T00:00:00Z', text, sections: [{ title: 'Operating Hours', text }] }]);
+  await buildOfficialIndex({ file, outDir, embedder: null });
+  const chunks = JSON.parse(gunzipSync(readFileSync(path.join(outDir, 'chunks.json.gz'))).toString('utf8')) as Array<{ text: string }>;
+  expect(chunks.length).toBeGreaterThan(1);
+  for (const chunk of chunks) expect(chunk.text.split('\n')[0]).toContain('Last updated: June 29, 2026');
 });

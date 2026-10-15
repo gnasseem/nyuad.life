@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHUNK_LIMIT, chunkPost } from './chunker.ts';
+import { CHUNK_LIMIT, chunkDocument, chunkPost } from './chunker.ts';
 
 const options = { model: 'test', dimensions: 8 };
 
@@ -52,4 +52,16 @@ describe('chunkPost', () => {
     const post = { id: '1', url: '', author: 'A', date: '', text: 'hello', comments: [] };
     expect(chunkPost(post, options)[0]!.hash).not.toBe(chunkPost(post, { model: 'other', dimensions: 8 })[0]!.hash);
   });
+});
+
+
+it('keeps route column labels on every chunk of a long timetable', () => {
+  const columns = 'DEP: Campus | ARR: Yas Mall | DEP: Yas Mall | ARR: Campus';
+  const body = columns + '\n' + Array.from({ length: 90 }, () => '9:30 AM | 9:50 AM | 11:00 AM | 11:20 AM').join('\n');
+  const chunks = chunkDocument('shuttle', 'Yas Mall Route · effective October 7, 2026', body, options);
+  expect(chunks.length).toBeGreaterThan(1);
+  for (const chunk of chunks) {
+    expect(chunk.text).toContain(columns);
+    expect(chunk.text.length).toBeLessThanOrEqual(CHUNK_LIMIT + 1);
+  }
 });

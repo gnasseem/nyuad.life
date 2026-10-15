@@ -33,12 +33,18 @@ export function mainHtml(html: string): string {
 
 /** Plain text of an HTML fragment, blocks separated by newlines and list items bulleted. */
 export function textOf(fragment: string): string {
-  let text = fragment.replace(DROP, ' ');
+  let text = fragment.replace(/<!--[\s\S]*?-->/g, '').replace(DROP, ' ');
   let previous = '';
   while (previous !== text) {
     previous = text;
     text = text.replace(DROP_BY_CLASS, ' ');
   }
+  // Keep every table row together, including cells containing paragraphs or line breaks.
+  text = text.replace(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi, (_, row: string) => {
+    const cells = [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)]
+      .map((cell) => textOf(cell[1]!).replace(/\s+/g, ' ').trim());
+    return `\n${cells.join(' | ')}\n`;
+  });
   text = text
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/(p|div|section|article|h[1-6]|tr|blockquote|pre|dd|dt|figcaption|table)>/gi, '\n')
@@ -67,10 +73,13 @@ export function titleOf(html: string): string {
 export function sectionsOf(html: string): Array<{ title: string; text: string }> {
   const titles: string[] = [];
   let parent = '';
+  let scope = '';
   const marked = mainHtml(html).replace(/<h([23])\b[^>]*>([\s\S]*?)<\/h\1>/gi, (_, level: string, raw: string) => {
     const title = textOf(raw);
+    if (/\b(?:semester|term|academic year|effective|updated)\b.*\b20\d{2}\b|\b(?:fall|spring|summer|winter)\s+20\d{2}\b/i.test(title)) scope = title;
     if (level === '2') parent = title;
-    titles.push(level === '3' && parent ? `${parent} · ${title}` : title);
+    const heading = level === '3' && parent ? `${parent} · ${title}` : title;
+    titles.push(scope && !heading.startsWith(scope) ? `${scope} · ${heading}` : heading);
     return `\nNYUAD_SECTION_${titles.length - 1}\n`;
   });
   const blocks = textOf(marked).split(/NYUAD_SECTION_(\d+)/);
@@ -78,7 +87,7 @@ export function sectionsOf(html: string): Array<{ title: string; text: string }>
   for (let i = 1; i < blocks.length; i += 2) {
     const title = titles[Number(blocks[i])];
     const text = blocks[i + 1]?.trim();
-    if (title && text && text.length >= 40) sections.push({ title, text });
+    if (title && text && text.length >= 20) sections.push({ title, text });
   }
   const intro = blocks[0]?.trim();
   if (sections.length && intro && intro.length >= 40) sections.unshift({ title: titleOf(html), text: intro });

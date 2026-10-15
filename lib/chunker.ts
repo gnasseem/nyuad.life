@@ -50,13 +50,15 @@ export function chunkPosts(posts: SourcePost[], options: ChunkOptions): Chunk[] 
 
 /** Chunks any document: a header repeated on every chunk, then the body split at sentences and packed to the limit. */
 export function chunkDocument(id: string, header: string, body: string, options: ChunkOptions): Chunk[] {
-  const clean = collapseWhitespace(body);
+  const clean = body.split(/\r?\n/).map(collapseWhitespace).filter(Boolean).join('\n');
   if (!clean) return [];
   const make = (text: string, n: number): Chunk => ({ id: `${id}#${n}`, postId: id, n, text, hash: chunkHash(text, options) });
   const whole = `${header}\n${clean}`;
   if (whole.length <= CHUNK_LIMIT) return [make(whole, 1)];
-  const payloadLimit = Math.max(400, CHUNK_LIMIT - header.length - 1);
-  return pack(splitAtSentences(clean, payloadLimit), payloadLimit).map((payload, index) => make(`${header}\n${payload}`, index + 1));
+  const columns = clean.split('\n').find((line) => line.includes('|') && /\b(?:DEP|ARR|Days|Hours|Counter|Description)\b/i.test(line));
+  const context = columns ? `${header}\n${columns}` : header;
+  const payloadLimit = Math.max(400, CHUNK_LIMIT - context.length - 1);
+  return pack(splitAtSentences(clean, payloadLimit), payloadLimit).map((payload, index) => make(`${context}\n${payload}`, index + 1));
 }
 
 function chunkHash(text: string, options: ChunkOptions): string {

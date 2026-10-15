@@ -290,10 +290,10 @@ runs in memory.
 Official-page refreshes include the academic calendar, registration resources and student portal links.
 `npm run scrape:official` refreshes public pages; `npm run index:official` updates their semantic index incrementally.
 For protected portal reference pages, run `npm run scrape:official -- --host students.nyuad.nyu.edu --portal-login`
-and complete NYU sign-in in the browser once. Subsequent runs can use `--portal-browser` with the saved
+and complete NYU sign-in in the browser once. Subsequent runs can use `--portal-browser --browser-channel chrome` with the saved
 `.portal-profile` login (`--portal-profile PATH` reuses another NYU browser profile). Login pages, personal
 records, account widgets and student directories are excluded. Refresh and reindex after deadlines change;
-stale pages are not treated as evidence for a current deadline. No credentials are sent to the deployed app.
+stale pages are not treated as evidence for a current deadline. No credentials are sent to the deployed app. Authenticated crawls prioritize shared services and discover navigation links as well as article links. Dining counter tables keep their venue, day and posted term; linked reference timetables are extracted with `pdftotext` (install Poppler locally). Public CI refreshes retain protected snapshots and warn when they cannot refresh them.
 
 Retrieval preserves full names and course codes during query rewriting, searches the original and expanded queries
 (opening questions need no rewrite model call), keeps only threads naming the person asked about (full name, a

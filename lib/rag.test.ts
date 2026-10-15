@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gatherSources, matchesPerson, personName, safeRewrite, parseConfidence, poolHoursAnswer, searchQueries, sourcesBlock, systemPrompt } from './rag.ts';
+import { gatherSources, matchesPerson, personName, safeRewrite, parseConfidence, searchQueries, sourcesBlock, systemPrompt } from './rag.ts';
 import type { OfficialCorpus } from './official.ts';
 import type { Archive } from './store.ts';
 import { buildBm25 } from './search.ts';
@@ -10,7 +10,7 @@ describe('parseConfidence', () => {
     const variants = searchQueries('pool timings with my CS-UH 1001 schedule', 'indoor pool opening hours');
     expect(variants).toContain('pool timings with my CS-UH 1001 schedule');
     expect(variants.some((query) => query.includes('operational hours'))).toBe(true);
-    expect(variants).toHaveLength(3);
+    expect(variants.length).toBeLessThanOrEqual(6);
   });
   it('splits the trailing confidence line off the answer', () => {
     const { text, confidence } = parseConfidence('Take Dania [1].\n\n- Everyone agreed [1][2].\n\nConfidence: high – four recent threads agree.');
@@ -51,23 +51,14 @@ describe('systemPrompt', () => {
   });
 });
 
-it('answers pool hours from the pool section without using the gym hours', () => {
-  const corpus = { docs: [{ id: 'pool', url: 'https://nyuad.nyu.edu/en/facility-rentals/sports-facilities.html', title: 'Sports Facilities', section: 'campus', fetchedAt: '2026-10-08T00:00:00Z', text: 'Performance Gym\nOperational Hours\nMonday-Friday, 8am-10pm\nWeekends, 8am-8pm\nIndoor Pool\nOperational Hours\nMonday-Friday, 8am-2pm and 3-9pm\nWeekends, 8am-8pm\nSquash Courts\nOperational Hours\nMonday-Friday, 8am-10pm' }] } as OfficialCorpus;
-  const result = poolHoursAnswer('pool timings at nyuad', corpus);
-  expect(result?.answer).toContain('8am-2pm and 3-9pm');
-  expect(result?.answer).not.toContain('8am-10pm');
-  expect(result?.sources).toHaveLength(1);
-  expect(result?.sources[0]?.url).toBe(corpus.docs[0]?.url);
-  expect(poolHoursAnswer('pool reviews at nyuad', corpus)).toBeNull();
-});
-
-
 it('preserves full person identities and rejects rewritten substitutions', () => {
   expect(personName('Morgan Testname')).toBe('Morgan Testname');
   expect(personName('who is morgan testname?')).toBe('morgan testname');
   expect(personName('best calculus professor?')).toBeNull();
   expect(personName('calculus professor')).toBeNull();
   expect(personName('pool hours')).toBeNull();
+  expect(personName('IT support')).toBeNull();
+  expect(personName('Read and Refuel Cafe hours')).toBeNull();
   expect(matchesPerson('George Smith is a professor', 'Morgan Testname')).toBe(false);
   expect(matchesPerson('Written by Morgan Testname.', 'Morgan Testname')).toBe(true);
   expect(matchesPerson('Morgan Testnameson', 'Morgan Testname')).toBe(false);
@@ -135,4 +126,54 @@ it('retains substantive negative reviews and excludes unanswered review question
   const prompt = systemPrompt();
   expect(prompt).toContain('Negative or mixed evidence must change the opening recommendation');
   expect(prompt).toContain('Never send students to Facebook, WhatsApp, ROR or a group chat');
+});
+
+it('retrieves all three dining schedules from different sections of the same page without models', async () => {
+  const sections = [
+    { title: 'Campus West Restaurant (D1)', text: 'Counter | Days | Hours\nGreens | Mon-Fri | 11.30am - 8pm\nAll Counters | Sat-Sun | Closed' },
+    { title: 'Campus East Restaurant (D2)', text: 'Counter | Days | Hours\nBreakfast | Daily | 7.30am - 10.15am\nDelivery | Daily | 5.30pm - 12am' },
+    { title: 'Marketplace', text: 'Counter | Days | Hours\nCoffee Shot | Sun-Fri | 8am - 8.30pm\nAll Counters | Saturday | Closed' },
+    { title: 'Day Mart Convenience Store', text: 'Days | Hours\nSun-Thur | 8am - 10pm\nFriday | 8am - 8pm' },
+  ];
+  const doc = { id: 'dining', title: "What's Open", url: 'https://students.nyuad.nyu.edu/services/dining/whats-open/', section: 'campus', fetchedAt: new Date().toISOString(), text: sections.map((section) => `${section.title}\n${section.text}`).join('\n') };
+  const noise = Array.from({ length: 15 }, (_, i) => ({ ...doc, id: `menu-${i}`, title: sections[i % 3]!.title, url: `https://students.nyuad.nyu.edu/menu-${i}`, text: `${sections[i % 3]!.title} offers food, coffee and lunch. View Hours. Menu choices and restaurant details.` }));
+  const docs = [doc, ...noise];
+  const chunks = [...sections.map((section, i) => ({ id: `dining#${i}`, postId: doc.id, n: i, text: `Fall Semester 2026 · ${section.title}\n${section.text}`, hash: String(i) })), ...noise.map((entry) => ({ id: `${entry.id}#1`, postId: entry.id, n: 1, text: `${entry.title}\n${entry.text}`, hash: entry.id }))];
+  const official = { docs, chunks, chunkDoc: new Int32Array(chunks.map((chunk) => docs.findIndex((entry) => entry.id === chunk.postId))), docPosition: new Map(docs.map((entry, i) => [entry.id, i])), vectors: emptyTable(0), bm25: buildBm25(chunks.map((chunk) => chunk.text)), meta: { model: 'none', dimensions: 0 } } as OfficialCorpus;
+  const archive = { posts: [], chunks: [], chunkPost: new Int32Array(), vectors: emptyTable(0), bm25: buildBm25([]), meta: { model: 'none', dimensions: 0 } } as unknown as Archive;
+  const context = { cfg: null, official, catalog: null, reranker: null, board: null };
+  for (const [question, wanted, absent] of [
+    ['D1 timings', 'Greens | Mon-Fri | 11.30am - 8pm', 'Delivery | Daily'],
+    ['When does D2 breakfast end?', 'Breakfast | Daily | 7.30am - 10.15am', 'Greens | Mon-Fri'],
+    ['Is the marketplace open on Saturday?', 'All Counters | Saturday | Closed', 'Breakfast | Daily'],
+    ['convenience store hours', 'Friday | 8am - 8pm', 'Greens | Mon-Fri'],
+  ]) {
+    const result = await gatherSources(archive, question!, question!, context);
+    expect(result.cards.length, question).toBeGreaterThan(0);
+    const passage = sourcesBlock(archive, result.cards.slice(0, 1), result.entries);
+    expect(passage, question).toContain(wanted);
+    expect(passage, question).not.toContain(absent);
+  }
+  const question = 'D1/D2 and marketplace timings';
+  const rewritten = searchQueries(question, 'Campus West Restaurant opening hours');
+  for (const venue of ['Campus West Restaurant', 'Campus East Restaurant', 'Marketplace']) expect(rewritten).toContain(venue);
+  for (const reranker of [null, { name: 'misses-shorthand', rerank: async (_q: string, texts: string[]) => texts.map(() => 0.01) }]) {
+    const result = await gatherSources(archive, question, question, { ...context, reranker });
+    const block = sourcesBlock(archive, result.cards, result.entries);
+    expect(result.cards).toHaveLength(3);
+    for (const label of ['Greens | Mon-Fri', 'Breakfast | Daily', 'Coffee Shot | Sun-Fri']) expect(block).toContain(label);
+    expect(block).not.toContain('Day Mart Convenience Store');
+  }
+});
+
+it('does not mistake a cafe near a bookstore for the bookstore opening hours', async () => {
+  const docs = [
+    { id: 'updates', title: 'Campus Operating Updates', text: 'Bookstore\nMonday-Friday 9am-6pm\nSaturday 9am-5pm\nSunday Closed' },
+    { id: 'cafe', title: 'Lingua Coffee', text: 'Location: near the Bookstore\nCounter | Days | Hours\nCoffee | Mon-Fri | 9am-5pm' },
+  ].map((doc) => ({ ...doc, url: `https://students.nyuad.nyu.edu/${doc.id}`, section: 'campus', fetchedAt: new Date().toISOString() }));
+  const chunks = docs.map((doc) => ({ id: `${doc.id}#1`, postId: doc.id, n: 1, text: `${doc.title}\n${doc.text}`, hash: doc.id }));
+  const official = { docs, chunks, chunkDoc: new Int32Array([0, 1]), docPosition: new Map(docs.map((doc, i) => [doc.id, i])), vectors: emptyTable(0), bm25: buildBm25(chunks.map((chunk) => chunk.text)), meta: { model: 'none', dimensions: 0 } } as OfficialCorpus;
+  const archive = { posts: [], chunks: [], chunkPost: new Int32Array(), vectors: emptyTable(0), bm25: buildBm25([]), meta: { model: 'none', dimensions: 0 } } as unknown as Archive;
+  const result = await gatherSources(archive, 'bookstore hours', 'bookstore hours', { cfg: null, official, catalog: null, reranker: null, board: null });
+  expect(result.cards.map((card) => card.postId)).toEqual(['updates']);
 });

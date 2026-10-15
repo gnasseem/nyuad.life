@@ -29,6 +29,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: sudo apt-get update -qq && sudo apt-get install -y poppler-utils
       - name: Crawl
         # Through the environment and checked as a number: an input pasted straight into the script could run commands.
         env:
@@ -53,8 +54,8 @@ jobs:
           fi
       - name: Commit
         run: |
-          git config user.name "ror-indexer"
-          git config user.email "ror-indexer@users.noreply.github.com"
+          git config user.name "George Nasseem"
+          git config user.email "georgenasseem@gmail.com"
           git add data/official.jsonl data/official-index
           if git diff --cached --quiet; then echo "Nothing changed."; exit 0; fi
           git commit -m "Update official pages [skip ci]"

@@ -140,7 +140,8 @@ export function writeOfficialJsonl(file: string, docs: OfficialDoc[]): void {
 
 function chunkOfficial(docs: OfficialDoc[], options: { model: string; dimensions: number }): Chunk[] {
   return docs.flatMap((doc) => {
-    const header = `${doc.title} (${SECTION_LABELS[doc.section]}, official NYUAD page)`;
+    const chronology = doc.text.match(/^(?:last updated|effective|updated|schedule effective)[^\n]{0,180}/im)?.[0];
+    const header = `${doc.title} (${SECTION_LABELS[doc.section]}, official NYUAD page)${chronology ? ` · ${chronology}` : ''}`;
     const chunks = doc.sections?.length
       ? doc.sections.flatMap((section) => chunkDocument(doc.id, `${header} · ${section.title}`, section.text, options))
       : chunkDocument(doc.id, header, doc.text, options);
@@ -278,12 +279,14 @@ export async function retrieveOfficial(corpus: OfficialCorpus, query: string, op
 export function officialCards(corpus: OfficialCorpus, hits: OfficialHit[], terms: string[], startAt: number): SourceCard[] {
   return hits.map((hit, index) => {
     const doc = corpus.docs[hit.doc]!;
-    const passage = corpus.chunks[hit.chunk]!.text.split('\n').slice(1).join(' ');
+    const [heading = '', ...lines] = corpus.chunks[hit.chunk]!.text.split('\n');
+    const passage = lines.join(' ');
+    const section = heading.split('official NYUAD page) · ')[1];
     return {
       n: startAt + index,
       kind: 'official',
       postId: doc.id,
-      title: doc.title,
+      title: section ? `${doc.title} · ${section}` : doc.title,
       url: doc.url,
       author: 'NYU Abu Dhabi',
       date: doc.fetchedAt.slice(0, 10),
@@ -301,7 +304,7 @@ export function officialCards(corpus: OfficialCorpus, hits: OfficialHit[], terms
 /** How an official page is rendered inside the model's sources block. */
 export function officialSourceBlock(corpus: OfficialCorpus, card: SourceCard, chunkText?: string): string {
   const doc = corpus.docs[corpus.docPosition.get(card.postId)!]!;
-  const body = chunkText ? collapseWhitespace(chunkText) : collapseWhitespace(doc.text);
+  const body = (chunkText ?? doc.text).trim();
   return [`[${card.n}] Official NYUAD page (${SECTION_LABELS[doc.section]}): ${doc.title} · ${doc.url} · fetched ${card.date}`, truncate(body, 3000)].join('\n');
 }
 
