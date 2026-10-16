@@ -13,7 +13,7 @@ import { MemoryBoardStore } from './board-store.ts';
 import { geminiConfig, GeminiError, markUnavailable, resetModelState } from './gemini.ts';
 import { buildIndex } from './indexer.ts';
 import { atCapacity, checkModels, liteChat, markFailed, modelOrder, ProviderError, providersFromEnv, resetProviderState, siteJson, streamChat, ThinkFilter, usable, type Provider } from './providers.ts';
-import { answerWriters, ask } from './rag.ts';
+import { answerWriters, ask, standaloneQuestion } from './rag.ts';
 import { loadArchive, resetArchive, type Archive } from './store.ts';
 
 const posts = [
@@ -25,6 +25,7 @@ const ANSWER = 'Take it with **Dania** [1].\n\n- **Teaching:** clear and fair [1
 
 /** What the fake Gemini does per model: answer, or fail with this status. */
 let geminiBehaviour: Record<string, number> = {};
+let rewriteReply = '{"questions":["Is the 8am section bad?"]}';
 const geminiSeen: string[] = [];
 /** What the fake backup does per model: answer (optionally wrapped in <think>), or fail with this status. */
 let backupBehaviour: Record<string, number | 'think' | 'slow'> = {};
@@ -53,7 +54,7 @@ beforeAll(async () => {
       return;
     }
     res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"questions":["Is the 8am section bad?"]}' }] }, finishReason: 'STOP' }] }));
+    res.end(JSON.stringify({ candidates: [{ content: { parts: [{ text: rewriteReply }] }, finishReason: 'STOP' }] }));
   });
   backup = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
@@ -115,6 +116,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   geminiBehaviour = {};
+  rewriteReply = '{"questions":["Is the 8am section bad?"]}';
   backupBehaviour = {};
   geminiSeen.length = 0;
   backupSeen.length = 0;
@@ -140,6 +142,13 @@ function zai(id: string): Provider {
 const context = { catalog: null, reranker: null, cache: false } as const;
 
 describe('the answer model chain', () => {
+  it('keeps the prior subject when the rewrite returns an unresolved follow-up unchanged', async () => {
+    rewriteReply = 'and is the 8am section bad?';
+    const query = await standaloneQuestion({ gemini: geminiConfig(), chatgpt: null, backups: [], order: ['gemini'] }, [{ role: 'user', content: 'best calculus professor?' }], rewriteReply);
+    expect(query).toContain('best calculus professor?');
+    expect(query).toContain(rewriteReply);
+  });
+
   it('moves to the next Gemini model when the first is overloaded (503)', async () => {
     geminiBehaviour['gemini-3.5-flash'] = 503;
     const statuses: string[] = [];

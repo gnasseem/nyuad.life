@@ -2,11 +2,11 @@
   "version": 2,
   "model": "none",
   "dimensions": 0,
-  "builtAt": "2026-10-15T10:50:02.652Z",
+  "builtAt": "2026-10-16T15:13:13.956Z",
   "posts": 4984,
   "comments": 0,
-  "chunks": 16835,
+  "chunks": 16857,
   "quantization": "int8",
-  "newestPost": "2026-10-15T10:45:45.576Z",
+  "newestPost": "2026-10-16T15:12:47.426Z",
   "oldestPost": "2026-09-30T18:24:37.292Z"
 }

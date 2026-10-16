@@ -4,6 +4,7 @@ import type { OfficialCorpus } from './official.ts';
 import type { Archive } from './store.ts';
 import { buildBm25 } from './search.ts';
 import { emptyTable } from './vectors.ts';
+import { buildCatalog } from './courses.ts';
 
 describe('parseConfidence', () => {
   it('keeps the original query and expands campus aliases even without a rewrite model', () => {
@@ -21,6 +22,7 @@ describe('parseConfidence', () => {
     expect(parseConfidence('Answer.\n**Confidence: Medium** - only one thread, from 2024').confidence).toEqual({ level: 'medium', reason: 'only one thread, from 2024' });
     expect(parseConfidence('Answer.\nConfidence: low').confidence).toEqual({ level: 'low', reason: '' });
     expect(parseConfidence('No confidence line here.')).toEqual({ text: 'No confidence line here.', confidence: null });
+    expect(parseConfidence('Office in A4【2】.\nConfidence: high – official page').text).toBe('Office in A4[2].');
   });
 });
 
@@ -123,6 +125,9 @@ it('retains substantive negative reviews and excludes unanswered review question
   const result = await gatherSources(archive, question, question, { cfg: null, official: null, catalog: null, reranker: { name: 'misleading', rerank: async (_q, texts) => texts.map((text) => text.includes('Avoid') ? 0.01 : 1) }, board: null });
   expect(result.cards.map((card) => card.postId)).toEqual(['review']);
   expect(sourcesBlock(archive, result.cards, result.entries, undefined, 800)).toContain('harsh grading');
+  expect(sourcesBlock(archive, result.cards, result.entries)).toContain('Contains critical replies');
+  posts[0]!.comments.push({ author: 'Cy', date: '2026-04-03', text: 'Is he strict on attendance?' });
+  expect(sourcesBlock(archive, result.cards, result.entries)).toContain('[question, not a reported experience]');
   const prompt = systemPrompt();
   expect(prompt).toContain('Negative or mixed evidence must change the opening recommendation');
   expect(prompt).toContain('Never send students to Facebook, WhatsApp, ROR or a group chat');
@@ -176,4 +181,65 @@ it('does not mistake a cafe near a bookstore for the bookstore opening hours', a
   const archive = { posts: [], chunks: [], chunkPost: new Int32Array(), vectors: emptyTable(0), bm25: buildBm25([]), meta: { model: 'none', dimensions: 0 } } as unknown as Archive;
   const result = await gatherSources(archive, 'bookstore hours', 'bookstore hours', { cfg: null, official, catalog: null, reranker: null, board: null });
   expect(result.cards.map((card) => card.postId)).toEqual(['updates']);
+});
+
+it('finds service procedures, split counter hours and each subject without remote retrieval', async () => {
+  const docs = [
+    { id: 'card', title: 'Campus Safety', text: 'Card Services: 24/7 in Building A4, Level 1. Email cardservicelink@nyu.edu.' },
+    { id: 'lost', title: 'Lost and Found', text: 'Hand found property to Campus Safety in A4, Level 1. Unclaimed items are kept for 30 days, except cash, jewelry and NYUCards.' },
+    { id: 'housing', title: 'Housing Assignment', text: 'First-year students cannot request specific roommates. Continuing students select rooms during their assigned time slot.' },
+    { id: 'dining', title: 'Campus West Restaurant', text: 'Chufang | Mon-Fri | 11.30am - 3pm / 5pm - 8pm\nAll Counters | Sat-Sun | Closed' },
+    { id: 'bank', title: 'FAB Prepaid Card Fees', text: 'Replacement card: AED 25.25. This is a bank card.' },
+    { id: 'past-deadline', title: 'Summer Housing Deadline', text: `The summer housing application deadline was May 11, ${new Date().getFullYear()}.` },
+  ].map((doc) => ({ ...doc, url: `https://students.nyuad.nyu.edu/${doc.id}/`, section: 'campus', fetchedAt: new Date().toISOString() }));
+  const chunks = docs.map((doc) => ({ id: doc.id, postId: doc.id, n: 1, text: `${doc.title}\n${doc.text}`, hash: doc.id }));
+  const official = { docs, chunks, chunkDoc: Int32Array.from(docs.map((_, i) => i)), docPosition: new Map(docs.map((doc, i) => [doc.id, i])), vectors: emptyTable(0), bm25: buildBm25(chunks.map((chunk) => chunk.text)), meta: { model: 'none', dimensions: 0 } } as OfficialCorpus;
+  const archive = { posts: [], chunks: [], chunkPost: new Int32Array(), vectors: emptyTable(0), bm25: buildBm25([]), meta: { model: 'none', dimensions: 0 }, byCourse: new Map() } as unknown as Archive;
+  const context = { cfg: null, official, catalog: null, reranker: null, board: null };
+  for (const [question, expected] of [
+    ['when does Chufang close and reopen', ['dining']],
+    ['how much does a replacement NYU card cost?', ['card']],
+    ['where do I hand in a found NYU ID?', ['lost']],
+    ['where can I get a new student card?', ['card']],
+    ['I picked up a wallet; who should I give it to?', ['lost']],
+    ['how long are lost items kept?', ['lost']],
+    ['can first years pick roommates and where is lost and found?', ['housing', 'lost']],
+  ] as Array<[string, string[]]>) {
+    const result = await gatherSources(archive, question, question, context);
+    const ids = result.cards.map((card) => card.postId);
+    for (const id of expected) expect(ids, question).toContain(id);
+    if (question.includes('replacement')) expect(ids).not.toContain('bank');
+    expect(result.cards.map((card) => card.n)).toEqual(result.cards.map((_, i) => i + 1));
+  }
+  const nextDeadline = `summer housing deadline ${new Date().getFullYear() + 1}`;
+  const future = await gatherSources(archive, nextDeadline, nextDeadline, context);
+  expect(future.cards.some((card) => card.postId === 'past-deadline')).toBe(false);
+  const followup = await gatherSources(archive, 'what about Saturday?', 'Campus West Restaurant opening hours Saturday?', context);
+  expect(followup.cards.map((card) => card.postId)).toContain('dining');
+});
+
+
+it('defaults course-title matching to Abu Dhabi even when the global catalog duplicates the title', async () => {
+  const catalog = buildCatalog(['CS-UH 1001', 'CS-UA 101'].map((code) => ({ code, title: 'Introduction to Computer Science', term: 'Fall 2026', description: '', sections: [], scraped: '2026-10-16T00:00:00Z' })));
+  const archive = { posts: [], chunks: [], chunkPost: new Int32Array(), vectors: emptyTable(0), bm25: buildBm25([]), meta: { model: 'none', dimensions: 0 }, byCourse: new Map() } as unknown as Archive;
+  const doc = { id: 'unlisted', code: 'CS-UH 9999', title: 'Computer Science Special Topics', text: 'Computer Science Special Topics is typically offered in Fall.', section: 'courses', url: 'https://bulletins.nyu.edu/courses/cs_uh/', fetchedAt: new Date().toISOString() };
+  const chunk = { id: 'unlisted', postId: doc.id, n: 1, text: `${doc.title}\n${doc.text}`, hash: doc.id };
+  const official = { docs: [doc], chunks: [chunk], chunkDoc: new Int32Array([0]), docPosition: new Map([[doc.id, 0]]), vectors: emptyTable(0), bm25: buildBm25([chunk.text]), meta: { model: 'none', dimensions: 0 } } as unknown as OfficialCorpus;
+  const result = await gatherSources(archive, 'what courses in computer science can I take?', 'what courses in computer science can I take?', { cfg: null, official, catalog, reranker: null, board: null });
+  expect(result.cards.some((card) => card.postId === 'unlisted')).toBe(false);
+  expect(result.cards.filter((card) => card.kind === 'schedule').map((card) => card.postId)).toEqual(['CS-UH 1001']);
+  const housing = await gatherSources(archive, 'can first years pick roommates?', 'can first years pick roommates?', { cfg: null, official: null, catalog, reranker: null, board: null });
+  expect(housing.cards).toEqual([]);
+});
+
+it('keeps a timetable candidate when another passage on the same page repeats the subject more often', async () => {
+  const doc = { id: 'pool-detail', title: 'Competition Pool', url: 'https://students.nyuad.nyu.edu/pool/', section: 'campus', text: '', fetchedAt: new Date().toISOString() };
+  const chunks = [
+    ...Array.from({ length: 5 }, (_, i) => ({ id: `faq-${i}`, postId: doc.id, n: i + 1, text: 'Competition Pool FAQ\n' + 'Competition pool hours questions and pool information. '.repeat(15), hash: `faq-${i}` })),
+    { id: 'hours', postId: doc.id, n: 2, text: 'Competition Pool · Regular Operating Hours\nMonday–Thursday: 6am–2pm and 3pm–10pm. Friday: 6am–10pm.', hash: 'hours' },
+  ];
+  const official = { docs: [doc], chunks, chunkDoc: new Int32Array(chunks.length), docPosition: new Map([[doc.id, 0]]), vectors: emptyTable(0), bm25: buildBm25(chunks.map((chunk) => chunk.text)), meta: { model: 'none', dimensions: 0 } } as unknown as OfficialCorpus;
+  const archive = { posts: [], chunks: [], chunkPost: new Int32Array(), vectors: emptyTable(0), bm25: buildBm25([]), meta: { model: 'none', dimensions: 0 }, byCourse: new Map() } as unknown as Archive;
+  const result = await gatherSources(archive, 'pool hours', 'pool hours', { cfg: null, official, catalog: null, reranker: null, board: null });
+  expect(sourcesBlock(archive, result.cards, result.entries)).toContain('Friday: 6am–10pm');
 });

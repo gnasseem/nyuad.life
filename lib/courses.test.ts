@@ -190,3 +190,13 @@ describe('schedule text for the answer model', () => {
     expect(instructorScheduleText(catalog, 'Thomas Pötsch')).toContain('Fall 2026: CS-UH 1001 Introduction to Computer Science (Lecture 001 Tue/Thu 09:55–11:10)');
   });
 });
+
+it('retains both courses in a comparison when only one teacher is named by first name', () => {
+  const comparison = buildCatalog([
+    offering('Fall 2026', 'MATH-UH 1021', 'Multivariable Calculus', ['Rossi, Marco']),
+    offering('Fall 2026', 'MATH-UH 1022', 'Linear Algebra', ['Zantout, Dania']),
+  ]);
+  const matched = matchSchedule(comparison, 'MVC with Rossi or linalg with Dania?');
+  expect(matched.courses.sort()).toEqual(['MATH-UH 1021', 'MATH-UH 1022']);
+  expect(matched.instructors.sort()).toEqual(['Dania Zantout', 'Marco Rossi']);
+});

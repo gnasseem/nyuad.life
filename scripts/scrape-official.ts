@@ -122,7 +122,8 @@ async function fetchPortal(url: string): Promise<string | null> {
     const links = (await page.locator('a[href]').evaluateAll((nodes) => nodes.map((node) => (node as unknown as { href: string }).href)))
       .filter((href) => { try { return allowed(new URL(href)); } catch { return false; } });
     const navigation = [...new Set(links)].map((href) => `<a href="${href.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"></a>`).join('');
-    return `<html><head><title>${await page.title()}</title></head><body><nav>${navigation}</nav><main>${await main.innerHTML()}</main></body></html>`;
+    const panels = await page.locator('aside').evaluateAll((nodes) => nodes.map((node) => node.outerHTML).join('\n'));
+    return `<html><head><title>${await page.title()}</title></head><body><nav>${navigation}</nav><main>${await main.innerHTML()}</main>${panels}</body></html>`;
   } finally { await page.close(); }
 }
 function escapeHtml(text: string): string {

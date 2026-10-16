@@ -6,8 +6,9 @@ import { tmpdir } from 'node:os';
 import { gunzipSync } from 'node:zlib';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { SourceCard } from './types.ts';
 import { breadcrumbsOf, coursesOf, linksOf, mainHtml, sectionsOf, textOf, titleOf } from './html.ts';
-import { buildOfficialIndex, classifySection, loadOfficial, officialCards, readOfficialJsonl, resetOfficial, retrieveOfficial, writeOfficialJsonl } from './official.ts';
+import { buildOfficialIndex, classifySection, loadOfficial, officialSourceBlock, officialCards, readOfficialJsonl, resetOfficial, retrieveOfficial, writeOfficialJsonl, type OfficialCorpus } from './official.ts';
 
 const PAGE = (title: string, body: string, links: string[] = []) => `<!doctype html><html><head><title>${title} | NYU Abu Dhabi</title><script>var x=1</script></head><body>
 <header><nav><ul><li><a href="/en/academics.html">Academics</a></li><li><a href="/en/news/today.html">News</a></li></ul></nav></header>
@@ -179,4 +180,22 @@ it('keeps a document’s actual update date on every indexed passage', async () 
   const chunks = JSON.parse(gunzipSync(readFileSync(path.join(outDir, 'chunks.json.gz'))).toString('utf8')) as Array<{ text: string }>;
   expect(chunks.length).toBeGreaterThan(1);
   for (const chunk of chunks) expect(chunk.text.split('\n')[0]).toContain('Last updated: June 29, 2026');
+});
+
+it('keeps shared service sidebars and reference links with their source sections', () => {
+  const html = `<html><body><main><h1>Appointments</h1><p>${'Medical appointments are available on campus. '.repeat(4)}</p><h2>Course alternates</h2><a href="https://students.nyuad.nyu.edu/academics/equivalencies/">Equivalency table</a></main><aside class="sidebar"><h3>Health Center</h3><p>Monday–Thursday 9am–5pm</p><p>Friday 9am–12pm, 2:30–5pm</p></aside><aside><h3>Your account</h3><p>Private account navigation</p></aside></body></html>`;
+  const text = textOf(mainHtml(html));
+  expect(text).toContain('Friday 9am–12pm, 2:30–5pm');
+  expect(text).toContain('Equivalency table (https://students.nyuad.nyu.edu/academics/equivalencies/)');
+  expect(text).not.toContain('Private account navigation');
+  expect(sectionsOf(html).find((section) => section.title.includes('Health Center'))?.text).toContain('Friday 9am–12pm, 2:30–5pm');
+});
+
+it('labels each timetable value with its own stop and direction', () => {
+  const doc = { id: 'bus', title: 'Shuttle', url: 'https://students.nyuad.nyu.edu/shuttle/', section: 'campus', fetchedAt: '2026-10-16', text: 'DEP: Campus | ARR: Mall | DEP: Mall | ARR: Campus\n7:40 PM | 8:10 PM | – | –\n– | 9:40 PM | 9:42 PM | 9:55 PM' };
+  const corpus = { docs: [doc], docPosition: new Map([['bus', 0]]) } as unknown as OfficialCorpus;
+  const card = { n: 1, postId: 'bus', date: '2026-10-16' } as SourceCard;
+  const block = officialSourceBlock(corpus, card);
+  expect(block).toContain('DEP: Campus = 7:40 PM; ARR: Mall = 8:10 PM; DEP: Mall = no service');
+  expect(block).toContain('DEP: Campus = no service; ARR: Mall = 9:40 PM; DEP: Mall = 9:42 PM');
 });

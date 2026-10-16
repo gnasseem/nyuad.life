@@ -3,7 +3,7 @@
  * listings, rides and lost items have their own pages; practical questions still go through search.
  */
 
-type OffTopicDomain = 'falcons' | 'campus' | 'listing' | 'ride' | 'lost-found' | 'live';
+type OffTopicDomain = 'falcons' | 'campus' | 'listing' | 'ride' | 'lost-found' | 'live' | 'plan';
 
 export interface Redirect {
   domain: OffTopicDomain;
@@ -47,6 +47,9 @@ const LIVE_NEED = /\b(?:have|has|got|lend|borrow|spare|give|bring)\b/i;
 export function detectRedirect(question: string, _env: NodeJS.ProcessEnv = process.env): Redirect | null {
   const text = question.trim();
   if (!text) return null;
+  if (/\b(?:build|make|create|plan)\b.{0,30}\b(?:my |me a |a )?(?:schedule|timetable|week)\b/i.test(text)) {
+    return { domain: 'plan', title: 'Build your class schedule', message: 'Choose courses and set your days, hours and professor preferences in Plan.', link: { url: '/plan', label: 'Open Plan' } };
+  }
   // Losing something can be context for a question about replacing it, insurance or access. Answer that question.
   const procedure = /\b(?:how|where|what|which|who|can i|do i|should i|replace\w*|reissu\w*|renew\w*|new (?:one|id|card|key|passport)|fee|cost|pay|report|block|deactivat\w*|enter|travel|fly)\b/i.test(text);
   if (CAMPUS.test(text) && FALCON_TRADE.test(text.replace(CAMPUS, ''))) {

@@ -23,10 +23,14 @@ const DROP_BY_CLASS = /<(div|section|ul|ol)\b[^>]*\b(?:class|id|role)=["'][^"']*
 /** The part of the page that holds the content, as raw HTML. */
 export function mainHtml(html: string): string {
   const withoutComments = html.replace(/<!--[\s\S]*?-->/g, '');
+  const panels = [...withoutComments.matchAll(/<aside\b[^>]*>([\s\S]*?)<\/aside>/gi)]
+    .map((match) => match[1]!)
+    .filter((panel) => /<h[2-4]\b[^>]*>[^<]*(?:hours|contact|health center|campus safety|transport|dining|residential|library)/i.test(panel))
+    .map((panel) => `<section>${panel}</section>`).join('\n');
   const candidates = [/<main\b[^>]*>([\s\S]*?)<\/main>/i, /<article\b[^>]*>([\s\S]*?)<\/article>/i, /<div\b[^>]*\b(?:id|class)=["'][^"']*(?:main-content|maincontent|content-main|page-content|article-body|entry-content|contentarea|textcontainer)[^"']*["'][^>]*>([\s\S]*?)<\/div>\s*<(?:footer|\/body)/i, /<body\b[^>]*>([\s\S]*?)<\/body>/i];
   for (const pattern of candidates) {
     const match = pattern.exec(withoutComments);
-    if (match?.[1] && textOf(match[1]).length > 120) return match[1];
+    if (match?.[1] && textOf(match[1]).length > 120) return `${match[1]}\n${panels}`;
   }
   return withoutComments;
 }
@@ -39,6 +43,13 @@ export function textOf(fragment: string): string {
     previous = text;
     text = text.replace(DROP_BY_CLASS, ' ');
   }
+  // Keep reference destinations beside their labels so a retrieved section can supply the requested link.
+  text = text.replace(/<a\b[^>]*href=["'](https:\/\/[^"'<>\s]+)["'][^>]*>([\s\S]*?)<\/a>/gi, (match, url: string, label: string) => {
+    if (/^https:\/\/admin\.|\/cms\/admin\//i.test(url)) return label;
+    if (!/^https:\/\/(?:[\w.-]+\.)?nyu\.edu\/|^https:\/\/(?:docs\.google\.com|nyu\.service-now\.com)\//i.test(url)) return match;
+    const title = label.replace(/<[^>]+>/g, '').trim();
+    return title ? `${title} (${url})` : match;
+  });
   // Keep every table row together, including cells containing paragraphs or line breaks.
   text = text.replace(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi, (_, row: string) => {
     const cells = [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)]

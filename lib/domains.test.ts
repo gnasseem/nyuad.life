@@ -34,3 +34,8 @@ describe('detectRedirect', () => {
     }
   });
 });
+
+it('routes schedule building to Plan and keeps course comparisons answerable', () => {
+  expect(detectRedirect('build me a schedule with calc and intro to CS no friday classes')?.link.url).toBe('/plan');
+  expect(detectRedirect('Should I take calculus or linear algebra?')).toBeNull();
+});

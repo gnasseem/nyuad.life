@@ -240,8 +240,8 @@ interface OfficialHit {
   score: number;
 }
 
-/** Hybrid search over official pages, grouped to one best chunk per page. `vector` is reused when the caller embedded the query already. */
-export async function retrieveOfficial(corpus: OfficialCorpus, query: string, options: { k?: number; vector?: Float32Array; embedder?: Embedder | null; section?: OfficialSection; filter?: (doc: OfficialDoc) => boolean } = {}): Promise<{ hits: OfficialHit[]; terms: string[] }> {
+/** Hybrid search over official passages; defaults to one best chunk per page. `vector` is reused when the caller embedded the query already. */
+export async function retrieveOfficial(corpus: OfficialCorpus, query: string, options: { k?: number; chunksPerDoc?: number; score?: (hit: OfficialHit) => number; vector?: Float32Array; embedder?: Embedder | null; section?: OfficialSection; filter?: (doc: OfficialDoc) => boolean } = {}): Promise<{ hits: OfficialHit[]; terms: string[] }> {
   const terms = tokenize(query);
   const k = options.k ?? 8;
   if (corpus.chunks.length === 0) return { hits: [], terms };
@@ -265,15 +265,22 @@ export async function retrieveOfficial(corpus: OfficialCorpus, query: string, op
   const perChunk = new Map<number, number>();
   lexical.forEach(({ row }, rank) => perChunk.set(row, (perChunk.get(row) ?? 0) + 1 / (60 + rank + 1)));
   dense.forEach(({ row }, rank) => perChunk.set(row, (perChunk.get(row) ?? 0) + 1 / (60 + rank + 1)));
-  const perDoc = new Map<number, OfficialHit>();
+  const hits: OfficialHit[] = [];
   for (const [chunk, score] of perChunk) {
     const doc = corpus.chunkDoc[chunk]!;
     if (options.section && corpus.docs[doc]!.section !== options.section) continue;
     if (options.filter && !options.filter(corpus.docs[doc]!)) continue;
-    const current = perDoc.get(doc);
-    if (!current || score > current.score) perDoc.set(doc, { doc, chunk, score });
+    hits.push({ doc, chunk, score });
   }
-  return { hits: [...perDoc.values()].sort((a, b) => b.score - a.score).slice(0, k), terms };
+  const counts = new Map<number, number>();
+  // Evaluate passage evidence before the page cap; keyword-heavy FAQs must not hide the policy or timetable.
+  const ordered = hits.map((hit) => ({ hit, rank: options.score?.(hit) ?? hit.score })).sort((a, b) => b.rank - a.rank || b.hit.score - a.hit.score);
+  const selected = ordered.map((entry) => entry.hit).filter((hit) => {
+    const count = counts.get(hit.doc) ?? 0;
+    counts.set(hit.doc, count + 1);
+    return count < (options.chunksPerDoc ?? 1);
+  }).slice(0, k);
+  return { hits: selected, terms };
 }
 
 export function officialCards(corpus: OfficialCorpus, hits: OfficialHit[], terms: string[], startAt: number): SourceCard[] {
@@ -304,7 +311,17 @@ export function officialCards(corpus: OfficialCorpus, hits: OfficialHit[], terms
 /** How an official page is rendered inside the model's sources block. */
 export function officialSourceBlock(corpus: OfficialCorpus, card: SourceCard, chunkText?: string): string {
   const doc = corpus.docs[corpus.docPosition.get(card.postId)!]!;
-  const body = (chunkText ?? doc.text).trim();
+  // Repeated departure/arrival columns are easy to shift when read as a flattened PDF table.
+  // Attach each stop to its own value; a dash stays an explicit absence of service.
+  let columns: string[] = [];
+  const body = (chunkText ?? doc.text).trim().split('\n').map((line) => {
+    if (/^DEP:/i.test(line) && line.includes('|')) columns = line.split('|').map((cell) => cell.trim());
+    else if (columns.length && /^(?:[–—-]|\d{1,2}[:.]\d{2}\s*[AP]M)/i.test(line) && line.includes('|')) {
+      const cells = line.split('|').map((cell) => cell.trim());
+      return cells.map((cell, i) => `${columns[i] ?? 'Other'} = ${/^[–—-]$/.test(cell) || !cell ? 'no service' : cell}`).join('; ');
+    }
+    return line;
+  }).join('\n');
   return [`[${card.n}] Official NYUAD page (${SECTION_LABELS[doc.section]}): ${doc.title} · ${doc.url} · fetched ${card.date}`, truncate(body, 3000)].join('\n');
 }
 

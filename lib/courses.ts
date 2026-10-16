@@ -369,7 +369,7 @@ function normalizeName(name: string): string {
   return fold(displayName(name));
 }
 
-const TEACHING = /\b(?:prof|professor|professors|dr|teach|teaches|teaching|taught|instructor|lecturer|class|classes|course|courses|section|sections|take|taking|took)\b/;
+const TEACHING = /\b(?:prof|professor|professors|dr|teach|teaches|teaching|taught|instructor|lecturer|class|classes|course|courses|section|sections|take|taking|took|with)\b/;
 // Surnames that are also ordinary English words students use in course questions.
 export const COMMON_WORDS = new Set(['young', 'long', 'love', 'hall', 'green', 'white', 'black', 'brown', 'king', 'rich', 'west', 'will', 'may', 'hope', 'early', 'case', 'park', 'wood', 'more', 'good', 'best', 'hill', 'field', 'stone', 'bell', 'lane', 'street', 'north', 'south', 'cook', 'baker', 'mason', 'price', 'grant', 'hunt', 'major', 'minor', 'core', 'data']);
 
@@ -426,7 +426,7 @@ export function matchSchedule(catalog: Catalog, question: string, limits = { cou
   });
   if (firstMatches.length === 1) {
     if (!instructors.includes(firstMatches[0]!)) instructors.push(firstMatches[0]!);
-    if (courses.length > 1) {
+    if (courses.length > 1 && !/\b(?:or|versus|vs|compare|between)\b/i.test(question)) {
       const taught = courses.filter((code) => (catalog.byCode.get(code) ?? []).some((offering) => offering.sections.some((section) => section.instructors.some((name) => displayName(name) === firstMatches[0]))));
       if (taught.length) courses.splice(0, courses.length, ...taught);
     }
