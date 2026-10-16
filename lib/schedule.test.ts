@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildCatalog, courseRows, type Offering } from './courses.ts';
+import { namedCourseList, requestedTimes, simpleRuleRequest } from './plan-request.ts';
 import { DEFAULT_RULES, highlights, lanes, minutes, normalizeRules, solve, waysToTake, type Quality, type Rules, type SolverCourse, type SolverSection } from './schedule.ts';
 
 const TERM = { startDate: '2026-08-31', endDate: '2026-12-14' };
@@ -331,5 +332,48 @@ describe.skipIf(!existsSync(CLASSES))('the real Fall 2026 schedule', () => {
         for (let i = 1; i < slots.length; i++) if (slots[i]![2] !== slots[i - 1]![2]) expect(slots[i]![0] - slots[i - 1]![1]).toBeGreaterThanOrEqual(15);
       }
     }
+  });
+});
+
+
+describe('requests in students’ own words', () => {
+  it('understands all four course nicknames in one request', () => {
+    const titles = ['Computer Systems Organization', 'Algorithms', 'Elem French I (in French)', 'Probability and Statistics', 'Probability and Statistics for Engineers', 'Intermediate French I'];
+    const courses = titles.map((title, i) => ({ code: `CS-UH ${i}`, title, credits: '4', sections: [] }));
+    const read = namedCourseList(courses, 'CSO, Algo, French1, Probs and Stats');
+    expect(read?.wants.map((want) => want.codes)).toEqual([['CS-UH 0'], ['CS-UH 1'], ['CS-UH 2'], ['CS-UH 3']]);
+    expect(read?.missing).toEqual([]);
+    expect(namedCourseList(courses.slice(1), 'CSO, Algo, French1, Probs and Stats')?.missing).toEqual(['CSO']);
+    expect(namedCourseList(courses, 'Algo, no 8:30am classes')).toBeNull();
+  });
+
+  it('distinguishes requested starts, excluded starts and bounds on the day', () => {
+    expect(requestedTimes('I want on 8.30 am class and 5.00pm class', DEFAULT_RULES)).toEqual({ requiredStarts: ['08:30', '17:00'], avoidStarts: [] });
+    expect(requestedTimes('I want no 8.30 am class and 5.00pm class', DEFAULT_RULES)).toEqual({ requiredStarts: [], avoidStarts: ['08:30', '17:00'] });
+    expect(requestedTimes('no classes before 8:30am and after 5pm', DEFAULT_RULES)).toEqual({ earliest: '08:30', latest: '17:00' });
+    expect(requestedTimes('nothing before 10, done by 5', DEFAULT_RULES)).toEqual({ earliest: '10:00', latest: '17:00' });
+    expect(requestedTimes('between 8:30am and 5pm', DEFAULT_RULES)).toEqual({ earliest: '08:30', latest: '17:00' });
+    expect(simpleRuleRequest('I want on 8.30 am class and 5.00pm class', DEFAULT_RULES)?.requiredStarts).toEqual(['08:30', '17:00']);
+    expect(simpleRuleRequest('CSO, Algo, no 8:30am', DEFAULT_RULES)).toBeNull();
+    expect(simpleRuleRequest('Nothing before 10, Fridays off', DEFAULT_RULES)).toMatchObject({ earliest: '10:00', daysOff: ['Fri'] });
+    expect(simpleRuleRequest('At most two classes a day', DEFAULT_RULES)).toMatchObject({ maxPerDay: 2 });
+    expect(simpleRuleRequest('No back-to-back classes', DEFAULT_RULES)).toMatchObject({ noBackToBack: true });
+    expect(requestedTimes('no 8:30am', rules({ requiredStarts: ['08:30', '17:00'] }))).toEqual({ requiredStarts: ['17:00'], avoidStarts: ['08:30'] });
+    expect(requestedTimes("I don't want an 8:30am class or a 5pm class", DEFAULT_RULES)).toEqual({ requiredStarts: [], avoidStarts: ['08:30', '17:00'] });
+    expect(requestedTimes('No more than two classes a day, I want an 8:30am class', DEFAULT_RULES)).toEqual({ requiredStarts: ['08:30'], avoidStarts: [] });
+  });
+
+  it('requires both requested starts in the week and explains impossible requests', () => {
+    const early: SolverCourse = { code: 'A', title: 'Early', credits: '4', sections: [section('1', 'Lecture', ['Mon'], '08:30', '09:45'), section('2', 'Lecture', ['Mon'], '09:55', '11:10')] };
+    const late: SolverCourse = { code: 'B', title: 'Late', credits: '4', sections: [section('3', 'Lecture', ['Tue'], '17:00', '18:15'), section('4', 'Lecture', ['Tue'], '11:20', '12:35')] };
+    const catalog = catalogOf(early, late);
+    const wants = [want('a', 'A'), want('b', 'B')];
+    expect(numbers(solve(catalog, wants, rules({ requiredStarts: ['08:30', '17:00'] })))).toEqual(['1', '3']);
+    expect(numbers(solve(catalog, wants, rules({ avoidStarts: ['08:30', '17:00'] })))).toEqual(['2', '4']);
+    const impossible = solve(catalog, wants, rules({ requiredStarts: ['07:30'] }));
+    expect(impossible.options).toEqual([]);
+    expect(impossible.problems[0]!.text).toContain('7:30am');
+    expect(impossible.problems[0]!.fixes[0]!.rules).toEqual({ requiredStarts: [] });
+    expect(solve(catalogOf(early), [want('a', 'A')], rules({ requiredStarts: ['08:30', '09:55'] })).options).toEqual([]);
   });
 });

@@ -1062,27 +1062,6 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 }
 
 /* ---------- Plan ---------- */
-.plan-steps { display: flex; flex-wrap: wrap; gap: 8px 22px; padding: 13px 16px; border: 1px solid var(--rule); border-radius: 13px; background: var(--plate); color: var(--ink-3); font-size: 13px; }
-.plan-steps span { display: inline-flex; align-items: center; gap: 8px; }
-.plan-steps span.active { color: var(--ink); font-weight: 700; }
-.plan-steps b { display: grid; place-items: center; width: 21px; height: 21px; border: 1px solid var(--rule-2); border-radius: 50%; font: 700 11px/1 var(--sign); }
-.plan-steps .active b { border-color: var(--teal); background: var(--teal); color: white; }
-.plan-review { display: grid; gap: 18px; padding: 20px; border: 1.5px solid var(--teal); border-radius: 16px; background: var(--plate); box-shadow: var(--shadow-1); }
-.plan-review-head { display: flex; align-items: start; justify-content: space-between; gap: 20px; }
-.plan-review-head h2 { margin: 4px 0 6px; font: 720 23px/1.2 var(--sign); }
-.plan-review-head p { max-width: 680px; color: var(--ink-2); font-size: 13.5px; line-height: 1.5; }
-.plan-review-slot { display: grid; gap: 9px; }
-.plan-review-slot h3 { font: 680 16px/1.3 var(--sign); }
-.plan-review-options { display: grid; gap: 7px; max-height: 430px; overflow: auto; }
-.plan-review-course { display: flex; align-items: start; gap: 11px; padding: 11px 13px; border: 1px solid var(--rule); border-radius: 10px; background: var(--plate-2); cursor: pointer; }
-.plan-review-course:has(input:checked) { border-color: color-mix(in srgb, var(--teal) 55%, var(--rule)); background: color-mix(in srgb, var(--teal-soft) 45%, var(--plate)); }
-.plan-review-course input { flex: none; margin-top: 3px; accent-color: var(--teal); }
-.plan-review-course > span { display: grid; gap: 4px; min-width: 0; }
-.plan-review-course b { font-size: 14px; line-height: 1.35; }
-.plan-review-course small { color: var(--teal-ink); font-size: 12px; font-weight: 650; }
-.plan-review-course span span { color: var(--ink-2); font-size: 13px; line-height: 1.4; }
-.plan-review-missing { color: var(--amber-ink); font-size: 13px; }
-.plan-review > .btn { justify-self: start; }
 /* What you want on the left, the week it makes on the right: a timetable in the colours of your courses, and under
    it the sections with their class numbers for Albert. */
 /* Just above the one-column layout the week needs the room more than the rules do. */
@@ -1681,3 +1660,15 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
 
 .member-table { min-width: 800px; }
 .member-table td:first-child { white-space: nowrap; }
+
+.plan-course-results { display: grid; max-height: 310px; overflow-y: auto; }
+.plan-course-results > button { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border: 0; border-bottom: 1px solid var(--rule); background: none; color: var(--ink); text-align: left; }
+.plan-course-results > button:hover:not(:disabled) { color: var(--line-ink); }
+.plan-course-results > button:disabled { opacity: 0.6; }
+.plan-course-results > button > span { display: grid; gap: 4px; }
+.plan-course-results b { font-size: 13px; }
+.plan-course-results small { color: var(--ink-2); font-size: 12px; }
+.plan-course-results svg { width: 16px; height: 16px; flex: none; }
+.plan-starts { font-size: 13px; }
+.plan-starts > summary { min-height: 36px; padding: 8px 0; cursor: pointer; color: var(--ink-2); }
+.plan-starts .rule-help { margin: 4px 0 10px; }

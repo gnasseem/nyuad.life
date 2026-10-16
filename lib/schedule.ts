@@ -63,6 +63,10 @@ export interface Rules {
   earliest: string;
   /** No class ending after this (HH:MM), or empty. */
   latest: string;
+  /** Each requested start must appear somewhere in the week. */
+  requiredStarts: string[];
+  /** No meeting may start at these times. */
+  avoidStarts: string[];
   daysOff: string[];
   /** The most classes on any one day, or 0 for no limit. */
   maxPerDay: number;
@@ -79,7 +83,7 @@ export interface Rules {
   prefer: string[];
 }
 
-export const DEFAULT_RULES: Rules = { earliest: '', latest: '', daysOff: [], maxPerDay: 0, noBackToBack: false, shape: 'any', waitlisted: false, bestRated: true, avoid: [], prefer: [] };
+export const DEFAULT_RULES: Rules = { earliest: '', latest: '', requiredStarts: [], avoidStarts: [], daysOff: [], maxPerDay: 0, noBackToBack: false, shape: 'any', waitlisted: false, bestRated: true, avoid: [], prefer: [] };
 
 /** Back to back at NYUAD is the 10 minutes between slots; a break is anything longer. */
 export const BREAK = 15;
@@ -93,6 +97,8 @@ export function normalizeRules(raw: unknown): Rules {
   return {
     earliest: time(value.earliest),
     latest: time(value.latest),
+    requiredStarts: names(value.requiredStarts).filter((entry) => /^([01]\d|2[0-3]):[0-5]\d$/.test(entry)),
+    avoidStarts: names(value.avoidStarts).filter((entry) => /^([01]\d|2[0-3]):[0-5]\d$/.test(entry)),
     daysOff: Array.isArray(value.daysOff) ? DAYS.filter((day) => (value.daysOff as unknown[]).includes(day)) : [],
     maxPerDay: Number.isInteger(most) && most >= 1 && most <= 6 ? most : 0,
     noBackToBack: value.noBackToBack === true,
@@ -201,7 +207,7 @@ export function namesPerson(instructors: string[], rule: string): boolean {
   });
 }
 
-type Blocker = 'seats' | 'days' | 'hours' | 'professor';
+type Blocker = 'seats' | 'days' | 'hours' | 'starts' | 'professor';
 
 /**
  * Why a section is out under the hard rules, or null when it fits them. The student's own rules come before seats: a
@@ -212,6 +218,7 @@ function blocker(section: SolverSection, rules: Rules): Blocker | null {
   const earliest = rules.earliest ? minutes(rules.earliest) : NaN;
   const latest = rules.latest ? minutes(rules.latest) : NaN;
   if (section.meetings.some((meeting) => meeting.start && (minutes(meeting.start) < earliest || minutes(meeting.end) > latest))) return 'hours';
+  if (section.meetings.some((meeting) => rules.avoidStarts.includes(meeting.start))) return 'starts';
   if (rules.avoid.some((rule) => namesPerson(section.instructors, rule))) return 'professor';
   if (section.status !== 'open' && !rules.waitlisted) return 'seats';
   return null;
@@ -231,6 +238,7 @@ function why(kind: Blocker, component: string | null, sections: SolverSection[],
   const part = component?.toLowerCase();
   const every = `has every ${part ?? 'section'}`;
   if (kind === 'seats') return part ? `has no ${part} with open seats` : 'has no open seats';
+  if (kind === 'starts') return `${every} at a start time you excluded (${rules.avoidStarts.map(clock).join(', ')})`;
   if (kind === 'days') {
     const days = offDays(sections, rules);
     return `${every} on ${list(days.map((day) => DAY_NAMES[day]!), 'or')}, your ${days.length > 1 ? 'days' : 'day'} off`;
@@ -250,6 +258,7 @@ function some(kind: Blocker, sections: SolverSection[], rules: Rules): string {
   const one = sections.length === 1;
   const count = one ? 'one' : String(sections.length);
   if (kind === 'seats') return `${count} ${one ? 'is' : 'are'} full`;
+  if (kind === 'starts') return `${count} ${one ? 'starts' : 'start'} at a time you excluded`;
   if (kind === 'days') {
     const days = offDays(sections, rules);
     return `${count} ${one ? 'meets' : 'meet'} on ${list(days.map((day) => DAY_NAMES[day]!), 'or')}, your ${days.length > 1 ? 'days' : 'day'} off`;
@@ -479,6 +488,8 @@ function domain(catalog: Map<string, SolverCourse>, want: Want, rules: Rules, qu
 /** The loosenings worth trying, least drastic first. */
 function relaxations(rules: Rules): Fix[] {
   const out: Fix[] = [];
+  for (const time of rules.requiredStarts) out.push({ label: `Don't require a ${clock(time)} class`, rules: { requiredStarts: rules.requiredStarts.filter((entry) => entry !== time) } });
+  for (const time of rules.avoidStarts) out.push({ label: `Allow ${clock(time)} classes`, rules: { avoidStarts: rules.avoidStarts.filter((entry) => entry !== time) } });
   if (rules.maxPerDay && rules.maxPerDay < 6) out.push({ label: `Allow ${rules.maxPerDay + 1} classes a day`, rules: { maxPerDay: rules.maxPerDay + 1 } });
   if (rules.maxPerDay) out.push({ label: 'Any number of classes a day', rules: { maxPerDay: 0 } });
   if (rules.noBackToBack) out.push({ label: 'Allow back-to-back classes', rules: { noBackToBack: false } });
@@ -513,6 +524,8 @@ function both(a: Fix, b: Fix): Fix {
   const rules = { ...a.rules, ...b.rules };
   if (a.rules?.daysOff && b.rules?.daysOff) rules.daysOff = a.rules.daysOff.filter((day) => b.rules!.daysOff!.includes(day));
   if (a.rules?.avoid && b.rules?.avoid) rules.avoid = a.rules.avoid.filter((name) => b.rules!.avoid!.includes(name));
+  if (a.rules?.avoidStarts && b.rules?.avoidStarts) rules.avoidStarts = a.rules.avoidStarts.filter((time) => b.rules!.avoidStarts!.includes(time));
+  if (a.rules?.requiredStarts && b.rules?.requiredStarts) rules.requiredStarts = a.rules.requiredStarts.filter((time) => b.rules!.requiredStarts!.includes(time));
   return { label: `${a.label} and ${b.label.charAt(0).toLowerCase()}${b.label.slice(1)}`, rules };
 }
 
@@ -544,6 +557,10 @@ interface Limits {
 /** The backtracking search: the most constrained want first, keeping the best few hundred plans found. */
 function search(wants: Want[], domains: Choice[][], rules: Rules, quality: Quality | undefined, limits: Limits): { found: Option[]; partial: boolean } {
   const order = domains.map((_, i) => i).sort((a, b) => domains[a]!.length - domains[b]!.length);
+  const remainingStarts: Set<string>[] = Array.from({ length: order.length + 1 }, () => new Set<string>());
+  if (rules.requiredStarts.length) for (let depth = order.length - 1; depth >= 0; depth--) {
+    remainingStarts[depth] = new Set([...remainingStarts[depth + 1]!, ...domains[order[depth]!]!.flatMap((choice) => choice.sections.flatMap((section) => section.meetings.filter((meeting) => meeting.days.length).map((meeting) => meeting.start)))]);
+  }
   const gap = rules.noBackToBack ? BREAK : 0;
   const started = Date.now();
   const found: Option[] = [];
@@ -559,6 +576,7 @@ function search(wants: Want[], domains: Choice[][], rules: Rules, quality: Quali
 
   const step = (depth: number): void => {
     if (partial) return;
+    if (rules.requiredStarts.some((time) => !remainingStarts[depth]!.has(time) && !picked.some((choice) => choice.sections.some((section) => section.meetings.some((meeting) => meeting.days.length && meeting.start === time))))) return;
     if (++steps % 512 === 0 && Date.now() - started > limits.ms) {
       partial = true;
       return;
@@ -657,6 +675,12 @@ export function solve(catalog: Map<string, SolverCourse>, wants: Want[], rules: 
   if (wants.length === 0 || problems.length) return { options: [], problems, partial: false };
   const { found, partial } = search(wants, domains, rules, quality, limits);
   if (found.length) return { options: found, problems: [], partial };
+  if (rules.requiredStarts.length) {
+    const relaxed = { ...rules, requiredStarts: [] };
+    if (search(wants, domains, relaxed, quality, { options: 1, ms: 200 }).found.length) {
+      return { options: [], partial, problems: [{ want: '', text: `These courses cannot include all your requested starts: ${rules.requiredStarts.map(clock).join(', ')}.`, fixes: [{ label: 'Allow other start times', rules: { requiredStarts: [] } }] }] };
+    }
+  }
   return { options: [], problems: diagnose(catalog, wants, domains, rules, quality, Date.now() + 700), partial };
 }
 

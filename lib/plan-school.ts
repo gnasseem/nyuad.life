@@ -10,7 +10,8 @@ export function schoolRows(catalog: Catalog, term: string, school: string): Cour
     const offering = catalog.byCode.get(row.code)?.find((entry) => entry.term === term);
     const numbers = new Set((offering?.sections ?? []).filter((section) => {
       const source = section.school ?? offering?.school ?? '';
-      if (school === 'Abu Dhabi') return section.location.startsWith('Abu Dhabi');
+      if (school === 'Abu Dhabi') return section.location.startsWith('Abu Dhabi') && !/-GH\s/.test(row.code);
+      if (school === 'Abu Dhabi graduate') return section.location.startsWith('Abu Dhabi') && /-GH\s/.test(row.code);
       if (school === 'New York') return isNewYorkLocation(section.location);
       if (school === 'NYU Shanghai') return section.location === 'Shanghai';
       if (school === 'CAS') return (isNewYorkLocation(section.location) && source === 'College of Arts and Science') || (!source && /-UA\s/.test(row.code) && section.location === 'NYU New York');
@@ -18,7 +19,8 @@ export function schoolRows(catalog: Catalog, term: string, school: string): Cour
       if (/\(Global\)$/.test(school)) return section.location === school;
       return source === school && isNewYorkLocation(section.location);
     }).map((section) => section.classNumber));
-    const sections = row.sections.filter((section) => numbers.has(section.classNumber));
+    // Cross-listed classes can be returned under several teaching schools; each physical section appears once.
+    const sections = [...new Map(row.sections.filter((section) => numbers.has(section.classNumber)).map((section) => [section.classNumber, section])).values()];
     return sections.length ? [{ ...row, sections, credits: offering?.sections.find((section) => numbers.has(section.classNumber) && section.units)?.units ?? row.credits }] : [];
   });
 }

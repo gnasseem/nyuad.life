@@ -5,6 +5,7 @@
  *
  *   npm run scrape:albert                       the newest academic year in Albert
  *   npm run scrape:albert -- --all               every school in Albert's selector
+ *   npm run scrape:albert -- --year 2025-2026 --study-away   the schools teaching at study-away sites
  *   npm run scrape:albert -- --year 2025-2026   another year Albert still lists
  *   npm run scrape:albert -- --school "College of Arts and Science"  another Albert school
  *
@@ -16,7 +17,7 @@
  * everything else in the file is kept, so an interrupted run loses nothing and past terms stay as a record of who
  * taught what.
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { chromium, type Page } from 'playwright';
 
@@ -24,6 +25,8 @@ const args = process.argv.slice(2);
 const YEAR = args.includes('--year') ? args[args.indexOf('--year') + 1] : undefined;
 const SCHOOL = args.includes('--school') ? args[args.indexOf('--school') + 1] ?? '' : 'NYU Abu Dhabi';
 const ALL_SCHOOLS = args.includes('--all');
+const STUDY_AWAY = args.includes('--study-away');
+const AWAY_SCHOOLS = new Set(['College of Arts and Science', 'Liberal Studies', 'NYU Abu Dhabi', 'Tisch School of the Arts', 'Gallatin School of Individualized Study', 'Steinhardt School of Culture, Education, and Human Development - Undergraduate']);
 
 const PROFILE_DIR = path.resolve('.albert-profile');
 const OUT_FILE = path.resolve('data/classes.jsonl');
@@ -188,7 +191,9 @@ function toCourses(raw: RawCourse[], scraped: string, school: string): Course[] 
   return raw.flatMap((course) => {
     // Special topics put the topic on a second line of the heading; each class repeats it as "Topic:".
     const firstLine = (course.heading.split('\n')[0] ?? '').replace(/\s+/g, ' ').trim();
-    const [, code = '', title = ''] = /^([A-Z]+-[A-Z]+ \S+)\s+(.*)$/.exec(firstLine) ?? [];
+    const [, code = '', heading = ''] = /^([A-Z]+-[A-Z]+ \S+)\s+(.*)$/.exec(firstLine) ?? [];
+    const title = heading.replace(/^(?:\|\s*[A-Z]+-[A-Z]+\s+\S+\s*)+/, '');
+    if (!code || !title) throw new Error(`Could not read the course heading: ${firstLine}`);
     const description = course.description.replace(/(?:less|more) description for .*$/s, '').replace(/\s+/g, ' ').trim();
     return course.terms.map((term) => ({
       school,
@@ -223,7 +228,8 @@ function save(courses: Course[]): void {
   const replaced = new Set(courses.map(key));
   const all = [...readCourses().filter((course) => !replaced.has(key(course))), ...courses];
   all.sort((a, b) => termOrder(a.term) - termOrder(b.term) || a.code.localeCompare(b.code));
-  writeFileSync(OUT_FILE, all.map((course) => JSON.stringify(course)).join('\n') + '\n');
+  writeFileSync(`${OUT_FILE}.tmp`, all.map((course) => JSON.stringify(course)).join('\n') + '\n');
+  renameSync(`${OUT_FILE}.tmp`, OUT_FILE);
 }
 
 /** Clicks or selects something on the Course Search and waits for Albert's answer to it. */
@@ -284,8 +290,8 @@ async function main(): Promise<void> {
     if (!year || !years.includes(year)) throw new Error(`Albert lists ${years.join(', ') || 'no academic years'}${YEAR ? `, not ${YEAR}` : ''}.`);
     await act(page, () => page.getByRole('link', { name: year, exact: true }).click());
     const schools = (await page.locator('select[id^="NYU_CLS_WRK2_DESCR254"] option').allInnerTexts()).map((entry) => entry.trim()).filter(Boolean);
-    const selected = ALL_SCHOOLS ? schools : schools.filter((entry) => entry.toLowerCase().includes(SCHOOL.toLowerCase()));
-    if (!ALL_SCHOOLS && selected.length !== 1) throw new Error(`Expected one school matching "${SCHOOL}"; found ${selected.length}. Available schools: ${schools.join(', ')}`);
+    const selected = ALL_SCHOOLS ? schools : STUDY_AWAY ? schools.filter((entry) => AWAY_SCHOOLS.has(entry)) : schools.filter((entry) => entry.toLowerCase().includes(SCHOOL.toLowerCase()));
+    if (!ALL_SCHOOLS && !STUDY_AWAY && selected.length !== 1) throw new Error(`Expected one school matching "${SCHOOL}"; found ${selected.length}. Available schools: ${schools.join(', ')}`);
     log(`Schools in Albert: ${schools.join(', ')}`);
     for (const school of selected) {
     await act(page, () => page.selectOption('select[id^="NYU_CLS_WRK2_DESCR254"]', { label: school }));
@@ -307,7 +313,7 @@ async function main(): Promise<void> {
         const courses = toCourses((await page.evaluate(EXTRACT)) as RawCourse[], scraped, school);
         const classes = courses.reduce((sum, course) => sum + course.sections.length, 0);
         const total = Number(/Total Class Count: (\d+)/.exec(header)?.[1] ?? classes);
-        if (classes !== total) log(`${code}: read ${classes} classes but Albert counts ${total}.`);
+        if (classes !== total) throw new Error(`${code}: read ${classes} classes but Albert counts ${total}; keeping the previous catalog instead of saving an incomplete subject.`);
         save(courses);
         read.push(...courses);
         log(`${code}: ${courses.length} courses, ${classes} classes (${index + 1}/${subjects.length})`);
@@ -315,7 +321,7 @@ async function main(): Promise<void> {
         log(`${code}: no results.`);
       }
       if (await page.locator('#NYU_CLS_DERIVED_BACK').count()) await act(page, () => page.click('#NYU_CLS_DERIVED_BACK'));
-      await sleep(ALL_SCHOOLS ? 500 : 1_500);
+      await sleep(ALL_SCHOOLS || STUDY_AWAY ? 500 : 1_500);
     }
     }
 

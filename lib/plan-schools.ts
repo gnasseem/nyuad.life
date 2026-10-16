@@ -13,6 +13,7 @@ export function planSchools(catalog: Catalog): PlanSchool[] {
     const school = section.school ?? offering.school ?? '';
     const location = section.location;
     if (location.startsWith('Abu Dhabi')) schools.set('Abu Dhabi', { id: 'Abu Dhabi', label: 'Abu Dhabi', group: 'Campus' });
+    if (location.startsWith('Abu Dhabi') && /-GH\s/.test(offering.code)) schools.set('Abu Dhabi graduate', { id: 'Abu Dhabi graduate', label: 'Abu Dhabi · graduate classes', group: 'School' });
     if (isNewYorkLocation(location)) schools.set('New York', { id: 'New York', label: 'New York · all schools', group: 'Campus' });
     if (location === 'Shanghai') schools.set('NYU Shanghai', { id: 'NYU Shanghai', label: 'NYU Shanghai', group: 'Campus' });
     if (school === 'College of Arts and Science' || (!school && /-UA\s/.test(offering.code) && /New York/.test(location))) {

@@ -15,8 +15,9 @@ import { screenAsk } from '../lib/moderation.ts';
 import { providersFromEnv, siteJson } from '../lib/providers.ts';
 import { schoolRows } from '../lib/plan-school.ts';
 import { isPlanSchool, planSchools } from '../lib/plan-schools.ts';
-import { DAYS, DEFAULT_RULES, namesPerson, sessionHalf, type Rules } from '../lib/schedule.ts';
-import { collapseWhitespace, extractCourseCodes, tokenize, truncate } from '../lib/text.ts';
+import { courseWords, matchingCourses, namedCourseList, requestedTimes, simpleRuleRequest, timeReply } from '../lib/plan-request.ts';
+import { clock, DAYS, DEFAULT_RULES, namesPerson, normalizeRules, sessionHalf, solve, type Rules } from '../lib/schedule.ts';
+import { collapseWhitespace, extractCourseCodes, truncate } from '../lib/text.ts';
 
 export const config = { maxDuration: 30 };
 
@@ -58,6 +59,8 @@ interface Read {
   missing?: unknown;
   earliest?: unknown;
   latest?: unknown;
+  requiredStarts?: unknown;
+  avoidStarts?: unknown;
   daysOff?: unknown;
   maxPerDay?: unknown;
   noBackToBack?: unknown;
@@ -76,6 +79,8 @@ const SCHEMA = {
     missing: { type: 'ARRAY', items: { type: 'STRING' } },
     earliest: { type: 'STRING', nullable: true },
     latest: { type: 'STRING', nullable: true },
+    requiredStarts: { type: 'ARRAY', items: { type: 'STRING' } },
+    avoidStarts: { type: 'ARRAY', items: { type: 'STRING' } },
     daysOff: { type: 'ARRAY', items: { type: 'STRING', enum: DAYS } },
     maxPerDay: { type: 'INTEGER' },
     noBackToBack: { type: 'BOOLEAN' },
@@ -85,7 +90,7 @@ const SCHEMA = {
     prefer: { type: 'ARRAY', items: { type: 'STRING' } },
     avoid: { type: 'ARRAY', items: { type: 'STRING' } },
   },
-  required: ['reply', 'wants', 'missing', 'earliest', 'latest', 'daysOff', 'maxPerDay', 'noBackToBack', 'shape', 'waitlisted', 'bestRated', 'prefer', 'avoid'],
+  required: ['reply', 'wants', 'missing', 'earliest', 'latest', 'requiredStarts', 'avoidStarts', 'daysOff', 'maxPerDay', 'noBackToBack', 'shape', 'waitlisted', 'bestRated', 'prefer', 'avoid'],
 };
 
 const SYSTEM = [
@@ -93,10 +98,11 @@ const SYSTEM = [
   'reply: answer conversationally in one or two short sentences. Explain the course options for review or answer a follow-up about the current plan. Ask one clear question if the request is ambiguous, preserving the plan until clarified. Do not claim a schedule fits: the solver checks conflicts. Do not invent reviews, requirements, grades, professor quality or courses. A major and year alone cannot establish which degree requirements a student has completed; ask what remains before claiming a course fulfills their degree. Use only the supplied schedule and conversation.',
   'Return the whole plan after the request, starting from the current plan when there is one: keep what the student did not ask to change.',
   'wants: each course or slot the student needs, in their order. label: a few words for it as the student would say it ("Calculus", "an Arts Core"). codes: the course codes from the list that could fill it: one for a named course; several plausible options for "one of" requests. For an elective, favor courses above introductory level when the catalog numbering makes that clear. Never claim an option meets a degree requirement without the student supplying that requirement. At most 30 codes per slot.',
-  'Match the way students talk: "calc" = Calculus, "intro to CS", "data structures", "lin alg", a number without its subject, a professor\'s name for the course they teach. Never use a code that is not in the list.',
+  'Match the way students talk: CSO = Computer Systems Organization; Algo = Algorithms; French1 = Elementary French I (including Elem French I); Probs and Stats = Probability and Statistics. Also match calc, intro to CS, data structures, lin alg, a number without its subject, a professor\'s name for the course they teach. Never use a code that is not in the list. A list of named courses is enough: select them directly, without asking the student to restate it.',
   'sessions: for each want, [] for any length, ["71", "72"] for any seven-week course, ["71"] for the first seven weeks, or ["72"] for the second seven weeks. 71/A71 and 72/A72 are both seven-week sessions. Only choose courses offered in the requested session; do not mistake these session numbers for course codes. Preserve session choices in the current plan unless asked to change them.',
   'missing: anything the student asked for that you could not identify in the relevant course list, in a few words each. The supplied list may omit less relevant courses, so do not claim that a missing course is unavailable in Albert.',
-  'earliest: "HH:MM" when they want no class starting before a time ("no 8:30s" = "09:00", "nothing before 10" = "10:00"), else null. latest: "HH:MM" when they want to be done by a time, else null.',
+  'earliest: "HH:MM" when they want no class starting before a time ("nothing before 10" = "10:00"), else null. latest: "HH:MM" when they want to be done by a time, else null.',
+  'requiredStarts: exact class start times requested, HH:MM ("I want an 8.30 am class and a 5.00pm class" = ["08:30", "17:00"]). This requires both starts somewhere in the week, not every class at those times. avoidStarts: exact starts excluded ("no 8:30 or 5pm classes" = ["08:30", "17:00"]). Do not replace exact starts with earliest/latest. Preserve existing time choices unless asked to change them.',
   'daysOff: weekdays they want free. maxPerDay: the most classes they want on one day ("no more than two classes a day" = 2), else 0.',
   'noBackToBack: true when they want a break between classes ("no back-to-back classes", "time to eat between classes"), else false. shape: "compact" for fewer days on campus or classes packed together, "spread" for lighter days, else "any". waitlisted: true when waitlisted or closed sections are fine.',
   'bestRated: true to rank plans by how students rate the professors (the default, and for "good professors", "the best profs"); false only when they say ratings do not matter to them.',
@@ -105,8 +111,7 @@ const SYSTEM = [
 ].join('\n');
 
 export default route(['POST'], async (req, res) => {
-  rateLimit(req, 10, 4, 'plan');
-  // Reading a request costs a model call: for students who signed up.
+  rateLimit(req, 60, 40, 'plan');
   await requireMember(req);
   const body = await readJson<Body>(req);
   const catalog = loadCatalog();
@@ -121,10 +126,30 @@ export default route(['POST'], async (req, res) => {
   if (screened) throw new ApiError(422, screened.reason === 'self_harm' ? screened.reply : 'Describe the courses and times you want.', `blocked_${screened.reason}`);
   const gemini = geminiConfig();
   const backups = providersFromEnv();
-  if (!gemini && backups.length === 0) throw new ApiError(503, 'Planning from a description is off on this server. Add courses from Reviews instead.', 'no_model');
 
   const rows = schoolRows(catalog, term, school).filter((row) => row.sections.some((section) => section.status !== 'cancelled'));
   if (!rows.length) throw new ApiError(404, `No ${planSchools(catalog).find((entry) => entry.id === school)?.label} classes are in the catalog for ${term}.`, 'no_school_courses');
+  const existing = cleanPlan({ wants: body.current?.wants as Read['wants'], ...(body.current?.rules ?? {}) as Read }, rows);
+  const named = namedCourseList(rows, text);
+  const times = simpleRuleRequest(text, existing.rules);
+  if (named || times) {
+    if (named) for (const want of named.wants) {
+      const previous = existing.wants.find((entry) => entry.codes.some((code) => want.codes.includes(code)));
+      if (previous) want.sessions = previous.sessions;
+    }
+    const wants = named ? [...existing.wants.filter((want) => !named.wants.some((entry) => entry.codes.some((code) => want.codes.includes(code)))), ...named.wants] : existing.wants;
+    if (wants.length > MAX_WANTS) throw new ApiError(400, 'A plan can have up to eight courses. Remove a course before adding more.', 'too_many_courses');
+    const rules = times ?? existing.rules;
+    const missing = (named?.missing ?? []).map((label) => {
+      const elsewhere = catalog.terms.filter((entry) => entry.name !== term && matchingCourses(schoolRows(catalog, entry.name, school), label).length).map((entry) => entry.name);
+      return `${label} is not listed at this site for ${term}.${elsewhere.length ? ` Try ${elsewhere.slice(0, 2).join(' or ')}.` : ' Try another name or course code.'}`;
+    });
+    recordEvent('plan');
+    sendJson(res, 200, { wants, rules, missing, reply: named ? `Added ${named.wants.map((want) => rows.find((row) => row.code === want.codes[0])!.title).join(', ')}.` : timeReply(rules) });
+    return;
+  }
+  if (!gemini && backups.length === 0) throw new ApiError(503, 'The assistant is unavailable. Search and add courses below, or set your times directly.', 'no_model');
+  rateLimit(req, 10, 4, 'plan-model');
   const student = [collapseWhitespace(String(body.major ?? '')).slice(0, 60), collapseWhitespace(String(body.year ?? '')).slice(0, 20)].filter(Boolean).join(', ');
   const current = currentPlan(body.current, rows);
   const history = Array.isArray(body.history) ? body.history.filter((entry) => entry && (entry.role === 'user' || entry.role === 'assistant') && typeof entry.text === 'string').slice(-8).map((entry) => `${entry.role}: ${collapseWhitespace(entry.text).slice(0, 1200)}`).join('\n') : '';
@@ -148,7 +173,11 @@ export default route(['POST'], async (req, res) => {
     throw new ApiError(503, 'Could not read that right now. Try again in a moment.', 'busy');
   }
   recordEvent('plan');
-  sendJson(res, 200, cleanPlan(read, rows));
+  const result = cleanPlan({ ...existing.rules, ...read }, rows);
+  const timesPatch = requestedTimes(text, existing.rules);
+  const bounds = timesPatch.requiredStarts || timesPatch.avoidStarts ? { earliest: existing.rules.earliest, latest: existing.rules.latest } : {};
+  result.rules = normalizeRules({ ...result.rules, ...bounds, ...timesPatch });
+  sendJson(res, 200, result);
 });
 
 function listLine(row: CourseRow): string {
@@ -160,11 +189,11 @@ function listLine(row: CourseRow): string {
 
 function relevantRows(rows: CourseRow[], request: string, current: string): CourseRow[] {
   if (rows.length <= 300) return rows;
-  const words = [...new Set(tokenize(request).filter((word) => word.length > 2 && !/^(course|class|elective|credit|major|year|plan|week|before|after|friday|monday|tuesday|wednesday|thursday|saturday|sunday)$/.test(word)))];
+  const words = [...new Set(courseWords(request).filter((word) => word.length > 2 && !/^(course|class|elective|credit|major|year|plan|week|before|after|friday|monday|tuesday|wednesday|thursday|saturday|sunday)$/.test(word)))];
   const hinted = new Set(SUBJECT_HINTS.filter(([pattern]) => pattern.test(request)).flatMap(([, subjects]) => subjects));
   const used = new Set((current.match(/\b[A-Z]{2,8}-[A-Z]{2,3}\s+\d{1,4}[A-Z]{0,2}\b/g) ?? []));
   const ranked = rows.map((row) => {
-    const title = row.title.toLowerCase();
+    const title = courseWords(row.title).join(' ');
     const description = row.description.toLowerCase();
     const instructors = row.sections.flatMap((section) => section.instructors).join(' ').toLowerCase();
     const score = (used.has(row.code) ? 100 : 0) + (hinted.has(row.subject) ? 20 : 0) + words.reduce((sum, word) => sum + (title.includes(word) ? 5 : 0) + (instructors.includes(word) ? 4 : 0) + (description.includes(word) ? 1 : 0), 0);
@@ -187,7 +216,10 @@ function currentPlan(current: Body['current'], rows: CourseRow[]): string {
   const rules = cleanRules((current?.rules ?? {}) as Read);
   const ruleText = JSON.stringify(rules);
   if (!lines.length && ruleText === JSON.stringify(DEFAULT_RULES)) return '';
-  return `${lines.join('\n') || '(no courses yet)'}\nRules: ${ruleText}`;
+  const picked = wants.slice(0, MAX_WANTS).map((want, index) => ({ id: String(index), label: String(want.label ?? ''), codes: Array.isArray(want.codes) ? want.codes.map(String).filter((code) => known.has(code)) : [], sessions: Array.isArray(want.sessions) ? want.sessions.map(String).map(sessionHalf).filter((half): half is '71' | '72' => !!half) : [] }));
+  const solved = picked.length ? solve(new Map(rows.map((row) => [row.code, row])), picked, rules, undefined, { options: 1, ms: 150 }) : null;
+  const schedule = solved?.options[0]?.choices.map((choice) => `${choice.code}: ${choice.sections.map((section) => `${section.component} ${section.section}, ${section.instructors.join(', ')}, ${section.meetings.map((meeting) => `${meeting.days.join('/')} ${clock(meeting.start)}–${clock(meeting.end)}`).join('; ')}`).join('; ')}`).join('\n');
+  return `${lines.join('\n') || '(no courses yet)'}\nRules: ${ruleText}${schedule ? `\nA schedule that fits (without professor ratings):\n${schedule}` : solved?.problems.length ? `\nSchedule conflicts: ${solved.problems.map((problem) => problem.text).join(' ')}` : ''}`;
 }
 
 const TIME = /^([01]?\d|2[0-3]):[0-5]\d$/;
@@ -202,6 +234,8 @@ function cleanRules(read: Read): Rules {
   return {
     earliest: time(read.earliest),
     latest: time(read.latest),
+    requiredStarts: strings(read.requiredStarts, 12).map(time).filter(Boolean),
+    avoidStarts: strings(read.avoidStarts, 12).map(time).filter(Boolean),
     daysOff: strings(read.daysOff, 7).filter((day): day is (typeof DAYS)[number] => (DAYS as string[]).includes(day)),
     maxPerDay: Number.isInteger(Number(read.maxPerDay)) && Number(read.maxPerDay) >= 1 && Number(read.maxPerDay) <= 6 ? Number(read.maxPerDay) : 0,
     noBackToBack: read.noBackToBack === true,

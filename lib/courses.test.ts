@@ -52,6 +52,24 @@ describe('seat status', () => {
 });
 
 describe('course rows', () => {
+  it('does not duplicate a class returned by two teaching schools', () => {
+    const cas = offering('Fall 2026', 'MATH-UA 101', 'Calculus I', ['Lee, Ana']);
+    cas.school = 'College of Arts and Science';
+    cas.sections[0]!.location = 'Washington Square';
+    const crossListed = { ...cas, school: 'Liberal Studies', sections: cas.sections.map((section) => ({ ...section, school: 'Liberal Studies' })) };
+    expect(schoolRows(buildCatalog([cas, crossListed]), 'Fall 2026', 'New York')[0]!.sections).toHaveLength(1);
+  });
+
+  it('keeps graduate-only Saturday classes out of the undergraduate Abu Dhabi planner', () => {
+    const undergrad = offering('Fall 2026', 'ECON-UH 1010', 'Economics', ['Lee, Ana']);
+    const graduate = offering('Fall 2026', 'ECON-GH 5100', 'Graduate Economics', ['Lee, Ana']);
+    graduate.sections[0]!.meetings[0]!.days = ['Sat'];
+    const catalog = buildCatalog([undergrad, graduate]);
+    expect(schoolRows(catalog, 'Fall 2026', 'Abu Dhabi').map((row) => row.code)).toEqual(['ECON-UH 1010']);
+    expect(schoolRows(catalog, 'Fall 2026', 'Abu Dhabi graduate').map((row) => row.code)).toEqual(['ECON-GH 5100']);
+    expect(planSchools(catalog)).toContainEqual({ id: 'Abu Dhabi graduate', label: 'Abu Dhabi · graduate classes', group: 'School' });
+  });
+
   it('keeps only sections taught at the selected site', () => {
     const mixed = offering('Fall 2026', 'CS-UH 1052G', 'Algorithms', ['Lee, Ana']);
     mixed.sections.push({ ...mixed.sections[0]!, classNumber: 'paris-1', location: 'NYU Paris (Global)', instructors: ['Martin, Eve'] });

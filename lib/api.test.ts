@@ -557,14 +557,29 @@ describe('api', () => {
     expect(plan.wants).toEqual([{ label: '', codes: ['MATH-UH 1012'], sessions: [] }]);
     expect(plan.reply).toBe('I added Calculus and kept your time preferences.');
     expect(plan.missing).toEqual(['an Arts Core', 'Nobody Here is not teaching this term']);
-    expect(plan.rules).toEqual({ earliest: '09:00', latest: '', daysOff: ['Fri', 'Sat'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Rana Dania'], avoid: [] });
+    expect(plan.rules).toEqual({ earliest: '09:00', latest: '', requiredStarts: [], avoidStarts: [], daysOff: ['Fri', 'Sat'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Rana Dania'], avoid: [] });
     const call = geminiCalls.at(-1)!;
     expect(call.prompt).toContain('MATH-UH 1012 · Calculus');
     expect(call.prompt).toContain('Current plan:\n- Calculus: MATH-UH 1012 (sessions 71, 72)');
     expect(call.prompt).toContain('A seven-week course can be 71 or 72');
     expect(call.body.systemInstruction.parts[0].text).toContain('71/A71 and 72/A72 are both seven-week sessions');
+    const exact = await post({ term: 'Fall 2026', text: 'calc with Dania, include an 8:30am class and a 5pm class' });
+    expect(await exact.json()).toMatchObject({ rules: { earliest: '', latest: '', requiredStarts: ['08:30', '17:00'], avoidStarts: [] } });
     expect((await post({ term: 'Fall 1999', text: 'calc' })).status).toBe(404);
     expect((await post({ term: 'Fall 2026', text: ' ' })).status).toBe(400);
+  });
+
+  it('handles named courses and exact times without a model call', async () => {
+    const post = (body: Record<string, unknown>) => getJson(`${apiUrl}/api/plan`, { method: 'POST', headers, body: JSON.stringify({ term: 'Fall 2026', ...body }) });
+    const calls = geminiCalls.length;
+    const named = await post({ text: 'calc' });
+    expect(named.wants).toEqual([{ label: '', codes: ['MATH-UH 1012'], sessions: [] }]);
+    const timed = await post({ text: 'I want on 8.30 am class and 5.00pm class', current: { wants: named.wants, rules: named.rules } });
+    expect(timed.wants).toEqual(named.wants);
+    expect(timed.rules.requiredStarts).toEqual(['08:30', '17:00']);
+    const excluded = await post({ text: 'no 8:30am or 5pm classes', current: { wants: named.wants, rules: timed.rules } });
+    expect(excluded.rules).toMatchObject({ requiredStarts: [], avoidStarts: ['08:30', '17:00'] });
+    expect(geminiCalls.length).toBe(calls);
   });
 
   it('validates questions', async () => {

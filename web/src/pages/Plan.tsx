@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { matchingCourses } from '../../../lib/plan-request.ts';
 import { clock, DAYS, DAY_NAMES, DEFAULT_RULES, highlights, lanes, minutes, normalizeRules, PRIMARY, sectionFits, sessionHalf, solve, WEEKDAYS, type Choice, type Fix, type Option, type Quality, type Rules, type SolverCourse, type Want } from '../../../lib/schedule.ts';
 import { api, ApiError, type CourseRating, type CourseRow, type PlanSchool, type ProfRating, type Term } from '../api';
 import { Segmented } from '../components/Segmented';
@@ -16,7 +17,7 @@ const SHAPES: Array<{ id: Rules['shape']; label: string }> = [
   { id: 'spread', label: 'Lighter days' },
 ];
 const SHAPE_HELP: Record<Rules['shape'], string> = {
-  any: 'No preference: fewer gaps and early starts come first.',
+  any: 'Balances gaps and class times.',
   compact: 'Packs classes into as few days on campus as it can, even with gaps.',
   spread: 'Spreads classes over the week so no day is long.',
 };
@@ -29,10 +30,19 @@ const LOAD = { usual: 16, low: 12, high: 18 };
 
 interface SiteTimes { starts: string[]; ends: string[]; from: number; to: number; days: string[] }
 
-function siteTimes(courses: CourseRow[]): SiteTimes {
+function siteTimes(courses: CourseRow[], primary = false): SiteTimes {
   const meetings = courses.flatMap((course) => course.sections.filter((section) => section.status !== 'cancelled').flatMap((section) => section.meetings.filter((meeting) => meeting.days.length && meeting.start && meeting.end)));
-  const starts = [...new Set(meetings.map((meeting) => meeting.start).filter(Boolean))].sort();
-  const ends = [...new Set(meetings.map((meeting) => meeting.end).filter(Boolean))].sort();
+  const lectures = primary ? courses.flatMap((course) => course.sections.filter((section) => section.status !== 'cancelled' && PRIMARY.includes(section.component)).flatMap((section) => section.meetings.filter((meeting) => meeting.days.length && meeting.start && meeting.end))) : [];
+  const controls = lectures.length ? lectures : meetings;
+  // Start with the site's recurring lecture slots; once courses are added, show all their actual meeting times.
+  const slots = (field: 'start' | 'end') => {
+    const counts = new Map<string, number>();
+    for (const meeting of controls) counts.set(meeting[field], (counts.get(meeting[field]) ?? 0) + 1);
+    const regular = primary ? [...counts].filter(([, count]) => count >= 5).map(([time]) => time) : [];
+    return (regular.length ? regular : [...counts.keys()]).filter(Boolean).sort();
+  };
+  const starts = slots('start');
+  const ends = slots('end');
   const from = starts.length ? Math.floor(minutes(starts[0]!) / 60) * 60 : 8 * 60;
   const to = ends.length ? Math.ceil(minutes(ends.at(-1)!) / 60) * 60 : 20 * 60;
   const taught = new Set(meetings.flatMap((meeting) => meeting.days));
@@ -82,8 +92,7 @@ export function PlanPage() {
   const [reading, setReading] = useState(false);
   const [viewing, setViewing] = useState<{ key: string; index: number } | null>(null);
   const [showChat, setShowChat] = useState(false);
-  const [draft, setDraft] = useState<{ wants: PlanWant[]; rules: Rules; missing: string[]; selected: Record<string, string[]> } | null>(null);
-  const mainRef = useRef<HTMLDivElement>(null);
+  const [courseQuery, setCourseQuery] = useState('');
   const requestRef = useRef<HTMLTextAreaElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
   const requestId = useRef(0);
@@ -104,7 +113,6 @@ export function PlanPage() {
   useEffect(() => {
     requestId.current++;
     setReading(false);
-    setDraft(null);
     return () => { requestId.current++; };
   }, [saved.term, saved.school]);
   const term = saved.term && regularTerms(terms ?? []).some((entry) => entry.name === saved.term) ? saved.term : planTerm(terms ?? []);
@@ -168,7 +176,13 @@ export function PlanPage() {
 
   const catalog = useMemo(() => new Map((rows?.courses ?? []).map((row) => [row.code, row as SolverCourse])), [rows]);
   const titles = useMemo(() => new Map((rows?.courses ?? []).map((row) => [row.code, row.title])), [rows]);
-  const timing = useMemo(() => siteTimes(rows?.courses ?? []), [rows]);
+  const courseMatches = useMemo(() => matchingCourses(rows?.courses ?? [], courseQuery, true), [rows, courseQuery]);
+  const timing = useMemo(() => {
+    const wanted = new Set(saved.wants.flatMap((want) => want.codes));
+    const courses = rows?.courses ?? [];
+    const selected = courses.filter((course) => wanted.has(course.code));
+    return siteTimes(selected.length ? selected : courses, saved.school === 'Abu Dhabi' && selected.length === 0);
+  }, [rows, saved.wants, saved.school]);
 
   // Who could teach in a plan: the professors of every section the rules allow, lecturers of named courses first.
   const candidates = useMemo(() => {
@@ -228,8 +242,8 @@ export function PlanPage() {
     return { low, high };
   }, [option, saved.wants, catalog]);
 
-  const read = async () => {
-    const request = text.trim();
+  const read = async (value = text) => {
+    const request = value.trim();
     if (!request || reading || !term || !saved.school || !rows?.courses.length) return;
     const id = ++requestId.current;
     const conversation: PlanMessage[] = [...chat, { role: 'user' as const, text: request }].slice(-23);
@@ -237,8 +251,7 @@ export function PlanPage() {
     setText('');
     setReading(true);
     try {
-      const currentWants = draft ? draft.wants.map((want) => ({ ...want, codes: draft.selected[want.id] ?? want.codes })) : saved.wants;
-      const plan = await api.plan.read({ term, school: saved.school, text: request, history: chat.slice(-8), current: { wants: currentWants.map(({ label, codes, sessions }) => ({ label, codes, sessions })), rules: draft?.rules ?? saved.rules }, major: profile?.major, year: profile?.year });
+      const plan = await api.plan.read({ term, school: saved.school, text: request, history: chat.slice(-8), current: { wants: saved.wants.map(({ label, codes, sessions }) => ({ label, codes, sessions })), rules: saved.rules }, major: profile?.major, year: profile?.year });
       if (requestId.current !== id) return;
       // A reply with no courses at all is a misreading, not a request to empty the plan ("Start over" does that).
       const wants = plan.wants.length || saved.wants.length === 0 ? plan.wants.map((want) => ({ id: uid(), label: want.label, codes: want.codes, sessions: want.sessions })) : saved.wants;
@@ -253,11 +266,12 @@ export function PlanPage() {
         ...plan.missing,
       ].filter(Boolean).join(' ');
       const reply = plan.reply ? [plan.reply, ...plan.missing.filter((note) => !plan.reply!.includes(note))].join(' ') : summary;
-      update({ chat: [...conversation, { role: 'assistant', text: reply }] });
-      if (wants.length) setDraft({ wants, rules, missing: plan.missing, selected: Object.fromEntries(wants.map((want) => [want.id, want.codes])) });
-      else update({ rules });
+      update({ wants, rules, chat: [...conversation, { role: 'assistant', text: reply }] });
     } catch (err) {
-      if (requestId.current === id) update({ chat: [...conversation, { role: 'assistant', text: err instanceof ApiError || err instanceof Error ? err.message : 'Could not read that. Try again.' }] });
+      if (requestId.current === id) {
+        setText((current) => current || request);
+        update({ chat: [...conversation, { role: 'assistant', text: err instanceof ApiError || err instanceof Error ? err.message : 'Could not read that. Try again.' }] });
+      }
     } finally {
       if (requestId.current === id) setReading(false);
     }
@@ -265,15 +279,7 @@ export function PlanPage() {
 
   const clear = () => {
     update({ wants: [], rules: DEFAULT_RULES, chat: [] });
-    setDraft(null);
     setShowChat(false);
-  };
-
-  const buildDraft = () => {
-    if (!draft || draft.wants.some((want) => !draft.selected[want.id]?.length)) return;
-    update({ wants: draft.wants.map((want) => ({ ...want, codes: draft.selected[want.id]! })), rules: draft.rules, chat: [...chat, { role: 'assistant' as const, text: 'Your week is ready. You can change the course choices or any time preference below.' }].slice(-24) });
-    setDraft(null);
-    mainRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const rated = candidates.filter((name) => profRatings.get(name)).length;
@@ -281,7 +287,7 @@ export function PlanPage() {
 
   return (
     <div className="page plan-page">
-      <Sign title="Plan" ar="الجدول" sub="Describe your goals, compare real classes, then build a week that fits.">
+      <Sign title="Plan" ar="الجدول" sub="Add your courses and see the weeks that fit. Change anything in plain language.">
         {saved.school && terms && terms.length > 0 && (
           <label className="term-pick">
             <span className="sr-only">Semester</span>
@@ -316,12 +322,6 @@ export function PlanPage() {
       {saved.school && rows?.courses.length === 0 && <div className="alert">No classes for this school or site are in the catalog for {term}. Try another semester.</div>}
       {saved.school && rows?.courses.length ? <>
 
-      <nav className="plan-steps" aria-label="Planning steps">
-        <span className="active"><b>1</b> Tell us what you need</span>
-        <span className={draft ? 'active' : ''}><b>2</b> Compare courses</span>
-        <span className={saved.wants.length ? 'active' : ''}><b>3</b> Build your week</span>
-      </nav>
-
       <section className="assistant" aria-label="Plan assistant">
         <div className="composer assistant-bar">
           <span className="assistant-mark" aria-hidden="true">
@@ -341,7 +341,7 @@ export function PlanPage() {
                 void read();
               }
             }}
-            placeholder={saved.wants.length ? 'Change anything: "no classes after 4"' : 'Calc, intro to CS, Fridays off…'}
+            placeholder={saved.wants.length ? 'Change anything: "no 8:30am or 5pm classes"' : 'CSO, Algo, French1, Probs and Stats…'}
             aria-label="Tell the plan assistant what you need"
             enterKeyHint="send"
           />
@@ -368,10 +368,8 @@ export function PlanPage() {
               <button
                 key={idea}
                 type="button"
-                onClick={() => {
-                  setText(idea);
-                  requestRef.current?.focus();
-                }}
+                disabled={reading}
+                onClick={() => void read(idea)}
               >
                 {idea}
               </button>
@@ -389,31 +387,8 @@ export function PlanPage() {
         )}
       </section>
 
-      {draft && (
-        <section className="plan-review" aria-labelledby="plan-review-title">
-          <div className="plan-review-head">
-            <div><span className="eyebrow">Step 2 · Compare courses</span><h2 id="plan-review-title">Choose what can fill each slot</h2><p>These options are offered in {term} at {schools.find((school) => school.id === saved.school)?.label ?? saved.school}. Summaries come from Albert. Keep several checked and the planner will find the best fit. Check Degree Progress to confirm what counts toward your degree.</p></div>
-            <button type="button" className="link-btn" onClick={() => setDraft(null)}>Dismiss</button>
-          </div>
-          {draft.wants.map((want, index) => <div className="plan-review-slot" key={want.id}>
-            <h3>{want.label || rows.courses.find((course) => course.code === want.codes[0])?.title || `Course ${index + 1}`}</h3>
-            <div className="plan-review-options">{want.codes.map((code) => {
-              const course = rows.courses.find((entry) => entry.code === code);
-              if (!course) return null;
-              return <label key={code} className="plan-review-course"><input type="checkbox" checked={draft.selected[want.id]?.includes(code) ?? false} onChange={() => setDraft((current) => {
-                if (!current) return null;
-                const selected = current.selected[want.id] ?? [];
-                return { ...current, selected: { ...current.selected, [want.id]: selected.includes(code) ? selected.filter((item) => item !== code) : want.codes.filter((item) => selected.includes(item) || item === code) } };
-              })} /><span><b>{course.code} · {course.title}</b><small>{course.credits ? `${course.credits} credits · ` : ''}{course.sections.filter((section) => section.status === 'open').length} open sections</small><span>{course.description || 'Albert has no description for this course.'}</span></span></label>;
-            })}</div>
-          </div>)}
-          {draft.missing.length > 0 && <p className="plan-review-missing">Needs clarification: {draft.missing.join(', ')}.</p>}
-          <button type="button" className="btn primary" onClick={buildDraft} disabled={draft.wants.some((want) => !draft.selected[want.id]?.length)}>Build my week <IconArrow /></button>
-        </section>
-      )}
-
-      {!draft && <div className={`plan${option ? ' has-plan' : ''}`}>
-        <fieldset className="plan-side" disabled={reading || !!draft}>
+      <div className={`plan${option ? ' has-plan' : ''}`}>
+        <fieldset className="plan-side" disabled={reading}>
           <section className="plan-block" aria-labelledby="plan-courses">
             <div className="plan-block-head">
               <h2 id="plan-courses">Courses</h2>
@@ -422,18 +397,28 @@ export function PlanPage() {
             {saved.wants.length > 0 ? (
               <div className="wants">
                 {saved.wants.map((want, i) => (
-                  <WantRow key={want.id} want={want} color={i} titles={titles} problem={result?.problems.find((problem) => problem.want === want.id)?.text} onRemove={() => removeWant(want.id)} />
+                  <WantRow key={want.id} want={want} color={i} titles={titles} problem={result?.problems.find((problem) => problem.want === want.id)?.text} onRemove={() => removeWant(want.id)} onChoose={(code) => update({ wants: saved.wants.map((entry) => entry.id === want.id ? { ...entry, label: '', codes: [code] } : entry) })} />
                 ))}
               </div>
             ) : (
               <p className="plan-empty-note">
-                Tell the assistant what you need, or use <b>Add to a plan</b> on any course in{' '}
-                <a className="link" href="/courses" onClick={onLinkClick}>
-                  Reviews
-                </a>
-                .
+                Search below to add a course, or type your course list above.
               </p>
             )}
+            <label className="wf-field" htmlFor="plan-course-search">
+              <span>Add a course</span>
+              <input id="plan-course-search" className="input" value={courseQuery} placeholder="Course name, code or CSO…" onChange={(event) => setCourseQuery(event.target.value)} type="search" autoComplete="off" />
+            </label>
+            {courseQuery.trim() && <div className="plan-course-results" aria-label="Matching courses">
+              {courseMatches.slice(0, 8).map((course) => {
+                const added = saved.wants.some((want) => want.codes.length === 1 && want.codes[0] === course.code);
+                return <button key={course.code} type="button" disabled={added || saved.wants.length >= 8} onClick={() => {
+                  update({ wants: [...saved.wants, { id: uid(), label: '', codes: [course.code] }] });
+                  setCourseQuery('');
+                }}><span><b>{course.title}</b><small>{course.code} · {course.credits} credits</small></span>{added ? <IconCheck /> : <IconArrow />}</button>;
+              })}
+              {!courseMatches.length && <p className="plan-empty-note">No matching course in {term} at this site. Try another name or semester.</p>}
+            </div>}
             {(saved.rules.prefer.length > 0 || saved.rules.avoid.length > 0) && (
               <div className="chips plan-people" aria-label="Professors you asked for">
                 {saved.rules.prefer.map((name) => (
@@ -453,9 +438,9 @@ export function PlanPage() {
           <WeekFilter rules={saved.rules} timing={timing} onChange={setRules} ratings={saved.rules.bestRated && candidates.length > 0 ? (unread > 0 ? `Reading about ${unread} more professors…` : rated ? `${rated} of ${candidates.length} professors rated.` : 'No professor rated yet.') : 'From what students wrote about them.'} />
         </fieldset>
 
-        <div className="plan-main" ref={mainRef}>
+        <div className="plan-main">
           {!rows && !error && <div className="skeleton" style={{ height: 420 }} />}
-          {rows && saved.wants.length === 0 && <WeekGrid option={null} timing={timing} daysOff={saved.rules.daysOff} empty="Compare courses, then build your week." />}
+          {rows && saved.wants.length === 0 && <WeekGrid option={null} timing={timing} daysOff={saved.rules.daysOff} empty="Add courses to see your week." />}
           {result && result.problems.length > 0 && (
             <>
               <div className="alert warn plan-problems" role="status">
@@ -507,19 +492,21 @@ export function PlanPage() {
             </>
           )}
         </div>
-      </div>}
+      </div>
       </> : null}
     </div>
   );
 }
 
-const IDEAS = ['Calc, intro to CS and an Arts Core', 'Nothing before 10, Fridays off', 'At most two classes a day', 'No back-to-back classes'];
+const IDEAS = ['Nothing before 10, Fridays off', 'No 8:30am or 5pm classes', 'At most two classes a day'];
 
 /** The week's rules in a line, for the folded preferences. */
 function rulesSummary(rules: Rules): string {
   return [
-    rules.earliest ? `After ${clock(rules.earliest)}` : '',
+    rules.earliest ? `From ${clock(rules.earliest)}` : '',
     rules.latest ? `done by ${clock(rules.latest)}` : '',
+    rules.requiredStarts.length ? `include ${rules.requiredStarts.map(clock).join(' and ')} starts` : '',
+    rules.avoidStarts.length ? `no ${rules.avoidStarts.map(clock).join(' or ')} starts` : '',
     rules.daysOff.length ? `${rules.daysOff.join(', ')} off` : '',
     rules.maxPerDay ? `max ${rules.maxPerDay} a day` : '',
     rules.shape === 'compact' ? 'fewer days' : rules.shape === 'spread' ? 'lighter days' : '',
@@ -626,7 +613,7 @@ function WeekFilter({ rules, timing, onChange, ratings }: { rules: Rules; timing
   const start = rules.earliest ? minutes(rules.earliest) : from;
   const end = rules.latest ? minutes(rules.latest) : to;
   const share = (time: number) => `${((Math.min(to, Math.max(from, time)) - from) / (to - from)) * 100}%`;
-  const changed = rules.earliest || rules.latest || rules.daysOff.length || rules.maxPerDay || rules.shape !== 'any' || rules.noBackToBack || rules.waitlisted || !rules.bestRated;
+  const changed = rules.earliest || rules.latest || rules.requiredStarts.length || rules.avoidStarts.length || rules.daysOff.length || rules.maxPerDay || rules.shape !== 'any' || rules.noBackToBack || rules.waitlisted || !rules.bestRated;
   const summary = rulesSummary(rules);
   return (
     <section className="plan-block week-filter" aria-labelledby="plan-week">
@@ -652,7 +639,7 @@ function WeekFilter({ rules, timing, onChange, ratings }: { rules: Rules; timing
       </div>
       <div className="wf-times">
         <label className="wf-field">
-          <span>Start after</span>
+          <span>Earliest start</span>
           <select className="input" value={rules.earliest} onChange={(event) => onChange({ earliest: event.target.value })}>
             {['', ...new Set([...timing.starts, rules.earliest].filter(Boolean))].sort((a, b) => a.localeCompare(b)).map((time) => (
               <option key={time} value={time}>
@@ -672,6 +659,18 @@ function WeekFilter({ rules, timing, onChange, ratings }: { rules: Rules; timing
           </select>
         </label>
       </div>
+
+      <details className="plan-starts">
+        <summary>Specific class starts{rules.requiredStarts.length + rules.avoidStarts.length ? ` (${rules.requiredStarts.length + rules.avoidStarts.length})` : ''}</summary>
+        <p className="rule-help">Choose a time once to include it, again to avoid it, and again to clear.</p>
+        <div className="chips" aria-label="Specific class starts">
+          {[...new Set([...timing.starts, ...rules.requiredStarts, ...rules.avoidStarts])].sort().map((time) => {
+            const wanted = rules.requiredStarts.includes(time);
+            const avoided = rules.avoidStarts.includes(time);
+            return <button key={time} type="button" className={`chip${wanted ? ' on' : avoided ? ' on avoid' : ''}`} aria-label={`${clock(time)}: ${wanted ? 'required' : avoided ? 'avoided' : 'any'}`} onClick={() => onChange({ requiredStarts: wanted || avoided ? rules.requiredStarts.filter((entry) => entry !== time) : [...rules.requiredStarts, time], avoidStarts: wanted ? [...rules.avoidStarts, time] : rules.avoidStarts.filter((entry) => entry !== time) })}>{wanted ? 'Include ' : avoided ? 'Avoid ' : ''}{clock(time)}</button>;
+          })}
+        </div>
+      </details>
 
       <div className="wf-row">
         <span className="wf-label" id="wf-days">
@@ -738,7 +737,7 @@ function Switch({ on, onChange, label, children }: { on: boolean; onChange(on: b
   );
 }
 
-function WantRow({ want, color, titles, problem, onRemove }: { want: PlanWant; color: number; titles: Map<string, string>; problem?: string; onRemove(): void }) {
+function WantRow({ want, color, titles, problem, onRemove, onChoose }: { want: PlanWant; color: number; titles: Map<string, string>; problem?: string; onRemove(): void; onChoose(code: string): void }) {
   const single = want.codes.length === 1;
   return (
     <div className={`want${problem ? ' stuck' : ''}`} style={{ '--c': `var(--plan-${color % 6})` } as CSSProperties}>
@@ -756,6 +755,10 @@ function WantRow({ want, color, titles, problem, onRemove }: { want: PlanWant; c
               Any of {want.codes.length}: {want.codes.slice(0, 3).join(', ')}
               {want.codes.length > 3 ? '…' : ''}
             </span>
+            <details className="plan-starts">
+              <summary>Choose a specific course</summary>
+              <div className="plan-course-results">{want.codes.map((code) => <button key={code} type="button" onClick={() => onChoose(code)}><span><b>{titles.get(code) ?? code}</b><small>{code}</small></span><IconArrow /></button>)}</div>
+            </details>
           </>
         )}
         {want.sessions?.length ? <span className="want-any">7 weeks · {want.sessions.join(' or ')}</span> : null}
