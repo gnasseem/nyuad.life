@@ -3,7 +3,7 @@
  * production; an in-memory store for local development and tests. `boardStore()` picks one from the environment.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { ENOUGH_ANSWERS, isListingKind, type Announcement, type Answer, type BoardEvent, type CourseReview, type EventKind, type Listing, type Offer, type Profile, type Question, type Standing } from './board.ts';
+import { ENOUGH_ANSWERS, isListingKind, type Announcement, type Answer, type BoardEvent, type CourseReview, type Digest, type EventKind, type Listing, type Mention, type Offer, type Profile, type Question, type Standing } from './board.ts';
 import { ApiError } from './http.ts';
 import { supabaseConfig, type SupabaseConfig } from './supabase.ts';
 
@@ -87,6 +87,21 @@ export interface BoardStore {
   deleteReview(code: string, netId: string): Promise<boolean>;
   /** Every review's course and rating, for the averages on the course list. */
   listReviewScores(): Promise<Array<{ code: string; rating: number }>>;
+  /** Every review written here, for scripts/reviews.ts. */
+  listAllReviews(): Promise<CourseReview[]>;
+
+  /** The digests of these courses and professors (entity keys); missing ones are left out. */
+  getDigests(entities: string[]): Promise<Digest[]>;
+  /** Every digest without what it read, for the course and professor lists. */
+  listDigestScores(): Promise<Array<Pick<Digest, 'entity' | 'kind' | 'name' | 'positive' | 'negative' | 'neutral' | 'score' | 'difficulty' | 'workload'>>>;
+  /** Every digest in full, for scripts/reviews.ts. */
+  listDigests(): Promise<Digest[]>;
+  putDigest(digest: Digest): Promise<void>;
+  /** Thread id -> the post and comment ids of it already read. */
+  listReviewThreads(): Promise<Map<string, string[]>>;
+  /** Saves a thread's mentions, then marks its posts and comments read: a crash in between only means reading them again. */
+  saveReviewThread(threadId: string, units: string[], mentions: Mention[]): Promise<void>;
+  listMentions(): Promise<Mention[]>;
 
   /** Questions that are not closed, newest first, older than `before` (an ISO time) when given: the Questions feed. */
   listFeed(limit: number, before?: string): Promise<Question[]>;
@@ -362,6 +377,34 @@ export class MemoryBoardStore implements BoardStore {
   }
   async listReviewScores(): Promise<Array<{ code: string; rating: number }>> {
     return [...this.reviews.values()].map((review) => ({ code: review.code, rating: review.rating }));
+  }
+  async listAllReviews(): Promise<CourseReview[]> {
+    return [...this.reviews.values()];
+  }
+  private digests = new Map<string, Digest>();
+  private reviewThreads = new Map<string, string[]>();
+  private mentions = new Map<string, Mention>();
+  async getDigests(entities: string[]): Promise<Digest[]> {
+    return entities.map((entity) => this.digests.get(entity)).filter((digest): digest is Digest => Boolean(digest));
+  }
+  async listDigestScores(): Promise<Array<Pick<Digest, 'entity' | 'kind' | 'name' | 'positive' | 'negative' | 'neutral' | 'score' | 'difficulty' | 'workload'>>> {
+    return [...this.digests.values()].map(({ entity, kind, name, positive, negative, neutral, score, difficulty, workload }) => ({ entity, kind, name, positive, negative, neutral, score, difficulty, workload }));
+  }
+  async listDigests(): Promise<Digest[]> {
+    return [...this.digests.values()];
+  }
+  async putDigest(digest: Digest): Promise<void> {
+    this.digests.set(digest.entity, digest);
+  }
+  async listReviewThreads(): Promise<Map<string, string[]>> {
+    return new Map(this.reviewThreads);
+  }
+  async saveReviewThread(threadId: string, units: string[], mentions: Mention[]): Promise<void> {
+    for (const mention of mentions) this.mentions.set(`${mention.postId}|${mention.entity}`, mention);
+    this.reviewThreads.set(threadId, units);
+  }
+  async listMentions(): Promise<Mention[]> {
+    return [...this.mentions.values()];
   }
   private bans = new Map<string, Ban>();
   readonly audit: Array<{ action: string; target: string; snapshot?: unknown; ip: string; createdAt: string }> = [];
@@ -816,6 +859,85 @@ export class SupabaseBoardStore implements BoardStore {
   async listReviewScores(): Promise<Array<{ code: string; rating: number }>> {
     return (await this.select('course_reviews', 'select=code,rating&limit=20000')).map((row) => ({ code: String(row.code), rating: Number(row.rating) }));
   }
+  async listAllReviews(): Promise<CourseReview[]> {
+    return (await this.selectAll('course_reviews', 'order=id.asc')).map(reviewFrom);
+  }
+  async getDigests(entities: string[]): Promise<Digest[]> {
+    if (!entities.length) return [];
+    const list = entities.map((entity) => `"${entity.replace(/["\\]/g, '')}"`).join(',');
+    return (await this.select('review_digests', `select=${DIGEST_COLUMNS}&entity=in.(${enc(list)})`)).map(digestFrom);
+  }
+  async listDigestScores(): Promise<Array<Pick<Digest, 'entity' | 'kind' | 'name' | 'positive' | 'negative' | 'neutral' | 'score' | 'difficulty' | 'workload'>>> {
+    return (await this.selectAll('review_digests', 'select=entity,kind,name,positive,negative,neutral,score,difficulty,workload&order=entity.asc')).map((row) => {
+      const digest = digestFrom(row);
+      return { entity: digest.entity, kind: digest.kind, name: digest.name, positive: digest.positive, negative: digest.negative, neutral: digest.neutral, score: digest.score, difficulty: digest.difficulty, workload: digest.workload };
+    });
+  }
+  async listDigests(): Promise<Digest[]> {
+    return (await this.selectAll('review_digests', `select=${DIGEST_COLUMNS},post_ids,review_keys&order=entity.asc`)).map(digestFrom);
+  }
+  async putDigest(digest: Digest): Promise<void> {
+    await this.write('POST', 'review_digests?on_conflict=entity', {
+      entity: digest.entity,
+      kind: digest.kind,
+      name: digest.name,
+      positive: digest.positive,
+      negative: digest.negative,
+      neutral: digest.neutral,
+      score: digest.score,
+      difficulty: digest.difficulty,
+      workload: digest.workload,
+      verdict: digest.verdict,
+      likes: digest.likes,
+      warnings: digest.warnings,
+      breakdown: digest.breakdown,
+      first_date: digest.firstDate || null,
+      last_date: digest.lastDate || null,
+      recent: digest.recent,
+      weight: digest.weight,
+      sources: digest.sources,
+      post_ids: digest.postIds,
+      review_keys: digest.reviewKeys,
+      updated_at: digest.updatedAt,
+    }, 'resolution=merge-duplicates,return=minimal');
+  }
+  async listReviewThreads(): Promise<Map<string, string[]>> {
+    const rows = await this.selectAll('review_threads', 'select=thread_id,units&order=thread_id.asc');
+    return new Map(rows.map((row) => [String(row.thread_id), (row.units as string[] | null) ?? []]));
+  }
+  async saveReviewThread(threadId: string, units: string[], mentions: Mention[]): Promise<void> {
+    if (mentions.length) {
+      await this.write('POST', 'review_mentions?on_conflict=post_id,entity', mentions.map((mention) => ({
+        post_id: mention.postId,
+        entity: mention.entity,
+        thread_id: mention.threadId,
+        url: mention.url,
+        date: mention.date || null,
+        term: mention.term,
+        sentiment: mention.sentiment,
+        pair: mention.pair,
+        difficulty: mention.difficulty,
+        workload: mention.workload,
+        takeaway: mention.takeaway,
+      })), 'resolution=merge-duplicates,return=minimal');
+    }
+    await this.write('POST', 'review_threads?on_conflict=thread_id', { thread_id: threadId, units, scanned_at: new Date().toISOString() }, 'resolution=merge-duplicates,return=minimal');
+  }
+  async listMentions(): Promise<Mention[]> {
+    return (await this.selectAll('review_mentions', 'select=*&order=post_id.asc,entity.asc')).map((row) => ({
+      postId: String(row.post_id),
+      entity: String(row.entity),
+      threadId: String(row.thread_id),
+      url: String(row.url ?? ''),
+      date: row.date ? String(row.date).slice(0, 10) : '',
+      term: String(row.term ?? ''),
+      sentiment: row.sentiment as Mention['sentiment'],
+      pair: String(row.pair ?? ''),
+      difficulty: row.difficulty === null || row.difficulty === undefined ? null : Number(row.difficulty),
+      workload: row.workload === null || row.workload === undefined ? null : Number(row.workload),
+      takeaway: String(row.takeaway ?? ''),
+    }));
+  }
 
   async listFeed(limit: number, before?: string): Promise<Question[]> {
     const older = before && !Number.isNaN(Date.parse(before)) ? `&created_at=lt.${enc(new Date(before).toISOString())}` : '';
@@ -1026,6 +1148,36 @@ function questionFrom(row: Row): Question {
     embedding: Array.isArray(row.embedding) ? (row.embedding as number[]) : undefined,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+  };
+}
+
+/** A digest's columns but the lists of what it read, which only scripts/reviews.ts needs. */
+const DIGEST_COLUMNS = 'entity,kind,name,positive,negative,neutral,score,difficulty,workload,verdict,likes,warnings,breakdown,first_date,last_date,recent,weight,sources,updated_at';
+
+function digestFrom(row: Row): Digest {
+  const scale = (value: unknown) => (value === null || value === undefined ? null : Number(value));
+  return {
+    entity: String(row.entity),
+    kind: row.kind === 'prof' ? 'prof' : 'course',
+    name: String(row.name ?? ''),
+    positive: Number(row.positive ?? 0),
+    negative: Number(row.negative ?? 0),
+    neutral: Number(row.neutral ?? 0),
+    score: Number(row.score),
+    difficulty: scale(row.difficulty),
+    workload: scale(row.workload),
+    verdict: String(row.verdict ?? ''),
+    likes: (row.likes as string[] | null) ?? [],
+    warnings: (row.warnings as string[] | null) ?? [],
+    breakdown: (row.breakdown as Digest['breakdown'] | null) ?? [],
+    firstDate: row.first_date ? String(row.first_date).slice(0, 10) : '',
+    lastDate: row.last_date ? String(row.last_date).slice(0, 10) : '',
+    recent: Number(row.recent ?? 0),
+    weight: Number(row.weight ?? 0),
+    sources: (row.sources as Digest['sources'] | null) ?? [],
+    postIds: (row.post_ids as string[] | null) ?? [],
+    reviewKeys: (row.review_keys as string[] | null) ?? [],
+    updatedAt: String(row.updated_at ?? ''),
   };
 }
 

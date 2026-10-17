@@ -537,7 +537,7 @@ function ModelsTab() {
   const { toast } = useApp();
   const [usage, setUsage] = useState<UsageReport | null>(null);
   const [checks, setChecks] = useState<{ geminiKeyProblem: string | null; results: ModelCheck[] } | null>(null);
-  const [busy, setBusy] = useState<'' | 'usage' | 'check' | 'warm' | 'email'>('');
+  const [busy, setBusy] = useState<'' | 'usage' | 'check' | 'email'>('');
 
   const run = async <T,>(what: typeof busy, work: () => Promise<T>, done: (result: T) => void) => {
     setBusy(what);
@@ -625,20 +625,6 @@ function ModelsTab() {
               ))}
             </div>
           )}
-          <div className="tool">
-            <div>
-              <b>Write course ratings now</b>
-              <span>Runs the nightly job: ratings for this term's most discussed courses and their professors that have none yet, for about half a minute. Run it again for more.</span>
-            </div>
-            <button
-              type="button"
-              className="btn sm"
-              onClick={() => void run('warm', api.admin.warm, (result) => toast(`${plural(result.rated, 'rating')} written, ${result.none} with nothing to go on${result.failed ? `, ${result.failed} failed` : ''}. ${result.left} left.`))}
-              disabled={busy !== ''}
-            >
-              {busy === 'warm' ? <span className="spinner" /> : null} {busy === 'warm' ? 'Writing' : 'Write ratings'}
-            </button>
-          </div>
           <div className="tool">
             <div>
               <b>Outage email</b>

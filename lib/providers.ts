@@ -537,9 +537,10 @@ async function* readStream(provider: Provider, response: Response): AsyncGenerat
 
 /**
  * A short whole answer (a query rewrite, a moderation verdict) from the first provider and model that can give one.
- * `tier: 'main'` uses the providers' answer models, for work that needs more judgement than a rewrite.
+ * `tier: 'main'` uses the providers' answer models, for work that needs more judgement than a rewrite. Each model gets
+ * a few seconds, or `attemptMs` for work nobody is waiting on (scripts/reviews.ts).
  */
-export async function liteChat(providers: Provider[], params: ChatParams & { timeoutMs?: number; tier?: 'lite' | 'main' }): Promise<string> {
+export async function liteChat(providers: Provider[], params: ChatParams & { timeoutMs?: number; tier?: 'lite' | 'main'; attemptMs?: number }): Promise<string> {
   const signal = params.signal ?? AbortSignal.timeout(params.timeoutMs ?? 12_000);
   const size = params.system.length + params.messages.reduce((sum, message) => sum + message.text.length, 0);
   let lastError: unknown = new ProviderError('No backup model is set up.', 503);
@@ -552,7 +553,7 @@ export async function liteChat(providers: Provider[], params: ChatParams & { tim
       // A key busy with another request is passed over; the next key or provider answers instead of waiting.
       if (atCapacity(provider)) break;
       const release = occupy(provider);
-      const attempt = AbortSignal.any([signal, AbortSignal.timeout(params.tier === 'main' || (params.maxOutputTokens ?? 0) > 1_024 ? 8_000 : 2_500)]);
+      const attempt = AbortSignal.any([signal, AbortSignal.timeout(params.attemptMs ?? (params.tier === 'main' || (params.maxOutputTokens ?? 0) > 1_024 ? 8_000 : 2_500))]);
       try {
         const response = await post(provider, model, { ...params, signal: attempt }, false);
         const json = (await response.json()) as { choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }> };
@@ -643,11 +644,11 @@ function partialTag(text: string): number {
 async function downTheOrder<T>(
   gemini: GeminiConfig | null,
   backups: Provider[],
-  limits: { totalMs: number; stepMs: number; hedgeMs?: number; tier?: 'lite' | 'main' },
+  limits: { totalMs: number; stepMs: number; hedgeMs?: number; tier?: 'lite' | 'main'; order?: string[] },
   viaGemini: (cfg: GeminiConfig, signal: AbortSignal) => Promise<T>,
   viaBackups: (family: Provider[], signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
-  const ids = modelOrder(process.env, limits.tier).filter((id) => (id === 'gemini' ? Boolean(gemini) : backups.some((provider) => provider.family === id)));
+  const ids = (limits.order ?? modelOrder(process.env, limits.tier)).filter((id) => (id === 'gemini' ? Boolean(gemini) : backups.some((provider) => provider.family === id)));
   if (ids.length === 0) throw new ProviderError('No model is set up.', 503);
   const deadline = AbortSignal.timeout(limits.totalMs);
   const stops: AbortController[] = [];
@@ -696,13 +697,13 @@ async function downTheOrder<T>(
 }
 
 /**
- * A JSON object from the site's own models, in ROR_MODEL_ORDER: Gemini (lite models, or the answer models for
- * `tier: 'main'`) with the schema, the backups in JSON mode. Throws when none gives valid JSON.
+ * A JSON object from the site's own models, in ROR_MODEL_ORDER (or `order`, for one caller): Gemini (lite models, or
+ * the answer models for `tier: 'main'`) with the schema, the backups in JSON mode. Throws when none gives valid JSON.
  */
 export async function siteJson<T>(
   gemini: GeminiConfig | null,
   backups: Provider[],
-  params: { system: string; prompt: string; schema: Record<string, unknown>; tier?: 'lite' | 'main'; maxOutputTokens?: number; temperature?: number; timeoutMs?: number; stepMs?: number; hedgeMs?: number },
+  params: { system: string; prompt: string; schema: Record<string, unknown>; tier?: 'lite' | 'main'; maxOutputTokens?: number; temperature?: number; timeoutMs?: number; stepMs?: number; hedgeMs?: number; attemptMs?: number; order?: string[] },
 ): Promise<T> {
   const temperature = params.temperature ?? 0;
   const maxOutputTokens = params.maxOutputTokens ?? 1024;
@@ -715,13 +716,13 @@ export async function siteJson<T>(
   return downTheOrder<T>(
     gemini,
     backups,
-    { totalMs: timeoutMs, stepMs: params.stepMs ?? Math.ceil(timeoutMs * 0.6), hedgeMs: params.hedgeMs ?? Math.min(params.stepMs ?? timeoutMs, maxOutputTokens <= 1_024 && params.tier !== 'main' ? 1_500 : 6_000), tier: params.tier ?? 'lite' },
+    { totalMs: timeoutMs, stepMs: params.stepMs ?? Math.ceil(timeoutMs * 0.6), hedgeMs: params.hedgeMs ?? Math.min(params.stepMs ?? timeoutMs, maxOutputTokens <= 1_024 && params.tier !== 'main' ? 1_500 : 6_000), tier: params.tier ?? 'lite', order: params.order },
     (cfg, signal) => {
       const model = availableGemini(cfg, params.tier);
       return generateJson<T>(cfg, { model, system: params.system, messages, responseSchema: params.schema, temperature, maxOutputTokens }, { retries: 0, signal, timeoutMs });
     },
     async (family, signal) => {
-      const text = await liteChat(family, { system: `${params.system}\nReply with one JSON object and nothing else.`, messages, json: true, temperature, maxOutputTokens, signal, tier: params.tier });
+      const text = await liteChat(family, { system: `${params.system}\nReply with one JSON object and nothing else.`, messages, json: true, temperature, maxOutputTokens, signal, tier: params.tier, attemptMs: params.attemptMs });
       return JSON.parse(text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '')) as T;
     },
   );

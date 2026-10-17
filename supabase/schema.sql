@@ -327,3 +327,65 @@ create index if not exists course_reviews_code_idx on public.course_reviews (cod
 alter table public.course_reviews enable row level security;
 revoke all on public.course_reviews from anon, authenticated;
 grant all on public.course_reviews to service_role;
+
+-- What students said about courses and professors in the Room of Requirement, read offline by scripts/reviews.ts
+-- (npm run reviews) and served by /api/courses without a model call. A mention is one post or comment about one course
+-- ("course:CS-UH 1001", under the code it carries now) or professor ("prof:thomas potsch"); `pair` is the professor a
+-- course mention is about, or the course a professor mention is about.
+create table if not exists public.review_mentions (
+  post_id    text not null,
+  entity     text not null,
+  thread_id  text not null,
+  url        text not null default '',
+  date       date,
+  term       text not null default '',
+  sentiment  text not null check (sentiment in ('positive', 'negative', 'neutral')),
+  pair       text not null default '',
+  difficulty smallint check (difficulty between 1 and 5),
+  workload   smallint check (workload between 1 and 5),
+  takeaway   text not null default '',
+  created_at timestamptz not null default now(),
+  primary key (post_id, entity)
+);
+create index if not exists review_mentions_entity_idx on public.review_mentions (entity);
+
+-- The posts and comments of each thread already read, so a run only sends new ones to a model.
+create table if not exists public.review_threads (
+  thread_id  text primary key,
+  units      text[] not null default '{}',
+  scanned_at timestamptz not null default now()
+);
+
+-- One summary per course and professor, folded forward as new mentions and reviews written here come in. Counts,
+-- score, difficulty and workload are computed from every mention; the verdict, likes and warnings are written by a
+-- model. `breakdown` is the professors of a course (or the courses of a professor) with their own counts; `post_ids`
+-- and `review_keys` are what it has read, so a run knows what is new.
+create table if not exists public.review_digests (
+  entity      text primary key,
+  kind        text not null check (kind in ('course', 'prof')),
+  name        text not null,
+  positive    int not null default 0,
+  negative    int not null default 0,
+  neutral     int not null default 0,
+  score       real not null,
+  difficulty  real,
+  workload    real,
+  verdict     text not null default '',
+  likes       text[] not null default '{}',
+  warnings    text[] not null default '{}',
+  breakdown   jsonb not null default '[]',
+  first_date  date,
+  last_date   date,
+  recent      int not null default 0,
+  weight      real not null default 0,
+  sources     jsonb not null default '[]',
+  post_ids    text[] not null default '{}',
+  review_keys text[] not null default '{}',
+  updated_at  timestamptz not null default now()
+);
+
+alter table public.review_mentions enable row level security;
+alter table public.review_threads  enable row level security;
+alter table public.review_digests  enable row level security;
+revoke all on public.review_mentions, public.review_threads, public.review_digests from anon, authenticated;
+grant all on public.review_mentions, public.review_threads, public.review_digests to service_role;

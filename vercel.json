@@ -4,6 +4,12 @@
   "outputDirectory": "dist",
   "framework": null,
   "functions": {
+    "api/admin.ts": {
+      "includeFiles": "data/**",
+      "excludeFiles": "{data/index/cache-*,data/scrape-state.json,data/*.tmp,data/posts.jsonl,data/official.jsonl}",
+      "maxDuration": 300,
+      "memory": 1024
+    },
     "api/**/*.ts": {
       "includeFiles": "data/**",
       "excludeFiles": "{data/index/cache-*,data/scrape-state.json,data/*.tmp,data/posts.jsonl,data/official.jsonl}",
@@ -11,14 +17,7 @@
       "memory": 1024
     }
   },
-  "crons": [
-    { "path": "/api/cron/warm-ratings", "schedule": "30 22 * * *" }
-  ],
   "rewrites": [
-    {
-      "source": "/api/cron/warm-ratings",
-      "destination": "/api/courses?op=warm"
-    },
     {
       "source": "/((?!api/).*)",
       "destination": "/index.html"

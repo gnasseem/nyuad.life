@@ -21,7 +21,8 @@
     "ensure-index": "tsx scripts/ensure-index.ts",
     "scrape:official": "tsx scripts/scrape-official.ts",
     "scrape:albert": "tsx scripts/scrape-albert.ts",
-    "index:official": "tsx scripts/index-official.ts"
+    "index:official": "tsx scripts/index-official.ts",
+    "reviews": "tsx scripts/reviews.ts"
   },
   "dependencies": {
     "react": "^19.2.0",

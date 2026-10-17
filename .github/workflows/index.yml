@@ -1,8 +1,9 @@
 # Builds the search index whenever the indexing code changes or a scrape asks for it (scripts/scrape-publish.sh runs
-# it by hand), so nobody has to run the indexer by hand.
+# it by hand), so nobody has to run the indexer by hand, then brings the course and professor reviews up to date
+# from it (scripts/reviews.ts): only threads not read yet go to a model.
 # Needs repository secrets (Settings → Secrets and variables → Actions): BLOB_READ_WRITE_TOKEN for the project's private
 # Blob store, and one embedding key: VOYAGE_API_KEY (recommended), or CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID, or
-# GEMINI_API_KEY.
+# GEMINI_API_KEY. The reviews need REVIEWS_JOB_TOKEN (below).
 # The posts and the index hold students' names and words, so they stay in the store and never touch git: the job pulls
 # the posts and the last index, embeds only the chunks that changed, and pushes the new index back. The next deploy
 # pulls it.
@@ -15,6 +16,7 @@ on:
     paths:
       - 'lib/**'
       - 'scripts/index.ts'
+      - 'scripts/reviews.ts'
   workflow_dispatch:
 
 permissions:
@@ -58,3 +60,30 @@ jobs:
           npm run archive -- pull index
           npm run index
           npm run archive -- push index
+
+  # Reads new threads into review mentions and folds them into the digests /api/courses serves. The work runs on the
+  # site itself (POST /api/admin op=reviews, a few minutes a slice), where the model keys are; this only starts slices
+  # until nothing is left. It reads the archive the live site serves, so threads in this index are read after the next
+  # deploy (scripts/scrape-publish.sh runs it again then). Stopping early loses nothing: the next run carries on, and a
+  # failure here never holds up the index.
+  reviews:
+    needs: index
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Read new threads and update the review digests
+        env:
+          REVIEWS_JOB_TOKEN: ${{ secrets.REVIEWS_JOB_TOKEN }}
+        run: |
+          if [ -z "$REVIEWS_JOB_TOKEN" ]; then
+            echo "::warning::REVIEWS_JOB_TOKEN is not set, so the reviews were not updated. Make it with reviewsJobToken() in lib/reviews.ts from the Supabase service key and add it under Settings → Secrets → Actions."
+            exit 0
+          fi
+          npm run reviews -- --remote https://www.nyuad.life --minutes 300

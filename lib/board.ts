@@ -188,6 +188,73 @@ export interface CourseReview {
   updatedAt: string;
 }
 
+/**
+ * One post or comment in the Room of Requirement archive about one course or professor, as scripts/reviews.ts read it.
+ * Each counts as one student rating.
+ */
+export interface Mention {
+  /** The post's id, or "<post id>/c/<comment key>" for a comment. */
+  postId: string;
+  /** "course:CS-UH 1001" or "prof:thomas potsch" (courseKey and profKey in lib/entities.ts). */
+  entity: string;
+  threadId: string;
+  url: string;
+  /** YYYY-MM-DD, or "" when the archive has no date. */
+  date: string;
+  /** The term it describes, as Albert names terms, when it can be told; else "". */
+  term: string;
+  sentiment: 'positive' | 'negative' | 'neutral';
+  /** The professor a course mention is about, or the course a professor mention is about (an entity key), or "". */
+  pair: string;
+  difficulty: number | null;
+  workload: number | null;
+  /** What it says, paraphrased in a short sentence without the student's name. */
+  takeaway: string;
+}
+
+/** A course's or a professor's counts against one professor of theirs (or one course of theirs). */
+export interface DigestPart {
+  entity: string;
+  name: string;
+  positive: number;
+  negative: number;
+  neutral: number;
+  score: number;
+}
+
+/** Everything students said about one course or professor, kept up to date by scripts/reviews.ts. */
+export interface Digest {
+  entity: string;
+  kind: 'course' | 'prof';
+  /** The course code or the professor's name. */
+  name: string;
+  positive: number;
+  negative: number;
+  neutral: number;
+  /** 1.0 to 5.0, newer ratings weighing more. */
+  score: number;
+  /** 1 to 5 with a decimal, from the ratings that say; null when none do. */
+  difficulty: number | null;
+  workload: number | null;
+  verdict: string;
+  likes: string[];
+  warnings: string[];
+  /** A course's professors, or a professor's courses, most discussed first. */
+  breakdown: DigestPart[];
+  firstDate: string;
+  lastDate: string;
+  /** Ratings from the last two years. */
+  recent: number;
+  /** The sum of the ratings' recency weights (one for a rating written today, half for one two years old). */
+  weight: number;
+  sources: Array<{ url: string; date: string; excerpt: string }>;
+  /** The mentions it has read (their post ids). */
+  postIds: string[];
+  /** The reviews written here it has read: "<id>@<updated at>". */
+  reviewKeys: string[];
+  updatedAt: string;
+}
+
 /** Kept in the existing review text column so older reviews and deployments remain readable. */
 export function unpackReviewText(value: string): { professor: string; text: string } {
   const match = /^Professor: ([^\n]{1,100})\n\n/.exec(value);

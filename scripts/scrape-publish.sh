@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Scrapes new comments, pushes the archive to the private Blob store, has the index workflow embed it, then deploys
-# and checks that production serves the new index. The archive never goes into git.
+# Scrapes new comments, pushes the archive to the private Blob store, has the index workflow embed it, then deploys,
+# checks that production serves the new index, and has the site read the new threads into the course and professor
+# reviews. The archive never goes into git.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -49,3 +50,4 @@ if (!response.ok || !health.ok || health.archive?.posts !== expected.posts || he
 }
 console.log(`Live archive: ${expected.posts} posts, newest ${expected.newestPost}.`);
 JS
+npm run reviews -- --remote https://www.nyuad.life

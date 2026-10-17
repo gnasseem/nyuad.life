@@ -124,10 +124,6 @@ beforeAll(async () => {
         text = JSON.stringify({ scores: Array.from({ length: count }, (_, i) => ({ i, s: i < 2 ? 9 : 5 })) });
       } else if (schema?.properties?.questions) {
         text = JSON.stringify({ questions: ['How is her grading?', 'Which section is best?', 'What about the new professor?'] });
-      } else if (schema?.properties?.evidence && !schema?.properties?.difficulty) {
-        text = JSON.stringify({ score: 4.1, verdict: 'Clear lectures and fair grading [1].', basis: 1, confidence: 'medium', evidence: [1] });
-      } else if (schema?.properties?.basis) {
-        text = JSON.stringify({ score: 4.26, difficulty: 3, workload: null, verdict: 'Hard but fair [1].', pros: ['Dania explains clearly [1][4]', ''], cons: [], tips: [], basis: 1, confidence: 'high', evidence: [1] });
       } else if (schema?.properties?.daysOff) {
         text = JSON.stringify({ reply: 'I added Calculus and kept your time preferences.', wants: [{ label: 'Calculus', codes: ['MATH-UH 1012Q'] }, { label: 'an Arts Core', codes: ['CADT-UH 9999'] }], missing: [], earliest: '9:00', latest: null, daysOff: ['Fri', 'Sat'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Prof. Dania'], avoid: ['Nobody Here'] });
       } else if (schema?.properties?.verdict) {
@@ -519,37 +515,36 @@ describe('api', () => {
     expect(all.courses).toEqual([expect.objectContaining({ code: 'MATH-UH 1012', title: 'Calculus', core: false })]);
     const calls = geminiCalls.length;
     for (const suffix of ['', '&rating=1']) expect((await fetch(`${apiUrl}/api/courses?code=ZZ-UH%209999${suffix}`)).status).toBe(404);
+    // A course nobody has written about has no rating yet; opening it never writes one.
+    expect(await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012&rating=1`)).toEqual({ rating: null });
     expect(geminiCalls.length).toBe(calls);
-    // Writing a rating spends model calls, so only students who signed up can have one written.
-    expect((await fetch(`${apiUrl}/api/courses?code=MATH-UH%201012&rating=1`)).status).toBe(401);
-    const { rating } = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012&rating=1`, { headers });
-    expect(rating).toMatchObject({ score: 4.3, difficulty: 3, workload: null, basis: 1, confidence: 'low' });
-    // Citations the model wrote anyway are taken out.
-    expect(rating.pros).toEqual(['Dania explains clearly']);
-    expect(rating.sources).toEqual([expect.objectContaining({ url: 'https://fb/p1' })]);
-    const ratingCall = geminiCalls.at(-1)!;
-    expect(ratingCall.prompt).toContain('What students wrote:');
-    expect(ratingCall.url).toMatch(/gemini-[\d.]+-flash(?:-preview)?:generateContent/);
   });
 
-  it('rates a current professor only with first-hand evidence and links the thread', async () => {
-    const key = process.env.GEMINI_API_KEY;
-    try {
-      delete process.env.GEMINI_API_KEY;
-      const unavailable = await fetch(`${apiUrl}/api/courses?profs=${encodeURIComponent('Rana Dania')}`);
-      expect(unavailable.status).toBe(503);
-      expect(await unavailable.json()).toMatchObject({ error: 'no_model' });
-    } finally {
-      process.env.GEMINI_API_KEY = key;
+  it('serves course and professor ratings from the review digests without a model call', async () => {
+    const store = boardStore()!;
+    const digest = (entity: string, name: string, kind: 'course' | 'prof', breakdown: Array<{ entity: string; name: string }>) => ({
+      entity, kind, name, positive: 5, negative: 1, neutral: 1, score: 4.2, difficulty: 3.4, workload: null, verdict: 'Students like it.', likes: ['Clear lectures'], warnings: ['A hard final'],
+      breakdown: breakdown.map((part) => ({ ...part, positive: 4, negative: 0, neutral: 1, score: 4.5 })), firstDate: '2023-02-01', lastDate: '2026-04-02', recent: 3, weight: 4.1,
+      sources: [{ url: 'https://fb/p1', date: '2026-04-01', excerpt: 'Dania explains clearly.' }], postIds: ['p1', 'p1/c/a'], reviewKeys: [], updatedAt: '2026-10-17T00:00:00.000Z',
+    });
+    await store.putDigest(digest('course:MATH-UH 1012', 'MATH-UH 1012', 'course', [{ entity: 'prof:rana dania', name: 'Rana Dania' }]));
+    await store.putDigest(digest('prof:rana dania', 'Rana Dania', 'prof', [{ entity: 'course:MATH-UH 1012', name: 'MATH-UH 1012' }]));
+    const calls = geminiCalls.length;
+    {
+      const code = 'MATH-UH%201012';
+      const { rating } = await getJson(`${apiUrl}/api/courses?code=${code}&rating=1`);
+      expect(rating).toMatchObject({ score: 4.2, difficulty: 3, workload: null, verdict: 'Students like it.', pros: ['Clear lectures'], cons: ['A hard final'], basis: 7, confidence: 'high', counts: { positive: 5, negative: 1, neutral: 1 }, from: '2023-02-01', to: '2026-04-02' });
+      expect(rating.professors).toEqual([{ name: 'Rana Dania', positive: 4, negative: 0, neutral: 1, score: 4.5 }]);
+      expect(rating.sources).toEqual([expect.objectContaining({ url: 'https://fb/p1' })]);
+      expect(rating).not.toHaveProperty('postIds');
     }
-    const detail = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012`);
-    expect(detail.instructors).toEqual(['Rana Dania']);
-    // Writing a rating costs a model call, so a visitor without an account is told to wait instead.
-    expect(await getJson(`${apiUrl}/api/courses?profs=${encodeURIComponent('Rana Dania')}`)).toEqual({ ratings: {}, pending: ['Rana Dania'] });
-    const result = await getJson(`${apiUrl}/api/courses?profs=${encodeURIComponent('Rana Dania')}`, { headers });
-    expect(result.ratings['Rana Dania']).toMatchObject({ score: 4.1, basis: 1, confidence: 'low', verdict: 'Clear lectures and fair grading.' });
-    expect(result.ratings['Rana Dania'].sources).toEqual([expect.objectContaining({ url: 'https://fb/p1' })]);
-    expect(geminiCalls.at(-1)!.prompt).toContain('Her exams are fair and her lectures are clear.');
+    const { ratings } = await getJson(`${apiUrl}/api/courses?profs=${encodeURIComponent('Rana Dania|Nobody Here')}`);
+    expect(ratings['Rana Dania']).toMatchObject({ score: 4.2, basis: 7, verdict: 'Students like it.', likes: ['Clear lectures'], courses: [{ code: 'MATH-UH 1012', positive: 4, negative: 0, neutral: 1, score: 4.5 }] });
+    expect(ratings['Nobody Here']).toBeNull();
+    const scores = await getJson(`${apiUrl}/api/courses?ratings=1`);
+    expect(scores.courses['MATH-UH 1012']).toEqual({ score: 4.2, basis: 7, difficulty: 3, workload: null });
+    expect(scores.profs['Rana Dania']).toEqual({ score: 4.2, basis: 7 });
+    expect(geminiCalls.length).toBe(calls);
   });
 
   it('reads a plan request into codes the term has and rules the planner can use', async () => {

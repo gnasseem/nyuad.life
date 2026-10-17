@@ -528,36 +528,19 @@ function useSettled<T>(value: T, ms: number): T {
   return settled;
 }
 
-/**
- * Ratings for these professors, asked for in batches: the server answers the ones it has and writes a couple more
- * each time, so this asks again while it is making progress, and backs off when it is not (busy, or out of budget).
- */
+/** Ratings for these professors, from the review digests: null for one nobody has written about. */
 function useProfRatings(names: string[]): Map<string, ProfRating | null> {
   const [ratings, setRatings] = useState<Map<string, ProfRating | null>>(() => new Map());
   const key = names.join('|');
   useEffect(() => {
     if (!names.length) return;
     let live = true;
-    let timer = 0;
-    let had = -1;
-    let stalls = 0;
-    const round = async () => {
-      try {
-        const { ratings: known } = await api.courses.profs(names);
-        if (!live) return;
-        setRatings((current) => (current.size === known.size && [...known].every(([name, rating]) => current.get(name) === rating) ? current : known));
-        if (known.size >= names.length) return;
-        stalls = known.size > had ? 0 : stalls + 1;
-        had = known.size;
-        if (stalls <= 3) timer = window.setTimeout(() => void round(), stalls ? 20_000 : 400);
-      } catch {
-        if (live && ++stalls <= 3) timer = window.setTimeout(() => void round(), 20_000);
-      }
-    };
-    void round();
+    api.courses
+      .profs(names)
+      .then((known) => live && setRatings(known))
+      .catch(() => undefined);
     return () => {
       live = false;
-      window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);

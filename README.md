@@ -29,14 +29,12 @@ archive browsing, plan reading and contacts to anyone who has not.
   time, on tap. Lost & found posts stay up for two weeks in their own market tab. Ask routes lost-item notices here,
   while replacement and procedural questions still get an answer. Live requests go to Questions; Ask never sends students to a group chat.
 - **Reviews.** Every course in Albert's schedule once, searchable by code, title or professor, filtered by subject, Core
-  or rated, and sortable by rating. Picking one shows an AI rating written from the group's threads about it (a score
-  out of five, difficulty and workload, what students liked and what they warn about), who teaches it this term, and
-  reviews students wrote here: stars, difficulty, workload, when they took it and a line of advice, one per student and
-  course. The list shows both scores, read from the cache in one request. Ratings are cached for a month per course,
-  and a course nobody has described for a week, so opening it again costs nothing. A daily cron
-  (`/api/cron/warm-ratings`, rewritten to `/api/courses?op=warm`) writes them ahead of time for the term's most
-  discussed courses and their professors, about half a minute's worth a night (admins can run more from the admin
-  page), so students rarely wait for one to be written. Professors are a second tab.
+  or rated, and sortable by rating. Picking one shows what the group said about it (a score out of five, difficulty and
+  workload, what students like and what they warn about, how many posts and comments were good, bad or neutral, and the
+  same split for each professor who taught it), who teaches it this term, and reviews students wrote here: stars,
+  difficulty, workload, when they took it and a line of advice, one per student and course. Professors are a second
+  tab. Everything shown comes from review digests built offline (below), so opening a course or professor never calls
+  a model.
 - **Plan.** A schedule builder after [Horarium](https://github.com/Phoenix-3139/Horarium). Choose any school or study
   away site in Albert, then say what you need ("calc, intro to CS, any Arts Core, nothing before 10, Fridays off"). A
   model reads the request against that site's real course list and rules. Students compare its course options with Albert
@@ -46,7 +44,7 @@ archive browsing, plan reading and contacts to anyone who has not.
   (`lib/schedule.ts`): one section of every component, lectures paired with their own recitation or lab, seven-week
   halves sharing a slot, closed and waitlisted sections only when allowed. Hard rules (hours, days off, classes a day,
   no back-to-back, professors to avoid) always hold; within them plans are ranked by how students rate the professors
-  (written from the group's threads, like course ratings, and cached for a month) and, for "any of" slots, the courses,
+  (from the same review digests as Reviews) and, for "any of" slots, the courses,
   then by days on campus, gaps, early starts, preferred professors and seats. Each plan is drawn as a week, summed up in
   a line ("Top-rated professors · 3 days on campus · Fridays free") and listed with class numbers to copy into Albert.
   When nothing fits it says which rule or which courses are in the way and offers the change that would make it fit.
@@ -83,7 +81,6 @@ The group archive and its search index are not in the repository (see "Data and 
    | `GEMINI_API_KEY` | Answers for students not signed in with ChatGPT, question tagging, course summaries. Several keys from different Google projects, separated by commas, multiply the free quota. |
    | `ZAI_API_KEY`, `GROQ_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY` | Backup models when Gemini is overloaded or out of quota (below). Any or all; each variable takes several keys separated by commas, subject to shared account limits. |
    | `ROR_ADMIN_NETIDS` | Comma-separated verified administrator NetIDs, for example `gnn9245`. |
-   | `CRON_SECRET` | Lets only Vercel's daily cron warm course ratings (admins can too). Without it the job is open but held to three runs a day. |
    | `RESEND_API_KEY`, `RESEND_FROM`, `SESSION_SECRET` | NYU email login: a verified Resend sender and a 32+ character session secret. |
    | `OPENAI_CLIENT_ID`, `SESSION_SECRET`, `ROR_SITE_URL` | Sign in with ChatGPT: answers on each student's own plan (below). |
    | `VOYAGE_API_KEY` | Semantic search (must be the provider that built the index) and the reranker. |
@@ -98,8 +95,7 @@ The group archive and its search index are not in the repository (see "Data and 
    comes from a real probe of the database and `board.problem` says what is wrong when it is false.
 
 Routes: `GET /api/health`, `/api/search` (`q=`, `topic=`, `sort=`, `page=`), `/api/post?id=`, `/api/courses` (`term=`,
-`all=1`, `code=`, `code=&rating=1`, `profs=A|B`); `POST /api/ask` (server-sent events), `POST /api/plan`;
-`/api/courses?op=warm` (the nightly rating job, for the cron and admins),
+`all=1`, `code=`, `code=&rating=1`, `profs=A|B`, `ratings=1`); `POST /api/ask` (server-sent events), `POST /api/plan`;
 `GET|POST /api/board` (`op=stats|question|recent|feed|mine|announcements|offers|listings|contact|leaderboard` on GET,
 `profile|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer|listing|listing_done|unlisting` on POST). Ask,
 search, courses, plan and the board are rate-limited per IP.
@@ -127,12 +123,12 @@ is ignored; only a model list set in the environment can name it.
 
 Query rewrites, follow-ups, model reranking, moderation and plan reading prefer Groq's gpt-oss 20B, then Gemini
 Flash-Lite, Cloudflare's gpt-oss 20B, Z.ai, Mistral, OpenRouter and Gateway. This saves the larger answer models and
-OpenRouter's small daily allowance. Ratings use the answer order and stronger models. Explicit provider order
+OpenRouter's small daily allowance. Explicit provider order
 overrides still apply; `ROR_LITE_MODEL_ORDER` can override only the small tasks.
 
 Small text calls and JSON calls up to 1K output tokens start a second provider after 1.5 seconds of silence;
-larger JSON calls and ratings hedge after six seconds. At most two providers race. Each backup model gets 2.5 seconds
-for a small task or eight for ratings and larger outputs, within the provider step and overall deadline. Empty,
+larger JSON calls hedge after six seconds. At most two providers race. Each backup model gets 2.5 seconds
+for a small task or eight for larger outputs, within the provider step and overall deadline. Empty,
 malformed or truncated JSON falls through to the next model. Plan reading keeps its requested 4K output allowance,
 instead of inheriting the shorter prose-answer cap.
 
@@ -274,11 +270,39 @@ Nothing built from the posts may be committed: `.gitignore` leaves out `data/pos
 `data/removed.json` and `data/scrape-state.json`, and `.github/workflows/no-archive.yml` fails any push or pull request
 whose tree or history holds one of them.
 
+## Course and professor reviews
+
+`npm run reviews` (scripts/reviews.ts) reads every archive thread that names a NYUAD course (by code, title or
+nickname) or professor (lib/entities.ts) and records one mention for each post or comment that says what taking the
+course or being taught by the professor is like: its sentiment, the professor or course it pairs with, a term,
+difficulty and workload when stated, and a short paraphrase without the student's name. Each mention counts as one
+rating. Mentions go into `review_mentions`, and the posts and comments read into `review_threads`. Then each course and
+professor with new mentions, or new reviews written here, gets its `review_digests` row brought up to date: counts,
+a score where a rating two years old weighs half as much as one from today, difficulty, workload, the per-professor
+(or per-course) split, and a verdict, likes and warnings that a model folds forward from the old ones with only the
+new mentions. Courses go under the code they carry now, so "MATH-UH 1012Q" and "MATH-UH 1012" share one.
+
+The model keys live on Vercel, so the work normally runs there: `npm run reviews -- --remote https://www.nyuad.life`
+starts one slice at a time (`POST /api/admin` with `op=reviews`, about three and a half minutes of reading each,
+inside the function's five-minute limit) until nothing is left. It authenticates with a token derived from the
+Supabase service key (`reviewsJobToken` in lib/reviews.ts), so it needs only `SUPABASE_SERVICE_ROLE_KEY` in `.env`, or
+`REVIEWS_JOB_TOKEN` (a GitHub Actions secret) in CI. Plain `npm run reviews` runs it on this machine instead, with
+`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, the archive's index (`npm run archive -- pull index`) and free model keys.
+`REVIEWS_MODELS` names the providers it may call, in order (default `zai,groq,cloudflare,mistral`: GLM first; Gemini and
+OpenRouter are left to Ask unless named).
+
+Work is saved thread by thread, so it can be stopped, crash or run out of quota at any point and the next run carries
+on; a second run straight after a finished one makes no model calls. Digests are folded only once every thread is
+read. `--minutes N` stops it starting new work after N minutes, `--workers N` sets how many calls run at once, and
+`--limit N` reads only the N newest unread threads (one slice with `--remote`). The index workflow starts it after
+every index build, and `npm run scrape:publish` again after its deploy, so a scrape updates the reviews by itself.
+
 ## The board
 
 1. Create a Supabase project and run the whole of `supabase/schema.sql` in its SQL editor. It is safe to run again, and
    running it again is how an existing project gets new columns and tables (Campus Dirham offers need the `currency`
-   column, verified accounts need `owner_key` and `auth_email_codes`, and admin mode needs `board_bans` and `admin_audit`).
+   column, verified accounts need `owner_key` and `auth_email_codes`, admin mode needs `board_bans` and `admin_audit`, and
+   course and professor ratings need `review_mentions`, `review_threads` and `review_digests`).
    Row level security is on with no policies, so only the service role, which the API holds, can read or write.
    Students' course reviews need the `course_reviews` table: until the schema is run again, course pages show no
    reviews and no review form.
@@ -330,7 +354,7 @@ The admin page (`/admin`, the Admin badge in the bar) has four tabs:
   failed, questions to students, answers, reviews, plans, ratings, listings, offers, events, logins, sign-ups) today,
   this week and this month; the busiest routes with their average time and failures; and what is on the board.
 - **Members:** the newest members with when they joined and were last seen, and the spread of majors and years.
-- **Models:** what every model key did today, the model check, writing course ratings now, and the outage email test.
+- **Models:** what every model key did today, the model check, and the outage email test.
 - **Moderation:** barred accounts and the latest admin actions.
 
 Sign-ups and "last seen" come from `board_profiles` (`created_at`, and `last_seen_at`, which opening the site updates at

@@ -5,7 +5,7 @@
  * thread that names the course or the person is found through the keyword index's postings, and they are ranked by
  * how much they say about it.
  */
-import { baseCode, COMMON_WORDS, displayName, type Catalog } from './courses.ts';
+import { baseCode, codeVariants, COMMON_WORDS, currentCode, displayName, type Catalog } from './courses.ts';
 import type { Hit } from './search.ts';
 import type { Archive } from './store.ts';
 import { dayNumber, tokenize } from './text.ts';
@@ -17,6 +17,22 @@ export function fold(text: string): string {
 
 /** Words that make a sentence naming a class or a professor a review rather than a passing mention (on folded text). */
 export const REVIEWING = /\b(?:take|took|taken|teach\w*|taught|explain\w*|clear|fair\w*|grad\w*|lectur\w*|exam\w*|midterm\w*|finals?|quiz\w*|assignment\w*|homework|psets?|problem sets?|workload|helpful|supportive|strict|lenient|organiz\w*|engag\w*|boring|bad|fine|fast|slow|unclear|disorganiz\w*|unhelpful|disappoint\w*|good|great|amazing|fantastic|excellent|patient|harsh|tough|confusing|fun|love\w*|hate\w*|awful|terrible|hard|easy|difficult|recommend\w*|avoid|enjoy\w*|learn\w*|curve\w*|chill|heavy)\b/;
+
+/* ---------- Review keys ---------- */
+
+/**
+ * The key a course's reviews are kept under: "course:" and the code it carries now, so "MATH-UH 1012Q" and
+ * "MATH-UH 1012" share one. A code the schedule never had stays as it is.
+ */
+export function courseKey(catalog: Catalog, code: string): string {
+  const known = catalog.byCode.has(code) ? code : codeVariants(catalog, code)[0];
+  return `course:${known ? currentCode(catalog, known) : code}`;
+}
+
+/** The key a professor's reviews are kept under, from Albert's "Pötsch, Thomas" or "Thomas Pötsch": "prof:thomas potsch". */
+export function profKey(name: string): string {
+  return `prof:${fold(displayName(name))}`;
+}
 
 /* ---------- People ---------- */
 

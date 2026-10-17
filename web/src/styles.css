@@ -980,6 +980,13 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .point.warn { background: var(--amber-soft); }
 .point.warn::before { content: '!'; left: 15px; color: var(--amber-ink); }
 .rating-basis { color: var(--ink-3); font-size: 12.5px; }
+.rating-basis .rating-counts { font-size: inherit; }
+/* The same course with each of its professors (or a professor in each course): name, counts, score. */
+.rating-breakdown { display: grid; border-block: 1px solid var(--rule); }
+.rating-breakdown p { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; min-height: 42px; padding: 6px 2px; border-bottom: 1px solid var(--rule); font-size: 14px; }
+.rating-breakdown p:last-child { border-bottom: 0; }
+.rating-breakdown span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rating-counts { color: var(--ink-3); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .rating-none { margin-bottom: 22px; padding: 14px 16px; border-radius: 12px; background: var(--plate-2); color: var(--ink-2); font-size: 14.5px; line-height: 1.5; }
 .rating-evidence { display: grid; gap: 8px; }
 .rating-evidence > summary { color: var(--line-ink); font-size: 13px; font-weight: 640; cursor: pointer; }

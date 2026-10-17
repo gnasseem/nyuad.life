@@ -408,9 +408,22 @@ export interface CourseRating {
   pros: string[];
   cons: string[];
   tips: string[];
+  /** How many posts and comments it rests on: each is one student rating. */
   basis: number;
   confidence: 'high' | 'medium' | 'low';
+  counts: RatingCounts;
+  /** The course's professors, most discussed first, with what students said of the course under each. */
+  professors: Array<RatingCounts & { name: string; score: number }>;
+  /** The oldest and newest rating, YYYY-MM-DD. */
+  from: string;
+  to: string;
   sources: Array<{ url: string; date: string; excerpt: string }>;
+}
+
+export interface RatingCounts {
+  positive: number;
+  negative: number;
+  neutral: number;
 }
 
 /** Every score written so far, for the lists: AI ratings by course code and professor, and reviews written here. */
@@ -442,9 +455,16 @@ export interface CourseReview {
 export interface ProfRating {
   score: number;
   verdict: string;
-  /** How many students' first-hand accounts it rests on. */
+  /** How many posts and comments it rests on: each is one student rating. */
   basis: number;
   confidence: 'high' | 'medium' | 'low';
+  likes: string[];
+  warnings: string[];
+  counts: RatingCounts;
+  /** Their courses, most discussed first, with what students said of them in each. */
+  courses: Array<RatingCounts & { code: string; score: number }>;
+  from: string;
+  to: string;
   sources: Array<{ url: string; date: string; excerpt: string }>;
 }
 
@@ -519,23 +539,18 @@ function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
   return hit;
 }
 
-/** Professors' ratings this session already has; null is a professor students have not written enough about. */
+/** Professors' ratings this session already has; null is a professor students have not written about. */
 const profMemo = new Map<string, ProfRating | null>();
 
-/**
- * Ratings for these professors: the ones this session has, plus up to 24 more from the server, which writes a couple
- * of new ones each time and returns the rest as `pending` to ask for again.
- */
-async function profRatings(names: string[]): Promise<{ ratings: Map<string, ProfRating | null>; pending: string[] }> {
-  const ask = names.filter((name) => !profMemo.has(name)).slice(0, 24);
-  let pending: string[] = [];
-  if (ask.length) {
-    const result = await request<{ ratings: Record<string, ProfRating | null>; pending: string[] }>(`/api/courses?profs=${encodeURIComponent(ask.join('|'))}`);
-    pending = result.pending;
-    // A name the server does not know comes back with nothing: it has no rating to wait for.
-    for (const name of ask) if (!pending.includes(name)) profMemo.set(name, result.ratings[name] ?? null);
+/** Ratings for these professors: the ones this session has, and the rest from the server, 24 at a time. */
+async function profRatings(names: string[]): Promise<Map<string, ProfRating | null>> {
+  const missing = names.filter((name) => !profMemo.has(name));
+  for (let at = 0; at < missing.length; at += 24) {
+    const ask = missing.slice(at, at + 24);
+    const result = await request<{ ratings: Record<string, ProfRating | null> }>(`/api/courses?profs=${encodeURIComponent(ask.join('|'))}`);
+    for (const name of ask) profMemo.set(name, result.ratings[name] ?? null);
   }
-  return { ratings: new Map(names.filter((name) => profMemo.has(name)).map((name) => [name, profMemo.get(name)!])), pending };
+  return new Map(names.map((name) => [name, profMemo.get(name) ?? null]));
 }
 
 function post<T>(path: string, body: unknown): Promise<T> {
@@ -607,7 +622,6 @@ export const api = {
     stats: () => request<AdminDashboard>('/api/admin?op=stats'),
     audit: () => request<{ audit: Array<{ action: string; target: string; createdAt: string }> }>('/api/admin?op=audit'),
     askReports: () => request<{ reports: Array<{ id: string; createdAt: string; question: string; answer: string; reason: string; sources: string[]; resolvedAt: string | null }> }>('/api/admin?op=ask-reports'),
-    warm: () => request<{ rated: number; none: number; failed: number; left: number; ms: number }>('/api/courses?op=warm'),
   },
   plan: {
     read: (body: { term: string; school: string; text: string; history?: Array<{ role: 'user' | 'assistant'; text: string }>; current: { wants: Array<{ label: string; codes: string[]; sessions?: Array<'71' | '72'> }>; rules: Rules }; major?: string; year?: string }) =>

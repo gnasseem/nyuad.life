@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { api, type CourseDetail, type CourseEntry, type CourseRating, type CourseReview, type ProfRating, type ScoreIndex } from '../api';
+import { api, type CourseDetail, type CourseEntry, type CourseRating, type CourseReview, type ProfRating, type RatingCounts, type ScoreIndex } from '../api';
 import { AdminRemove } from '../components/AdminRemove';
 import { Segmented } from '../components/Segmented';
 import { Sign } from '../components/Sign';
@@ -380,23 +380,14 @@ function Detail({ code, onClose }: { code: string; onClose(): void }) {
   useEffect(() => {
     if (!detail?.instructors.length) return;
     let live = true;
-    let timer: number | undefined;
-    const load = async (attempt: number) => {
-      try {
-        const result = await api.courses.profs(detail.instructors);
-        if (!live) return;
-        setTeachers(result.ratings);
-        setTeacherPending(result.pending.length > 0 && attempt < 4);
-        if (result.pending.length && attempt < 4) timer = window.setTimeout(() => void load(attempt + 1), 2500);
-      } catch {
-        if (live) setTeacherPending(false);
-      }
-    };
     setTeacherPending(true);
-    void load(0);
+    api.courses
+      .profs(detail.instructors)
+      .then((ratings) => live && setTeachers(ratings))
+      .catch(() => undefined)
+      .finally(() => live && setTeacherPending(false));
     return () => {
       live = false;
-      window.clearTimeout(timer);
     };
   }, [detail]);
 
@@ -516,20 +507,56 @@ function Rating({ rating }: { rating: CourseRating }) {
           ))}
         </div>
       )}
-      <p className="rating-basis">
-        AI summary of {rating.basis === 1 ? 'one student' : `${rating.basis} students`} in the Room of Requirement{rating.confidence === 'low' ? ', so take it lightly' : ''}.
-      </p>
-      {rating.sources?.length > 0 && (
-        <details className="rating-evidence">
-          <summary>Read the threads ({rating.sources.length})</summary>
-          {rating.sources.map((source, index) => (
-            <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer">
-              <b>{source.date || 'Undated'}</b> {source.excerpt.slice(0, 140)}
-            </a>
+      <Basis rating={rating} />
+      {rating.professors.length > 0 && (
+        <div className="rating-breakdown" aria-label="By professor">
+          {rating.professors.slice(0, 6).map((part) => (
+            <p key={part.name}>
+              <span>{part.name}</span>
+              <Counts counts={part} />
+              <ScoreBadge score={part.score} label={`${part.score.toFixed(1)} out of 5 with ${part.name}`} />
+            </p>
           ))}
-        </details>
+        </div>
       )}
+      <Evidence sources={rating.sources} />
     </div>
+  );
+}
+
+/** How many posts and comments liked it, warned about it, or just said something about it. */
+function Counts({ counts }: { counts: RatingCounts }) {
+  return (
+    <small className="rating-counts">
+      {[counts.positive ? `${counts.positive} good` : '', counts.negative ? `${counts.negative} bad` : '', counts.neutral ? `${counts.neutral} neutral` : ''].filter(Boolean).join(' · ')}
+    </small>
+  );
+}
+
+/** What a rating rests on: how many posts and comments, good and bad, and over which years. */
+function Basis({ rating }: { rating: { basis: number; confidence: string; counts: RatingCounts; from: string; to: string } }) {
+  const years = [rating.from.slice(0, 4), rating.to.slice(0, 4)].filter(Boolean);
+  const span = years.length ? (years[0] === years.at(-1) ? `, ${years[0]}` : `, ${years[0]}–${years.at(-1)}`) : '';
+  return (
+    <p className="rating-basis">
+      From {rating.basis === 1 ? 'one post or comment' : `${rating.basis} posts and comments`} in the Room of Requirement{span}
+      {rating.counts.positive + rating.counts.negative + rating.counts.neutral > 0 ? <>: <Counts counts={rating.counts} /></> : null}
+      {rating.confidence === 'low' ? '. Take it lightly.' : '.'}
+    </p>
+  );
+}
+
+function Evidence({ sources }: { sources: Array<{ url: string; date: string; excerpt: string }> }) {
+  if (!sources?.length) return null;
+  return (
+    <details className="rating-evidence">
+      <summary>Read the threads ({sources.length})</summary>
+      {sources.map((source, index) => (
+        <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer">
+          <b>{source.date || 'Undated'}</b> {source.excerpt.slice(0, 140)}
+        </a>
+      ))}
+    </details>
   );
 }
 
@@ -564,7 +591,7 @@ function RatingLoading() {
         </div>
       </div>
       <p className="rating-basis" role="status">
-        <span className="spinner" aria-hidden="true" /> {slow ? 'Nobody has opened this one yet, so its rating is being written from the threads. It is saved for everyone after this.' : 'Reading what students wrote about it…'}
+        <span className="spinner" aria-hidden="true" /> {slow ? 'Still loading the rating…' : 'Loading what students wrote about it…'}
       </p>
     </div>
   );
@@ -959,22 +986,12 @@ function ProfessorDetail({ name, courses, onClose }: { name: string; courses: st
   const [error, setError] = useState('');
   useEffect(() => {
     let live = true;
-    let timer: number | undefined;
-    const load = async (attempt: number) => {
-      try {
-        const result = await api.courses.profs([name]);
-        if (!live) return;
-        if (result.pending.includes(name) && attempt < 3) timer = window.setTimeout(() => void load(attempt + 1), 2500);
-        else if (result.pending.includes(name)) setError('The rating is taking longer than usual. Open this professor again in a minute.');
-        else setRating(result.ratings.get(name) ?? null);
-      } catch (err) {
-        if (live) setError(err instanceof Error ? err.message : 'Could not load the rating.');
-      }
-    };
-    void load(0);
+    api.courses
+      .profs([name])
+      .then((ratings) => live && setRating(ratings.get(name) ?? null))
+      .catch((err) => live && setError(err instanceof Error ? err.message : 'Could not load the rating.'));
     return () => {
       live = false;
-      window.clearTimeout(timer);
     };
   }, [name]);
   return (
@@ -1002,19 +1019,33 @@ function ProfessorDetail({ name, courses, onClose }: { name: string; courses: st
                 <p className="rating-verdict">{rating.verdict}</p>
               </div>
             </div>
-            <p className="rating-basis">
-              AI summary of {rating.basis === 1 ? 'one student' : `${rating.basis} students`} in the Room of Requirement{rating.confidence === 'low' ? ', so take it lightly' : ''}.
-            </p>
-            {rating.sources?.length > 0 && (
-              <details className="rating-evidence">
-                <summary>Read the threads ({rating.sources.length})</summary>
-                {rating.sources.map((source, index) => (
-                  <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer">
-                    <b>{source.date || 'Undated'}</b> {source.excerpt.slice(0, 140)}
-                  </a>
+            {(rating.likes.length > 0 || rating.warnings.length > 0) && (
+              <div className="rating-points">
+                {rating.likes.slice(0, 3).map((point) => (
+                  <p key={`p-${point}`} className="point good">
+                    {point}
+                  </p>
                 ))}
-              </details>
+                {rating.warnings.slice(0, 3).map((point) => (
+                  <p key={`c-${point}`} className="point warn">
+                    {point}
+                  </p>
+                ))}
+              </div>
             )}
+            <Basis rating={rating} />
+            {rating.courses.length > 0 && (
+              <div className="rating-breakdown" aria-label="By course">
+                {rating.courses.slice(0, 6).map((part) => (
+                  <p key={part.code}>
+                    <span>{part.code}</span>
+                    <Counts counts={part} />
+                    <ScoreBadge score={part.score} label={`${part.score.toFixed(1)} out of 5 in ${part.code}`} />
+                  </p>
+                ))}
+              </div>
+            )}
+            <Evidence sources={rating.sources} />
           </div>
         )}
         {courses.length > 0 && (

@@ -1,16 +1,22 @@
 /**
  * The admin page, for verified accounts on ROR_ADMIN_NETIDS: how the site is used (op=stats), what the answer models
- * are doing (models, usage), moderation (bans, audit, remove, unban) and the outage email test.
+ * are doing (models, usage), moderation (bans, audit, remove, unban) and the outage email test. Also one slice of the
+ * course and professor review job (op=reviews), for administrators and for scripts/reviews.ts --remote.
  */
+import { timingSafeEqual } from 'node:crypto';
 import { adminConfig, adminEmails, adminSession, dashboard, dataOverview, emailAdmins, requireAdmin, usageText } from '../lib/admin.ts';
 import { appUsage } from '../lib/app-usage.ts';
 import { validateNetId } from '../lib/board.ts';
 import { boardStore, type AdminTarget, type BoardStore } from '../lib/board-store.ts';
+import { loadCatalog } from '../lib/courses.ts';
 import { geminiConfig, geminiKeyProblem } from '../lib/gemini.ts';
-import { ApiError, clientIp, clientKey, queryString, rateLimit, readJson, route, sendJson } from '../lib/http.ts';
+import { ApiError, clientIp, clientKey, queryString, rateLimit, readJson, route, sendJson, type ApiRequest } from '../lib/http.ts';
 import { ownerOf } from '../lib/identity.ts';
 import { lastAlert, modelUsage, saveModelUsage } from '../lib/model-usage.ts';
 import { checkModels, modelKeys, providersFromEnv, warmModels } from '../lib/providers.ts';
+import { reviewsJobToken, runReviews } from '../lib/reviews.ts';
+import { loadArchive } from '../lib/store.ts';
+import { supabaseConfig } from '../lib/supabase.ts';
 import { collapseWhitespace } from '../lib/text.ts';
 
 const TARGETS: AdminTarget[] = ['question', 'answer', 'notice', 'listing', 'offer', 'review'];
@@ -23,6 +29,16 @@ export default route(['GET', 'POST'], async (req, res) => {
 
   if (op === 'me') {
     sendJson(res, 200, { available: cfg.size > 0, admin: Boolean(await adminSession(cfg, req)) });
+    return;
+  }
+  if (op === 'reviews' && req.method === 'POST') {
+    if (!jobToken(req)) await requireAdmin(cfg, req);
+    const board = need(store);
+    if (!board.persistent) throw new ApiError(503, 'Reviews are kept in Supabase, which this server does not have.', 'board_unavailable');
+    const started = Date.now();
+    // About three and a half minutes of reading, and nothing still running after four and a half (the limit is five).
+    const result = await runReviews({ store: board, archive: await loadArchive(), catalog: loadCatalog(), deadline: started + 210_000, end: started + 270_000, workers: Math.min(4, Math.max(1, Number(body.workers) || 3)), limit: Number(body.limit) || undefined, log: (message) => console.log(`[reviews] ${message}`) });
+    sendJson(res, 200, result);
     return;
   }
   const session = await requireAdmin(cfg, req);
@@ -114,6 +130,13 @@ export default route(['GET', 'POST'], async (req, res) => {
   }
   throw new ApiError(400, 'Unknown admin operation.', 'bad_op');
 });
+
+/** Whether the request carries the review job's token, which only someone holding the Supabase service key can make. */
+function jobToken(req: ApiRequest): boolean {
+  const key = supabaseConfig()?.serviceKey;
+  const given = /^Bearer ([a-f0-9]{64})$/.exec(String(req.headers.authorization ?? ''))?.[1];
+  return Boolean(key && given && timingSafeEqual(Buffer.from(given), Buffer.from(reviewsJobToken(key))));
+}
 
 function need(store: BoardStore | null): BoardStore {
   if (!store) throw new ApiError(503, 'The board is not set up on this server.', 'board_unavailable');
