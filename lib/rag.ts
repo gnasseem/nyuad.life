@@ -122,6 +122,7 @@ interface RetrieveOptions {
   queries?: string[];
   /** The people the question names: only threads naming one of them are kept. Taken from the query when not given. */
   people?: Person[];
+  timings?: Timings;
 }
 
 export interface Retrieval {
@@ -175,6 +176,7 @@ export async function retrieve(archive: Archive, query: string, options: Retriev
   const lexicalScores = new Map<number, number>();
   for (const variant of queries) bm25Query(archive.bm25, tokenize(variant), depth).forEach(({ row }, rank) => lexicalScores.set(row, (lexicalScores.get(row) ?? 0) + 1 / (60 + rank + 1)));
   const lexical = [...lexicalScores].map(([row, score]) => ({ row, score })).sort((a, b) => b.score - a.score);
+  if (options.timings) options.timings.keyword = Math.max(options.timings.keyword ?? 0, Date.now() - started);
   let dense: Array<{ row: number; score: number }> = [];
   let vector: Float32Array | undefined;
   const vectors = new Map<string, Float32Array>();
@@ -187,7 +189,7 @@ export async function retrieve(archive: Archive, query: string, options: Retriev
       }
     } else {
       try {
-        const embedded = await embedQueries(embedder, queries);
+        const embedded = await timed(options.timings, 'embed', embedQueries(embedder, queries));
         const scores = new Map<number, number>();
         queries.forEach((variant, i) => {
           const value = embedded[i];
@@ -1062,6 +1064,8 @@ interface AskEvents {
   redirect?(redirect: NonNullable<AskResponse['redirect']>): void;
   sources?(cards: SourceCard[]): void;
   delta?(text: string): void;
+  /** The whole answer so far is replaced by this text: the check corrected what was streamed. */
+  replace?(text: string): void;
 }
 
 export function validateAsk(body: Partial<AskRequest>): AskRequest {
@@ -1215,6 +1219,13 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
   const board = context.board ?? null;
   const catalog = context.catalog === undefined ? catalogOrNull() : context.catalog;
   const reranker = context.reranker === undefined ? rerankerFromEnv() : context.reranker;
+  const timings: Timings = {};
+  // The first words the student sees, counted from the start: what streaming is for.
+  const delta = events.delta;
+  events = { ...events, delta: delta && ((text: string) => {
+    timings.first ??= Date.now() - started;
+    delta(text);
+  }) };
 
   // Some questions get a short reply instead of an answer (lib/moderation.ts); no model is called for them.
   const screened = screenAsk(request.question);
@@ -1233,11 +1244,11 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
 
   // An opening question someone asked in the last few hours is answered again from the cache: no model call at all.
   const useCache = (context.cache ?? process.env.ROR_ANSWER_CACHE !== '0') && history.length === 0 && !TIMELY.test(request.question) && !personName(request.question) && !/\b(?:deadlines?|due dates?|registration dates?|last day)\b/i.test(request.question);
-  const cached = useCache ? await within(cachedAnswer(board, request.question), 800).catch(() => null) : null;
+  const cached = useCache ? await timed(timings, 'cache', within(cachedAnswer(board, request.question), 800)).catch(() => null) : null;
   if (cached) {
     events.sources?.(cached.sources);
     events.delta?.(cached.answer);
-    return { answer: cached.answer, sources: cached.sources, model: cached.model, confidence: cached.confidence, cached: true, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
+    return { answer: cached.answer, sources: cached.sources, model: cached.model, confidence: cached.confidence, cached: true, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started }, timings: logTimings(timings, started, 'cached') };
   }
 
   // The board snapshot is a network call that does not depend on the question: start it now, use it later.
@@ -1246,14 +1257,14 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
   const retrievalStarted = Date.now();
   // The student's own words are searched too, so they are embedded while the model rewrites them.
   if (process.env.ROR_RETRIEVAL === 'hybrid') embedEarly(archive, searchQueries(request.question));
-  const searchQuery = safeRewrite(request.question, await standaloneQuestion(writers, history, request.question));
+  const searchQuery = safeRewrite(request.question, await timed(timings, 'rewrite', standaloneQuestion(writers, history, request.question)));
 
   events.status?.('Searching');
-  const sourceContext = { cfg, official: context.official, catalog, reranker, board, writers };
-  let gathered = await gatherSources(archive, request.question, searchQuery, sourceContext, events);
+  const sourceContext = { cfg, official: context.official, catalog, reranker, board, writers, timings };
+  let gathered = await timed(timings, 'gather', gatherSources(archive, request.question, searchQuery, sourceContext, events));
   // Novel paraphrases get one bounded semantic fallback instead of depending on an exhaustive alias list.
   if (!gathered.cards.length && process.env.ROR_RETRIEVAL !== 'keyword' && !/\b(?:deadlines?|due dates?|last day)\b/i.test(searchQuery)) {
-    gathered = await gatherSources(archive, request.question, searchQuery, { ...sourceContext, retrievalMode: 'hybrid' }, events);
+    gathered = await timed(timings, 'gather2', gatherSources(archive, request.question, searchQuery, { ...sourceContext, retrievalMode: 'hybrid' }, events));
   }
   const { cards, entries, retrieval, reranked } = gathered;
   const retrievalMs = Date.now() - retrievalStarted;
@@ -1265,7 +1276,7 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
     const name = personName(request.question);
     const missing = name ? `I couldn’t find reliable NYUAD information for ${name}. I won’t substitute another person with a similar name. Add a course or role to narrow the search, or ask students on the Questions page.` : /\b(?:deadline|due date|last day)\b/i.test(searchQuery) ? "I couldn't confirm a deadline for the requested term from the available dated sources." : NO_SOURCES;
     events.delta?.(missing);
-    return { answer: missing, sources: [], model: writerName, confidence: { level: 'low', reason: 'nothing on this in the sources' }, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started } };
+    return { answer: missing, sources: [], model: writerName, confidence: { level: 'low', reason: 'nothing on this in the sources' }, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started }, timings: logTimings(timings, started, 'no sources') };
   }
 
   events.status?.('Writing');
@@ -1286,7 +1297,7 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
   const draftEvents = { ...events, delta: undefined };
   const reviewEvidence = cards.some((card) => ['archive', 'review', 'board', 'digest'].includes(card.kind));
   const draftDeadline = Math.max(Date.now() + 1000, deadline - 8500);
-  const { answer, model, truncated } = writers.chatgpt ? await writeWithChatGPT(writers.chatgpt, prompt(), draftEvents, signal, draftDeadline, term) : await writeAnswer(writers, system, prompt, draftEvents, signal, draftDeadline);
+  const { answer, model, truncated } = await timed(timings, 'write', writers.chatgpt ? writeWithChatGPT(writers.chatgpt, prompt(), draftEvents, signal, draftDeadline, term) : writeAnswer(writers, system, prompt, draftEvents, signal, draftDeadline));
   if (!answer.trim()) throw new ApiError(502, 'The model returned an empty answer.', 'empty_answer');
   const parsed = parseConfidence(answer);
   let checked = false;
@@ -1296,7 +1307,7 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
     if (!signal?.aborted && deadline - Date.now() > 1000) {
       try {
         const evidence = new Map(cards.map((card) => [card.n, sourcesBlock(archive, [card], liveEntries, undefined, card.kind === 'official' || card.kind === 'schedule' ? 3000 : 1400)]));
-        corrected = await checkDraft(writers, `${searchQuery}\nLatest requested detail: ${request.question}`, parsed.text, evidence, Math.min(8000, deadline - Date.now() - 500));
+        corrected = await timed(timings, 'check', checkDraft(writers, `${searchQuery}\nLatest requested detail: ${request.question}`, parsed.text, evidence, Math.min(8000, deadline - Date.now() - 500)));
       } catch (error) {
         console.warn('[ask] source check unavailable:', String((error as Error).message).slice(0, 160));
       }
@@ -1319,6 +1330,7 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
     model,
     confidence: parsed.confidence,
     retrieval: { candidates: retrieval.hits.length, reranked, ms: retrievalMs },
+    timings: logTimings(timings, started, model),
   };
   // Answers built on posts from this site are not kept: a notice can be removed, and an answer can be corrected.
   const fromSite = cards.some((card) => card.kind === 'board' || card.kind === 'announcement' || card.kind === 'review');
@@ -1348,7 +1360,7 @@ export async function gatherSources(
   archive: Archive,
   question: string,
   searchQuery: string,
-  context: { cfg: GeminiConfig | null; official?: OfficialCorpus | null; catalog: Catalog | null; reranker: Reranker | null; board: BoardStore | null; writers?: Writers; retrievalMode?: 'hybrid' },
+  context: { cfg: GeminiConfig | null; official?: OfficialCorpus | null; catalog: Catalog | null; reranker: Reranker | null; board: BoardStore | null; writers?: Writers; retrievalMode?: 'hybrid'; timings?: Timings },
   events: AskEvents = {},
 ): Promise<Gathered> {
   searchQuery = safeRewrite(question, searchQuery);
@@ -1385,7 +1397,8 @@ export async function gatherSources(
     const taught = [...context.catalog.byCode].flatMap(([code, offerings]) => offerings.filter((offering) => offering.sections.some((section) => section.instructors.some((raw) => schedule.instructors.includes(displayName(raw))))).map((offering) => ({ code, term: termOrder(offering.term) })));
     for (const entry of taught.sort((a, b) => b.term - a.term)) if (!reviewCodes.includes(entry.code)) reviewCodes.push(entry.code);
   }
-  const reviewsPromise = experience ? within(courseReviewSources(context.board, reviewCodes), 2_000).catch(() => []) : Promise.resolve([]);
+  const t = context.timings;
+  const reviewsPromise = experience ? timed(t, 'reviews', within(courseReviewSources(context.board, reviewCodes), 2_000)).catch(() => []) : Promise.resolve([]);
   searchQuery = safeRewrite(question, searchQuery);
   const people = questionPeople(archive, context.catalog, schedule.instructors, `${originalQuestion}\n${question}`, searchQuery);
   // What students said about the courses and professors named, from the review digests: one compact source each. A
@@ -1396,15 +1409,15 @@ export async function gatherSources(
   const ranking = RANKING.test(question) && MANY.test(question) && (!entities.length || (!people.length && !/\b[A-Z]{2,7}[- ]?(?:UH[- ]?)?\d{4}\b/i.test(question) && rankingSubjects(question, context.catalog!).length > 0));
   if (ranking) entities = [];
   const digestsPromise: Promise<LiveSource[]> = !experience ? Promise.resolve([])
-    : entities.length ? within(digestSources(context.board, context.catalog, entities), 2_000).catch(() => [])
-    : ranking ? within(rankingSource(context.board, context.catalog, question), 2_500).then((source) => (source ? [source] : [])).catch(() => []) : Promise.resolve([]);
+    : entities.length ? timed(t, 'digests', within(digestSources(context.board, context.catalog, entities), 2_000)).catch(() => [])
+    : ranking ? timed(t, 'digests', within(rankingSource(context.board, context.catalog, question), 2_500)).then((source) => (source ? [source] : [])).catch(() => []) : Promise.resolve([]);
   const named = (text: string) => people.length === 0 || people.some((who) => mentions(text, who));
   const queries = searchQueries(originalQuestion, searchQuery);
   const campusCard = queries.includes('card services');
   const [retrieval, officialPool, livePool, reviewPool, digests] = await Promise.all([
-    retrieve(archive, searchQuery, { queries, people, k: CANDIDATES, useDense: hybrid, recencyWeight: timely ? 0.004 : 0.002 }),
-    officialCandidates(context.official, searchQuery, queries, archive, { hits: [], terms: [], dense: false, ms: 0 }),
-    within(liveSources(context.board, searchQuery, tokenize(searchQuery), undefined), 2_000).catch(() => []),
+    retrieve(archive, searchQuery, { queries, people, k: CANDIDATES, useDense: hybrid, recencyWeight: timely ? 0.004 : 0.002, timings: t }),
+    timed(t, 'official', officialCandidates(context.official, searchQuery, queries, archive, { hits: [], terms: [], dense: false, ms: 0 })),
+    timed(t, 'live', within(liveSources(context.board, searchQuery, tokenize(searchQuery), undefined), 2_000)).catch(() => []),
     reviewsPromise,
     digestsPromise,
   ]);
@@ -1434,7 +1447,7 @@ export async function gatherSources(
   });
   const eligibleLive = livePool.filter((entry) => named(`${entry.card.author} ${entry.card.title} ${entry.card.text}`));
   const eligibleReviews = reviewPool.filter((entry) => named(`${entry.card.title} ${entry.card.text}`));
-  const ranked = retrieval.hits.length || officialPool || livePool.length ? await withStatus(events, 'Ranking sources', rank(archive, question, retrieval, officialPool, eligibleLive, hybrid ? context.reranker : null, timely)) : { archive: [], official: [], live: [], reranked: false };
+  const ranked = retrieval.hits.length || officialPool || livePool.length ? await withStatus(events, 'Ranking sources', timed(t, 'rerank', rank(archive, question, retrieval, officialPool, eligibleLive, hybrid ? context.reranker : null, timely))) : { archive: [], official: [], live: [], reranked: false };
   // A firsthand reply in a thread naming the exact course or professor remains evidence even if a general-purpose
   // reranker scores its short, informal wording below the normal source threshold.
   const hasReview = (hit: Hit) => {
@@ -1546,6 +1559,24 @@ async function within<T>(work: Promise<T>, ms: number): Promise<T> {
   try {
     return await Promise.race([work, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Search service timed out')), ms); })]);
   } finally { clearTimeout(timer!); }
+}
+
+/** Stage name -> milliseconds; parallel parts of one question keep the slowest. */
+export type Timings = Record<string, number>;
+
+function logTimings(timings: Timings, started: number, outcome: string): Timings {
+  timings.total = Date.now() - started;
+  console.info(`[ask] timings ${outcome}: ${Object.entries(timings).map(([stage, ms]) => `${stage}=${ms}`).join(' ')}`);
+  return timings;
+}
+
+async function timed<T>(timings: Timings | undefined, stage: string, work: Promise<T>): Promise<T> {
+  const started = Date.now();
+  try {
+    return await work;
+  } finally {
+    if (timings) timings[stage] = Math.max(timings[stage] ?? 0, Date.now() - started);
+  }
 }
 
 async function withStatus<T>(events: AskEvents, message: string, work: Promise<T>): Promise<T> {

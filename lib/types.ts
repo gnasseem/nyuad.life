@@ -120,6 +120,8 @@ export interface AskResponse {
     reranked: boolean;
     ms: number;
   };
+  /** Milliseconds each stage took (stages run side by side, so they do not add up), and `first` to the first word. */
+  timings?: Record<string, number>;
 }
 
 export interface AdminData {

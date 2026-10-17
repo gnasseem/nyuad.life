@@ -15,7 +15,10 @@ import { ownerOf } from '../lib/identity.ts';
 import { lastAlert, modelUsage, saveModelUsage } from '../lib/model-usage.ts';
 import { checkModels, modelKeys, providersFromEnv, warmModels } from '../lib/providers.ts';
 import { reviewsJobToken, runReviews } from '../lib/reviews.ts';
+import { loadOfficial } from '../lib/official.ts';
+import { ask, validateAsk } from '../lib/rag.ts';
 import { loadArchive } from '../lib/store.ts';
+import type { ChatTurn } from '../lib/types.ts';
 import { supabaseConfig } from '../lib/supabase.ts';
 import { collapseWhitespace } from '../lib/text.ts';
 
@@ -40,6 +43,32 @@ export default route(['GET', 'POST'], async (req, res) => {
     // gives up on a response that has not started after five.
     const result = await runReviews({ store: board, archive: await loadArchive(), catalog: loadCatalog(), deadline: started + 180_000, end: started + 240_000, workers: Math.min(4, Math.max(1, Number(body.workers) || 3)), limit: Number(body.limit) || undefined, log: (message) => console.log(`[reviews] ${message}`) });
     sendJson(res, 200, result);
+    return;
+  }
+  // One question answered the way /api/ask answers it, with what each stage took: for timing Ask against the real models
+  // from scripts (the job token) or the admin page. The cache is skipped unless asked for.
+  if (op === 'ask-profile' && req.method === 'POST') {
+    if (!jobToken(req)) await requireAdmin(cfg, req);
+    const loadStarted = Date.now();
+    const warming = warmModels().catch(() => undefined);
+    const [archive, official] = await Promise.all([loadArchive(), loadOfficial().catch(() => null)]);
+    const loadMs = Date.now() - loadStarted;
+    await warming;
+    const history = Array.isArray(body.history) ? (body.history as ChatTurn[]) : [];
+    const request = validateAsk({ question: String(body.question ?? ''), history, stream: true });
+    const started = Date.now();
+    const events: Array<[number, string, string]> = [];
+    let streamed = '';
+    const result = await ask(archive, geminiConfig(), request, {
+      status: (message) => events.push([Date.now() - started, 'status', message]),
+      sources: (cards) => events.push([Date.now() - started, 'sources', String(cards.length)]),
+      delta: (text) => {
+        if (!streamed) events.push([Date.now() - started, 'first', text.slice(0, 40)]);
+        streamed += text;
+      },
+      replace: (text) => events.push([Date.now() - started, 'replace', text.slice(0, 40)]),
+    }, undefined, { board: store, official, backups: providersFromEnv(), cache: body.cache === true });
+    sendJson(res, 200, { loadMs, timings: result.timings, events, answer: result.answer, streamed, model: result.model, confidence: result.confidence, cached: result.cached ?? false, sources: result.sources.map((card) => `${card.kind}: ${card.title || card.url || card.postId}`) });
     return;
   }
   const session = await requireAdmin(cfg, req);
