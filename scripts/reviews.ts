@@ -43,10 +43,10 @@ if (remote) {
     process.exit(1);
   }
   let calls = 0;
-  let idle = 0;
   let failures = 0;
-  // One slice at a time: each reads threads for a few minutes and says what is left. A slice that got no model to
-  // answer is followed by a pause; half an hour of them ends the run, and the next run carries on.
+  // One slice at a time: each reads threads for a few minutes and says what is left. The free models run out (a day's
+  // tokens) or get overloaded for hours, and the network drops, so a slice that read nothing, or failed, is followed by
+  // a pause that grows to half an hour; only --minutes ends the run early, and the next run carries on anyway.
   while (Date.now() < deadline) {
     const response = await fetch(`${remote.replace(/\/+$/, '')}/api/admin`, {
       method: 'POST',
@@ -54,33 +54,28 @@ if (remote) {
       body: JSON.stringify({ op: 'reviews', workers, limit }),
       signal: AbortSignal.timeout(330_000),
     }).catch((error: Error) => error);
-    if (response instanceof Error || !response.ok) {
-      const reason = response instanceof Error ? response.message : `${response.status} ${(await response.text()).slice(0, 200)}`;
-      if (++failures >= 4) {
-        console.error(`[reviews] The job failed four times in a row (${reason}).`);
-        process.exit(1);
-      }
-      log(`The job failed (${reason}); trying again in a minute.`);
-      await new Promise((resolve) => setTimeout(resolve, 60_000));
-      continue;
-    }
-    failures = 0;
-    const result = (await response.json()) as ReviewResult;
-    calls += result.calls;
-    log(`Slice: ${result.threads.read} threads read, ${result.threads.left} left of ${result.threads.named}; ${result.mentions} mentions; ${result.calls} model calls${result.digests ? `; digests ${result.digests.written} written, ${result.digests.unchanged} unchanged, ${result.digests.left} left` : ''}.`);
-    // A trial (--limit) is one slice.
-    if (result.done || limit) {
-      report(result);
-      break;
-    }
-    if (result.calls === 0 && (result.threads.left > 0 || (result.digests?.left ?? 0) > 0)) {
-      if (++idle >= 6) {
-        log('No model answered for half an hour; stopping. Run again later to carry on.');
+    const failed = response instanceof Error || !response.ok;
+    if (!failed) {
+      const result = (await response.json()) as ReviewResult;
+      calls += result.calls;
+      log(`Slice: ${result.threads.read} threads read, ${result.threads.left} left of ${result.threads.named}; ${result.mentions} mentions; ${result.calls} model calls${result.digests ? `; digests ${result.digests.written} written, ${result.digests.unchanged} unchanged, ${result.digests.left} left` : ''}.`);
+      // A trial (--limit) is one slice.
+      if (result.done || limit) {
+        report(result);
         break;
       }
-      log('No model answered in that slice; waiting five minutes.');
-      await new Promise((resolve) => setTimeout(resolve, 300_000));
-    } else idle = 0;
+      if (result.calls > 0) {
+        failures = 0;
+        continue;
+      }
+    } else {
+      const reason = response instanceof Error ? response.message : `${response.status} ${(await response.text()).slice(0, 200)}`;
+      log(`The job failed (${reason}).`);
+      if (response instanceof Response && (response.status === 401 || response.status === 403)) process.exit(1);
+    }
+    const wait = Math.min(1_800_000, 60_000 * 2 ** failures++);
+    log(`Nothing read in that slice; trying again in ${Math.round(wait / 60_000)} minutes.`);
+    await new Promise((resolve) => setTimeout(resolve, wait));
   }
   log(`${calls} model calls in ${Math.round((Date.now() - started) / 60_000)} minutes.`);
 } else {
