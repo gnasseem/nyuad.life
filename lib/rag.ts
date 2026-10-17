@@ -930,7 +930,7 @@ function evidencePassages(block: string): string[] {
 }
 
 /** Only existing, non-question passages can support an answer; source numbers and review dates are attached here. */
-export function checkedAnswer(value: unknown, blocks: ReadonlyMap<number, string>): string | null {
+export function checkedAnswer(value: unknown, blocks: ReadonlyMap<number, string>, question = ''): string | null {
   if (!value || typeof value !== 'object') return null;
   const { claims } = value as { claims?: unknown };
   if (!Array.isArray(claims) || !claims.length || claims.length > 6) return null;
@@ -973,7 +973,26 @@ export function checkedAnswer(value: unknown, blocks: ReadonlyMap<number, string
     const clean = text.replace(/\[\d+(?:,\s*\d+)*\]/g, '').trim().replace(/\.$/, '');
     sentences.push(`${clean}${dated}${scope} ${citations}.`);
   }
-  return sentences.length ? sentences.join(' ') : null;
+  if (!sentences.length) return null;
+  const answer = sentences.join(' ');
+  // Timetable summaries must keep the adjacent exceptions that determine whether someone can actually enter.
+  if (/\b(?:can|could|may|does that mean|access|eligible|eligibility|allowed)\b/i.test(question) && /\b(?:use|enter|swim|access|eligible|eligibility|allowed)\b/i.test(question)) {
+    const cited = new Set([...answer.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1])));
+    const restrictions: string[] = [];
+    for (const [source, block] of blocks) {
+      if (!cited.has(source) || !/^\[\d+\] Official NYUAD page/.test(block) || !/\b(?:regular|operating|opening).{0,30}hours\b/i.test(block)) continue;
+      const lines = evidencePassages(block);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
+        if (!/\b(?:only|closed to|restricted|limited)\b/i.test(line) || !/\b(?:hours?|sessions?|access|lanes?|members?)\b/i.test(line)) continue;
+        const detail = [line];
+        while (/\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)s?\b/i.test(lines[i + 1] ?? '') && /\d\s*(?:am|pm)|\d:\d{2}/i.test(lines[i + 1] ?? '')) detail.push(lines[++i]!);
+        restrictions.push(`${detail.join(' ')} [${source}]`);
+      }
+    }
+    if (restrictions.length) return `${answer}\n\n${restrictions.join('; ')}`;
+  }
+  return answer;
 }
 
 async function checkDraft(writers: Writers, question: string, draft: string, evidence: ReadonlyMap<number, string>, timeoutMs: number): Promise<string | null> {
@@ -984,7 +1003,7 @@ async function checkDraft(writers: Writers, question: string, draft: string, evi
   const result: unknown = writers.chatgpt
     ? JSON.parse((await liteText(writers.chatgpt.cfg, writers.chatgpt.token, `${system}\nReturn only the JSON object.`, prompt, timeoutMs)).trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, ''))
     : await siteJson(writers.gemini, writers.backups, { system, prompt, schema, tier: 'main', maxOutputTokens: 1400, timeoutMs, stepMs: Math.min(4500, timeoutMs), hedgeMs: 1500 });
-  return checkedAnswer(result, evidence);
+  return checkedAnswer(result, evidence, question);
 }
 
 /** The full pipeline. Emits sources first, then answer deltas; also returns everything at the end. */
@@ -1156,7 +1175,7 @@ export async function gatherSources(
   // A resolved follow-up supplies its subject to every stage, including identity and hours filtering.
   const resolved = searchQuery;
   context = { ...context, catalog: questionCatalog(context.catalog, resolved) };
-  const schedule = scheduleSources(context.catalog, resolved, resolved);
+  const schedule = scheduleSources(context.catalog, `${originalQuestion}\n${resolved}`, resolved);
   const scheduleQuestion = /\b(?:who teaches|who is teaching|what (?:does|courses|classes)|which (?:courses|classes)|when|where|schedule|seats|credits)\b/i.test(question);
   const experience = !scheduleQuestion && (/\b(?:reviews?|opinions?|good|bad|dislike|worth|easiest|hardest|easy|hard|workload|grading|grades?|professors?|prof|teach|taught|like|avoid|recommend|best|worst|experience)\b/i.test(question) || /\b(?:how is|how are|thoughts on|what about)\b/i.test(question));
   const hybrid = context.retrievalMode === 'hybrid' || process.env.ROR_RETRIEVAL === 'hybrid' || (process.env.ROR_RETRIEVAL !== 'keyword' && experience);
@@ -1167,7 +1186,7 @@ export async function gatherSources(
   }
   const reviewsPromise = experience ? within(courseReviewSources(context.board, reviewCodes), 2_000).catch(() => []) : Promise.resolve([]);
   searchQuery = safeRewrite(question, searchQuery);
-  const people = questionPeople(archive, context.catalog, schedule.instructors, question, searchQuery);
+  const people = questionPeople(archive, context.catalog, schedule.instructors, `${originalQuestion}\n${question}`, searchQuery);
   const named = (text: string) => people.length === 0 || people.some((who) => mentions(text, who));
   const queries = searchQueries(originalQuestion, searchQuery);
   const campusCard = queries.includes('card services');

@@ -24,6 +24,17 @@ it('requires existing observations and uses the selected reply date, not just th
   expect(checkedAnswer({ claims: [{ text: 'Use https://fake.example/fee.', supports: [{ source: 2, passage: 1 }] }] }, evidence)).toBeNull();
 });
 
+it('keeps adjacent access restrictions when a generated timetable summary omits them', () => {
+  const evidence = new Map([[1, '[1] Official NYUAD page: Sports facility\nRegular Operating Hours\nMonday to Thursday: 6am-10pm\nDuring classes there may be limited lanes for community access\nMembers only hours (closed to other community members)\nThursdays & Saturdays: 12 pm - 2 pm\nMondays & Wednesdays: 4:00 pm - 6:15 pm\nOnly sandals are allowed on the deck.']]);
+  const claims = { claims: [{ text: 'The facility opens Monday to Thursday from 6am to 10pm.', supports: [{ source: 1, passage: 2 }] }] };
+  const answer = checkedAnswer(claims, evidence, 'Can I use the facility at those times?');
+  expect(answer).toContain('Thursdays & Saturdays: 12 pm - 2 pm');
+  expect(answer).toContain('Mondays & Wednesdays: 4:00 pm - 6:15 pm [1]');
+  expect(answer).toContain('limited lanes');
+  expect(answer).not.toContain('sandals');
+  expect(checkedAnswer(claims, evidence, 'What are the opening hours?')).not.toContain('Members only');
+});
+
 describe('parseConfidence', () => {
   it('keeps the original query and expands campus aliases even without a rewrite model', () => {
     const variants = searchQueries('pool timings with my CS-UH 1001 schedule', 'indoor pool opening hours');
@@ -248,6 +259,9 @@ it('defaults course-title matching to Abu Dhabi even when the global catalog dup
   expect(result.cards.filter((card) => card.kind === 'schedule').map((card) => card.postId)).toEqual(['CS-UH 1001']);
   const housing = await gatherSources(archive, 'can first years pick roommates?', 'can first years pick roommates?', { cfg: null, official: null, catalog, reranker: null, board: null });
   expect(housing.cards).toEqual([]);
+  const scoped = buildCatalog([{ code: 'MATH-UH 1022', title: 'Linear Algebra', term: 'Fall 2026', description: '', scraped: '2026-10-16T00:00:00Z', sections: [{ classNumber: '1234', section: '001', component: 'Lecture', topic: '', units: '4', status: 'Open', session: 'AD', startDate: '2026-08-24', endDate: '2026-12-14', grading: '', mode: 'In-Person', location: 'Abu Dhabi', instructors: ['Rossi, Marco'], meetings: [], notes: '' }] }]);
+  const abbreviated = await gatherSources(archive, 'Marco for LA: reviews?', 'What are the reviews of Professor Marco Rossi?', { cfg: null, official: null, catalog: scoped, reranker: null, board: null });
+  expect(abbreviated.cards.some((card) => card.kind === 'schedule' && card.postId === 'MATH-UH 1022')).toBe(true);
 });
 
 it('keeps a timetable candidate when another passage on the same page repeats the subject more often', async () => {
