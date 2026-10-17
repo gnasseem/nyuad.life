@@ -36,8 +36,9 @@ export default route(['GET', 'POST'], async (req, res) => {
     const board = need(store);
     if (!board.persistent) throw new ApiError(503, 'Reviews are kept in Supabase, which this server does not have.', 'board_unavailable');
     const started = Date.now();
-    // About three and a half minutes of reading, and nothing still running after four and a half (the limit is five).
-    const result = await runReviews({ store: board, archive: await loadArchive(), catalog: loadCatalog(), deadline: started + 210_000, end: started + 270_000, workers: Math.min(4, Math.max(1, Number(body.workers) || 3)), limit: Number(body.limit) || undefined, log: (message) => console.log(`[reviews] ${message}`) });
+    // Three minutes of reading, and nothing still running after four: the function may run five, and a caller's fetch
+    // gives up on a response that has not started after five.
+    const result = await runReviews({ store: board, archive: await loadArchive(), catalog: loadCatalog(), deadline: started + 180_000, end: started + 240_000, workers: Math.min(4, Math.max(1, Number(body.workers) || 3)), limit: Number(body.limit) || undefined, log: (message) => console.log(`[reviews] ${message}`) });
     sendJson(res, 200, result);
     return;
   }

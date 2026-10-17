@@ -69,7 +69,7 @@ if (remote) {
         continue;
       }
     } else {
-      const reason = response instanceof Error ? response.message : `${response.status} ${(await response.text()).slice(0, 200)}`;
+      const reason = response instanceof Error ? `${response.message}${(response.cause as { code?: string } | undefined)?.code ? ` (${(response.cause as { code: string }).code})` : ''}` : `${response.status} ${(await response.text()).slice(0, 200)}`;
       log(`The job failed (${reason}).`);
       if (response instanceof Response && (response.status === 401 || response.status === 403)) process.exit(1);
     }

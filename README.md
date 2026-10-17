@@ -283,8 +283,8 @@ a score where a rating two years old weighs half as much as one from today, diff
 new mentions. Courses go under the code they carry now, so "MATH-UH 1012Q" and "MATH-UH 1012" share one.
 
 The model keys live on Vercel, so the work normally runs there: `npm run reviews -- --remote https://www.nyuad.life`
-starts one slice at a time (`POST /api/admin` with `op=reviews`, about three and a half minutes of reading each,
-inside the function's five-minute limit) until nothing is left. It authenticates with a token derived from the
+starts one slice at a time (`POST /api/admin` with `op=reviews`, about three minutes of reading each, answered
+within four) until nothing is left. It authenticates with a token derived from the
 Supabase service key (`reviewsJobToken` in lib/reviews.ts), so it needs only `SUPABASE_SERVICE_ROLE_KEY` in `.env`, or
 `REVIEWS_JOB_TOKEN` (a GitHub Actions secret) in CI. Plain `npm run reviews` runs it on this machine instead, with
 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, the archive's index (`npm run archive -- pull index`) and free model keys.
