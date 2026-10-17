@@ -64,7 +64,9 @@ beforeAll(async () => {
         return;
       }
       res.setHeader('content-type', 'text/event-stream');
-      const text = json.instructions.includes('follow-up questions') ? 'How hard is the midterm?\nWho grades fairest?\nWhen is office hours?' : 'Take **Dania** [1].\n\nConfidence: high – everyone agrees';
+      const text = json.instructions.includes('Check and correct a draft')
+        ? JSON.stringify({ claims: [{ text: 'Take **Dania**.', supports: [{ source: 1, passage: 3 }] }] })
+        : json.instructions.includes('follow-up questions') ? 'How hard is the midterm?\nWho grades fairest?\nWhen is office hours?' : 'Take **Dania** [1].\n\nConfidence: high – everyone agrees';
       for (const piece of text.match(/.{1,12}/gs) ?? []) res.write(`event: response.output_text.delta\ndata: ${JSON.stringify({ type: 'response.output_text.delta', delta: piece })}\n\n`);
       res.end(`event: response.completed\ndata: ${JSON.stringify({ type: 'response.completed', response: { status: 'completed' } })}\n\n`);
       return;
@@ -212,12 +214,13 @@ describe('Sign in with ChatGPT', () => {
     seen.responses.length = 0;
     const { events } = await askStream(cookie);
     const answer = events.filter((entry) => entry.event === 'delta').map((entry) => entry.data.text).join('');
-    expect(answer).toContain('Take **Dania** [1].');
+    expect(answer).toContain('Take **Dania**');
+    expect(answer).toContain('[1]');
     const done = events.at(-1)!;
     expect(done.event).toBe('done');
     // 6.1 Sol is not available to this client, so the answer came from the next model.
     expect(done.data.model).toBe('chatgpt:gpt-6-sol');
-    expect(done.data.confidence).toEqual({ level: 'high', reason: 'everyone agrees' });
+    expect(done.data.confidence.level).toBe('medium');
     const calls = seen.responses;
     expect(calls.every((call) => call.auth === 'Bearer plan-token-1')).toBe(true);
     for (const call of calls) {

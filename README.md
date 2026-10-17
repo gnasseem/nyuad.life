@@ -8,6 +8,7 @@ Everyone signs up once (name, NetID, major and year) after a short animated tour
 archive browsing, plan reading and contacts to anyone who has not.
 
 - **Ask.** Original questions and focused campus aliases searched together with keyword coverage. Campus services use keyword retrieval and local passage matching; student experience questions also use archive vectors and Voyage's bounded cross-encoder, with the same bounded fallback when a keyword search finds no evidence. `ROR_RETRIEVAL=keyword` or `hybrid` forces either approach for comparison. Official retrieval keeps several candidate passages per page so an FAQ cannot hide a timetable; extracted service sidebars and reference links remain available to the answer.
+  Answers are checked against supporting passages before any answer text reaches the browser. Unknown citations, invented passage references and unsupported review years are rejected; a failed check leaves the sources available with a clear verification message. Review summaries retain dates, and course-specific threads are read ahead of general professor discussions.
   Answers are written by Gemini, with backup models when Gemini is overloaded or spent, or on the student's own ChatGPT plan
   when they sign in with ChatGPT. Past conversations are listed down the left, as in a chat app. A question about a course or a professor gets the Albert schedule first (course codes
   in any spelling, titles the way students say them, "calc", "intro to cs", or a subject for "classes about machine

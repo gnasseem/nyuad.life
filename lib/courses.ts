@@ -369,9 +369,9 @@ function normalizeName(name: string): string {
   return fold(displayName(name));
 }
 
-const TEACHING = /\b(?:prof|professor|professors|dr|teach|teaches|teaching|taught|instructor|lecturer|class|classes|course|courses|section|sections|take|taking|took|with)\b/;
+const TEACHING = /\b(?:prof|professor|professors|dr|teach|teaches|teaching|taught|instructor|lecturer|lectures|class|classes|course|courses|section|sections|take|taking|took|with|reviews|grading)\b/;
 // Surnames that are also ordinary English words students use in course questions.
-export const COMMON_WORDS = new Set(['young', 'long', 'love', 'hall', 'green', 'white', 'black', 'brown', 'king', 'rich', 'west', 'will', 'may', 'hope', 'early', 'case', 'park', 'wood', 'more', 'good', 'best', 'hill', 'field', 'stone', 'bell', 'lane', 'street', 'north', 'south', 'cook', 'baker', 'mason', 'price', 'grant', 'hunt', 'major', 'minor', 'core', 'data']);
+export const COMMON_WORDS = new Set(['young', 'long', 'love', 'hall', 'green', 'white', 'black', 'brown', 'king', 'rich', 'west', 'will', 'may', 'hope', 'early', 'case', 'park', 'wood', 'more', 'good', 'best', 'hill', 'field', 'stone', 'bell', 'lane', 'street', 'north', 'south', 'cook', 'baker', 'mason', 'price', 'grant', 'hunt', 'major', 'minor', 'core', 'data', 'mark', 'marks', 'grade', 'grades']);
 
 export interface ScheduleMatch {
   courses: string[];
@@ -418,11 +418,24 @@ export function matchSchedule(catalog: Catalog, question: string, limits = { cou
     const bySurname = teaching && surname.length >= 4 && !COMMON_WORDS.has(surname) && folded.includes(` ${surname} `);
     if (full || bySurname) instructors.push(name);
   }
+  // A short title initialism is usable when a named teacher makes it unambiguous; bare initials may name a city.
+  if (!courses.length && teaching) {
+    const initials = new Set(question.match(/\b[A-Z]{2,4}\b/g) ?? []);
+    const matches = [...catalog.byCode].filter(([, offerings]) => offerings.some((offering) => {
+      const head = offering.title.split(/\s+(?:with|for)\s+|:/i)[0]!;
+      const initial = head.split(/\s+/).map((word) => word[0]).join('').toUpperCase();
+      return initials.has(initial) && offering.sections.some((section) => section.instructors.some((raw) => {
+        const name = displayName(raw), first = fold(name).split(' ')[0]!;
+        return instructors.includes(name) || first.length >= 4 && !COMMON_WORDS.has(first) && folded.includes(` ${first} `);
+      }));
+    })).map(([code]) => currentCode(catalog, code));
+    if (new Set(matches).size === 1) add(matches[0]!);
+  }
   // A first name can identify a professor once the course has narrowed the roster ("Nizar's MVC for Econ").
   const courseTeachers = courses.flatMap((code) => (catalog.byCode.get(code) ?? []).flatMap((offering) => offering.sections.filter((section) => section.status !== 'Cancelled').flatMap((section) => section.instructors.map(displayName))));
   const firstMatches = [...new Set(courseTeachers)].filter((name) => {
     const first = fold(name).split(' ')[0]!;
-    return first.length >= 4 && folded.includes(` ${first} `);
+    return first.length >= 4 && (!COMMON_WORDS.has(first) || new RegExp(`\\b(?:with|prof(?:essor)?) ${first}\\b`).test(folded)) && folded.includes(` ${first} `);
   });
   if (firstMatches.length === 1) {
     if (!instructors.includes(firstMatches[0]!)) instructors.push(firstMatches[0]!);

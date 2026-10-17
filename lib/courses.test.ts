@@ -200,3 +200,13 @@ it('retains both courses in a comparison when only one teacher is named by first
   expect(matched.courses.sort()).toEqual(['MATH-UH 1021', 'MATH-UH 1022']);
   expect(matched.instructors.sort()).toEqual(['Dania Zantout', 'Marco Rossi']);
 });
+
+it('distinguishes grades from a surname and resolves an initialism through a named course teacher', () => {
+  const scoped = buildCatalog([
+    offering('Fall 2026', 'MATH-UH 1022', 'Linear Algebra', ['Rossi, Marco']),
+    offering('Fall 2026', 'CCOL-UH 1001', 'What Is Secularism', ['Marks, Monica']),
+  ]);
+  expect(matchSchedule(scoped, 'is rossi easy with marks or do people complain about lectures?').instructors).toEqual(['Marco Rossi']);
+  expect(matchSchedule(scoped, 'Marco for LA: what do the reviews say?')).toEqual({ courses: ['MATH-UH 1022'], instructors: ['Marco Rossi'] });
+  expect(matchSchedule(scoped, 'how is LA for jterm?').courses).toEqual([]);
+});

@@ -1,10 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { gatherSources, matchesPerson, personName, safeRewrite, parseConfidence, searchQueries, sourcesBlock, systemPrompt } from './rag.ts';
+import { checkedAnswer, gatherSources, matchesPerson, personName, safeRewrite, parseConfidence, searchQueries, sourcesBlock, systemPrompt } from './rag.ts';
 import type { OfficialCorpus } from './official.ts';
 import type { Archive } from './store.ts';
 import { buildBm25 } from './search.ts';
 import { emptyTable } from './vectors.ts';
 import { buildCatalog } from './courses.ts';
+
+it('requires existing observations and uses the selected reply date, not just the thread date', () => {
+  const evidence = new Map([[1, '[1] Post by Student on 17 Apr 2016\nThoughts on this professor?\nComments:\n- One student (1 Nov 2023): Lectures were confusing but exams were fair.\n- Another student [question, not a reported experience]: Is he strict about attendance?'], [2, '[2] Official NYUAD page: Card Services\nThe office is open 24/7 in Building A4.']]);
+  const good = { claims: [{ text: 'One student found lectures confusing but exams fair.', supports: [{ source: 1, passage: 3 }] }] };
+  expect(checkedAnswer(good, evidence)).toContain('2023 student feedback');
+  expect(checkedAnswer(good, evidence)).toContain('[1]');
+  const otherCourse = new Map([[1, evidence.get(1)!.replace('on 17 Apr 2016', 'on 17 Apr 2016 · Review scope: professor generally, other or unspecified courses; not a review of the requested course')]]);
+  expect(checkedAnswer(good, otherCourse)).toContain('includes feedback from other or unspecified courses');
+  expect(checkedAnswer({ claims: ['', { text: 'A student found confusing lectures but fair exams.', supports: [{ source: 1, passage: 1 }, { source: 1, passage: 3 }] }, ''] }, evidence)).toContain('2023 student feedback');
+  const housing = new Map([[1, '[1] Official housing page\nTo cancel, contact Residential Life by email.']]);
+  expect(checkedAnswer({ claims: [{ text: 'The provided sources do not specify the summer 2027 application deadline. Contact Residential Life by email.', supports: [{ source: 1, passage: 1 }] }] }, housing)).toContain('2027');
+  expect(checkedAnswer({ claims: [{ text: 'The office opens 24/7.', supports: [{ source: 2, passage: 1 }] }] }, evidence)).toBe('The office opens 24/7 [2].');
+  for (const supports of [[{ source: 1, passage: 999 }], [{ source: 99, passage: 1 }], [{ source: 1, passage: 1 }], [{ source: 1, passage: 4 }], [{ source: 1, passage: 2 }]]) {
+    expect(checkedAnswer({ claims: [{ text: 'He is strict about attendance.', supports }] }, evidence)).toBeNull();
+  }
+  expect(checkedAnswer({ claims: [{ text: 'The 2026 reviews are mixed.', supports: [{ source: 1, passage: 3 }] }] }, evidence)).toBeNull();
+  expect(checkedAnswer({ claims: [{ text: 'Use https://fake.example/fee.', supports: [{ source: 2, passage: 1 }] }] }, evidence)).toBeNull();
+});
 
 describe('parseConfidence', () => {
   it('keeps the original query and expands campus aliases even without a rewrite model', () => {

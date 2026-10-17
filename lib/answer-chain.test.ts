@@ -22,6 +22,9 @@ const posts = [
 ];
 
 const ANSWER = 'Take it with **Dania** [1].\n\n- **Teaching:** clear and fair [1].\n\nConfidence: medium – one thread';
+const CHECKED = { claims: [{ text: 'Take it with **Dania**: students describe clear explanations and fair grading.', supports: [{ source: 1, passage: 3 }] }] };
+let checkedReply: unknown = CHECKED;
+let draftReply = ANSWER;
 
 /** What the fake Gemini does per model: answer, or fail with this status. */
 let geminiBehaviour: Record<string, number> = {};
@@ -38,7 +41,9 @@ let archive: Archive;
 
 beforeAll(async () => {
   gemini = createServer(async (req, res) => {
-    for await (const _ of req);
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
     const url = req.url ?? '';
     const model = /models\/([^:]+):/.exec(url)?.[1] ?? '';
     geminiSeen.push(`${model}:${url.includes('stream') ? 'stream' : 'call'}`);
@@ -50,11 +55,11 @@ beforeAll(async () => {
     }
     if (url.includes(':streamGenerateContent')) {
       res.setHeader('content-type', 'text/event-stream');
-      res.end(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: ANSWER }] }, finishReason: 'STOP' }] })}\n\n`);
+      res.end(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: draftReply }] }, finishReason: 'STOP' }] })}\n\n`);
       return;
     }
     res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ candidates: [{ content: { parts: [{ text: rewriteReply }] }, finishReason: 'STOP' }] }));
+    res.end(JSON.stringify({ candidates: [{ content: { parts: [{ text: body.generationConfig?.responseSchema?.properties?.claims ? JSON.stringify(checkedReply) : rewriteReply }] }, finishReason: 'STOP' }] }));
   });
   backup = createServer(async (req, res) => {
     const chunks: Buffer[] = [];
@@ -77,7 +82,8 @@ beforeAll(async () => {
     const text = behaviour === 'think' ? `<think>Let me weigh the threads…</think>\n\n${ANSWER}` : ANSWER;
     if (!body.stream) {
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ choices: [{ message: { content: 'Who teaches Calculus this term?\nIs the 8am section bad?' } }] }));
+      const checking = body.messages.some((message) => message.content.includes('Draft to check (not evidence):'));
+      res.end(JSON.stringify({ choices: [{ message: { content: checking ? JSON.stringify(checkedReply) : 'Who teaches Calculus this term?\nIs the 8am section bad?' } }] }));
       return;
     }
     res.setHeader('content-type', 'text/event-stream');
@@ -116,6 +122,8 @@ afterAll(async () => {
 
 beforeEach(() => {
   geminiBehaviour = {};
+  checkedReply = CHECKED;
+  draftReply = ANSWER;
   rewriteReply = '{"questions":["Is the 8am section bad?"]}';
   backupBehaviour = {};
   geminiSeen.length = 0;
@@ -142,6 +150,27 @@ function zai(id: string): Provider {
 const context = { catalog: null, reranker: null, cache: false } as const;
 
 describe('the answer model chain', () => {
+  it('does not expose a wrong draft before its checked replacement, and streams exactly the returned answer', async () => {
+    draftReply = 'Take the other teacher for 999 AED [99].\nConfidence: high';
+    const deltas: string[] = [];
+    const result = await ask(archive, geminiConfig()!, { question: 'best calculus professor?', stream: true }, { delta: (text) => deltas.push(text) }, undefined, { ...context, backups: [] });
+    expect(deltas.join('')).toBe(result.answer);
+    expect(result.answer).toContain('Dania');
+    expect(result.answer).toContain('2026');
+    expect(result.answer).not.toMatch(/999|other teacher|99/);
+  });
+
+  it('does not release a draft when the checker invents a supporting passage', async () => {
+    checkedReply = { claims: [{ text: 'Dania is perfect.', supports: [{ source: 1, passage: 999 }] }] };
+    const deltas: string[] = [];
+    const result = await ask(archive, geminiConfig()!, { question: 'best calculus professor?', stream: true }, { delta: (text) => deltas.push(text) }, undefined, { ...context, backups: [] });
+    expect(deltas.join('')).toBe(result.answer);
+    expect(result.answer).toContain("couldn't verify");
+    expect(result.answer).not.toContain('perfect');
+    expect(result.confidence?.level).toBe('low');
+    expect(result.sources.length).toBeGreaterThan(0);
+  });
+
   it('keeps the prior subject when the rewrite returns an unresolved follow-up unchanged', async () => {
     rewriteReply = 'and is the 8am section bad?';
     const query = await standaloneQuestion({ gemini: geminiConfig(), chatgpt: null, backups: [], order: ['gemini'] }, [{ role: 'user', content: 'best calculus professor?' }], rewriteReply);

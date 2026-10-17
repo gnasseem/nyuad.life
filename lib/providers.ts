@@ -702,7 +702,7 @@ async function downTheOrder<T>(
 export async function siteJson<T>(
   gemini: GeminiConfig | null,
   backups: Provider[],
-  params: { system: string; prompt: string; schema: Record<string, unknown>; tier?: 'lite' | 'main'; maxOutputTokens?: number; temperature?: number; timeoutMs?: number; stepMs?: number },
+  params: { system: string; prompt: string; schema: Record<string, unknown>; tier?: 'lite' | 'main'; maxOutputTokens?: number; temperature?: number; timeoutMs?: number; stepMs?: number; hedgeMs?: number },
 ): Promise<T> {
   const temperature = params.temperature ?? 0;
   const maxOutputTokens = params.maxOutputTokens ?? 1024;
@@ -715,7 +715,7 @@ export async function siteJson<T>(
   return downTheOrder<T>(
     gemini,
     backups,
-    { totalMs: timeoutMs, stepMs: params.stepMs ?? Math.ceil(timeoutMs * 0.6), hedgeMs: Math.min(params.stepMs ?? timeoutMs, maxOutputTokens <= 1_024 && params.tier !== 'main' ? 1_500 : 6_000), tier: params.tier ?? 'lite' },
+    { totalMs: timeoutMs, stepMs: params.stepMs ?? Math.ceil(timeoutMs * 0.6), hedgeMs: params.hedgeMs ?? Math.min(params.stepMs ?? timeoutMs, maxOutputTokens <= 1_024 && params.tier !== 'main' ? 1_500 : 6_000), tier: params.tier ?? 'lite' },
     (cfg, signal) => {
       const model = availableGemini(cfg, params.tier);
       return generateJson<T>(cfg, { model, system: params.system, messages, responseSchema: params.schema, temperature, maxOutputTokens }, { retries: 0, signal, timeoutMs });
