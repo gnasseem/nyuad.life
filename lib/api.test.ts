@@ -117,7 +117,7 @@ beforeAll(async () => {
       const prompt = body.contents.at(-1).parts[0].text as string;
       let text: string;
       if (schema?.properties?.claims) {
-        const supports = [...prompt.matchAll(/^\{(\d+):(\d+)\} (.*)$/gm)].filter((match) => /Clear lectures and fair exams\.|Take it with Dania, she explains everything clearly and grades fairly\.|Dania\. The new professor is fine too but moves fast\./.test(match[3]!)).map((match) => ({ source: Number(match[1]), passage: Number(match[2]) }));
+        const supports = [...prompt.matchAll(/^\{(\d+):(\d+)\} (.*)$/gm)].filter((match) => /Clear lectures and fair exams\.|^Students like: Clear lectures$|Take it with Dania, she explains everything clearly and grades fairly\.|Dania\. The new professor is fine too but moves fast\./.test(match[3]!)).map((match) => ({ source: Number(match[1]), passage: Number(match[2]) }));
         text = JSON.stringify({ claims: [{ text: 'Dania is recommended by students.', supports }] });
       } else if (schema?.properties?.scores) {
         const count = (prompt.match(/^\[\d+\]/gm) ?? []).length;
@@ -545,6 +545,21 @@ describe('api', () => {
     expect(scores.courses['MATH-UH 1012']).toEqual({ score: 4.2, basis: 7, difficulty: 3, workload: null });
     expect(scores.profs['Rana Dania']).toEqual({ score: 4.2, basis: 7 });
     expect(geminiCalls.length).toBe(calls);
+  });
+
+  it('answers a course question from its review digest, shown as the answer\'s own knowledge with a link to its page', async () => {
+    const result = await getJson(`${apiUrl}/api/ask`, { method: 'POST', headers, body: JSON.stringify({ question: 'Is MATH-UH 1012 a good class?', stream: false }) });
+    const prompt = geminiCalls.filter((call) => call.url.includes(':streamGenerateContent')).at(-1)!.prompt;
+    expect(prompt).toMatch(/^\[1\] What NYUAD students say about MATH-UH 1012 Calculus, from 7 student ratings in the group and on this site, Feb 2023 to Apr 2026 \(3 in the last two years\)\.$/m);
+    expect(prompt).toContain('Taught by Rana Dania: 4.5 out of 5 from 5 ratings (4 positive, 0 negative, 1 neutral).');
+    expect(result.sources.map((source: { kind: string }) => source.kind)).not.toContain('digest');
+    expect(result.answer).not.toMatch(/\[1\]/);
+    expect(result.answer).toContain('[Reviews: MATH-UH 1012](/courses/MATH-UH%201012)');
+
+    await getJson(`${apiUrl}/api/ask`, { method: 'POST', headers, body: JSON.stringify({ question: 'What are the easiest math courses?', stream: false }) });
+    const ranking = geminiCalls.filter((call) => call.url.includes(':streamGenerateContent')).at(-1)!.prompt;
+    expect(ranking).toContain('[1] Courses in MATH-UH, ranked easiest first, by how hard students found them');
+    expect(ranking).toContain('1. MATH-UH 1012 Calculus: difficulty 3.4 out of 5, overall 4.2 out of 5, from 7 ratings (5 positive, 1 negative), Feb 2023 to Apr 2026. Students like it.');
   });
 
   it('reads a plan request into codes the term has and rules the planner can use', async () => {

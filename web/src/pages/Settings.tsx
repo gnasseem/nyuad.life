@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { GROUP_URL } from '../brand';
+import { GROUP_URL, MAKER_URL } from '../brand';
 import { ChatGPTSignIn } from '../components/ChatGPT';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
@@ -169,6 +169,15 @@ export function SettingsPage() {
             </div>
             <a className="btn sm" href={GROUP_URL} target="_blank" rel="noreferrer">
               <IconExternal /> Facebook group
+            </a>
+          </div>
+          <div className="settings-row">
+            <div className="text">
+              <b>Made by George Nasseem</b>
+              <span>Ideas, problems or a post to take down: get in touch</span>
+            </div>
+            <a className="btn sm" href={MAKER_URL} target="_blank" rel="noreferrer">
+              <IconExternal /> nasseem.dev
             </a>
           </div>
           {boardProblem && (

@@ -1,5 +1,6 @@
 /** A small Markdown renderer for model answers: paragraphs, headings, lists, bold/italic/code, links and [n] citations. */
 import type { ReactNode } from 'react';
+import { onLinkClick } from './router';
 
 interface MarkdownProps {
   text: string;
@@ -142,7 +143,7 @@ interface InlineOptions {
   citeKind?(n: number): string | undefined;
 }
 
-const INLINE = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*\s][^*]*\*|_[^_\s][^_]*_|\[(?:\d+)(?:\]\[\d+)*\]|\[\d+(?:,\s*\d+)+\]|\[[^\]]+\]\((?:https?:\/\/)[^)\s]+\)|https?:\/\/[^\s)\[\]<>"]*[^\s)\[\].,;:!?'"<>])/g;
+const INLINE = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*\s][^*]*\*|_[^_\s][^_]*_|\[(?:\d+)(?:\]\[\d+)*\]|\[\d+(?:,\s*\d+)+\]|\[[^\]]+\]\((?:https?:\/\/|\/(?!\/))[^)\s]+\)|https?:\/\/[^\s)\[\]<>"]*[^\s)\[\].,;:!?'"<>])/g;
 
 function inline(text: string, options: InlineOptions): ReactNode[] {
   const nodes: ReactNode[] = [];
@@ -199,7 +200,9 @@ function inline(text: string, options: InlineOptions): ReactNode[] {
       nodes.push(...pills);
     } else if (token.startsWith('[')) {
       const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
-      if (link) nodes.push(<a key={key++} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>);
+      // A path on this site ("/courses/CS-UH%201001") opens in place; anything else in a new tab.
+      if (link?.[2]!.startsWith('/')) nodes.push(<a key={key++} href={link[2]} onClick={onLinkClick}>{link[1]}</a>);
+      else if (link) nodes.push(<a key={key++} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>);
       else nodes.push(token);
     } else nodes.push(<a key={key++} href={token} target="_blank" rel="noreferrer">{token.replace(/^https?:\/\//, '').slice(0, 60)}</a>);
     cursor = start + token.length;

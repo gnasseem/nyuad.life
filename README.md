@@ -17,6 +17,12 @@ archive browsing, plan reading and contacts to anyone who has not.
   ranked by how much each says about it and read by the reranker ahead of keyword matches. Newer threads are lifted, more so for questions about
   how things are now, and a thread the reranker finds unrelated is left out rather than padding the answer. Answers lead
   with the answer itself, integrate drawbacks into the verdict, and use at most 110 words without forced sections.
+  Once Reviews has a digest for the course or professor (below), the answer starts from it instead: counts, score,
+  difficulty, workload, dates and the split by professor, as one source read ahead of the schedule, with only the two
+  best of a dozen keyword and vector matches beside it. The answer states it as its own knowledge and links the course's
+  or professor's page in Reviews; the digest is never listed as a source. A question about something a digest does not
+  keep (an exam, a textbook, attendance) still reads the course's own threads. "Easiest Arts Core" or "best CS
+  professors" is answered from the subject's digests, ranked.
 - **Questions.** When the archive falls short, a question goes to students: a feed of every question with its answers,
   newest first, that anyone can answer in place, filtered to the ones for your major and year, the unanswered ones or
   your own; the + button asks a new one. Nobody can answer their own question or answer one twice. Answered questions
