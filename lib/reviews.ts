@@ -19,7 +19,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { unpackReviewText, type CourseReview, type Digest, type DigestPart, type Mention } from './board.ts';
 import type { BoardStore } from './board-store.ts';
-import { baseCode, currentCode, displayName, termOrder, type Catalog } from './courses.ts';
+import { baseCode, COMMON_WORDS, currentCode, displayName, termOrder, type Catalog } from './courses.ts';
 import { courseKey, courseNames, courseThreads, fold, mentions, person, personThreads, profKey, type Person } from './entities.ts';
 import { geminiConfig } from './gemini.ts';
 import { saveModelUsage } from './model-usage.ts';
@@ -139,6 +139,39 @@ function candidates(archive: Archive, catalog: Catalog): Candidates {
   const found = { catalog, byThread, names };
   candidateCache.set(archive, found);
   return found;
+}
+
+/* ---------- Students' names ---------- */
+
+const studentCache = new WeakMap<Archive, Set<string>>();
+
+/**
+ * Every word of the names of people who posted or commented in the group, but words in the name of anyone Albert lists
+ * as teaching at NYUAD (lab and recitation instructors included), in a course title, or ordinary words: the names a
+ * takeaway must not carry.
+ */
+function studentNames(archive: Archive, catalog: Catalog): Set<string> {
+  const known = studentCache.get(archive);
+  if (known) return known;
+  const kept = new Set<string>();
+  for (const [code, offerings] of catalog.byCode) {
+    for (const word of fold(offerings[0]!.title).split(' ')) kept.add(word);
+    if (!/-UH /.test(code)) continue;
+    for (const offering of offerings) for (const section of offering.sections) for (const raw of section.instructors) for (const word of fold(displayName(raw)).split(' ')) kept.add(word);
+  }
+  const names = new Set<string>();
+  for (const post of archive.posts) {
+    for (const author of [post.author, ...post.comments.map((comment) => comment.author)]) {
+      for (const word of fold(author).split(' ')) if (word.length >= 3 && !kept.has(word) && !COMMON_WORDS.has(word)) names.add(word);
+    }
+  }
+  studentCache.set(archive, names);
+  return names;
+}
+
+/** Takes students' names out of a takeaway or summary: "liked, but TA Sara is strict" -> "liked, but TA is strict". */
+export function withoutStudents(text: string, names: Set<string>): string {
+  return collapseWhitespace(text.replace(/\p{Lu}[\p{L}'’-]*/gu, (word) => (names.has(fold(word)) ? '' : word))).replace(/\s+([,.;:!?])/g, '$1');
 }
 
 /* ---------- Reading threads ---------- */
@@ -356,6 +389,7 @@ export interface ReviewResult {
 
 export async function runReviews(options: ReviewRun): Promise<ReviewResult> {
   const { store, archive, catalog, log } = options;
+  const students = studentNames(archive, catalog);
   const order = reviewModels();
   const gemini = order.includes('gemini') ? geminiConfig() : null;
   const backups = providersFromEnv().filter((provider) => order.includes(provider.family));
@@ -480,7 +514,7 @@ export async function runReviews(options: ReviewRun): Promise<ReviewResult> {
           const entry = Number(item.entry);
           const about = idOf.get(String(item.about ?? '').trim().toUpperCase());
           const sentiment = String(item.sentiment ?? '').toLowerCase();
-          const takeaway = tidy(item.takeaway, 200);
+          const takeaway = withoutStudents(tidy(item.takeaway, 200), students);
           if (!entries.includes(entry) || !about || !['positive', 'negative', 'neutral'].includes(sentiment) || takeaway.length < 6) continue;
           if (!grounded(String(item.quote ?? ''), texts[entry]!) || ASKING.test(takeaway)) continue;
           const key = `${ids[entry]}|${about.entity}`;
@@ -555,8 +589,8 @@ export async function runReviews(options: ReviewRun): Promise<ReviewResult> {
         ].join('\n');
         const result = await ask<{ verdict?: unknown; likes?: unknown; warnings?: unknown }>(SUMMARY_SYSTEM, prompt, SUMMARY_SCHEMA, 900);
         if (!result) return 'stopped';
-        const list = (value: unknown) => (Array.isArray(value) ? value.map((point) => tidy(point, 160)).filter((point) => point.length > 3).slice(0, 4) : []);
-        const verdict = tidy(result.verdict, 300);
+        const list = (value: unknown) => (Array.isArray(value) ? value.map((point) => withoutStudents(tidy(point, 160), students)).filter((point) => point.length > 3).slice(0, 4) : []);
+        const verdict = withoutStudents(tidy(result.verdict, 300), students);
         if (verdict) summary = { verdict, likes: list(result.likes), warnings: list(result.warnings) };
       }
     }
