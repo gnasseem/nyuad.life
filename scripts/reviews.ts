@@ -45,8 +45,8 @@ if (remote) {
   let calls = 0;
   let failures = 0;
   // One slice at a time: each reads threads for a few minutes and says what is left. The free models run out (a day's
-  // tokens) or get overloaded for hours, and the network drops, so a slice that read nothing, or failed, is followed by
-  // a pause that grows to half an hour; only --minutes ends the run early, and the next run carries on anyway.
+  // tokens) or get overloaded for hours, so a slice no model answered in is followed by a pause that grows to half an
+  // hour; a failed request is tried again after a minute. Only --minutes ends the run early, and the next run carries on.
   while (Date.now() < deadline) {
     const response = await fetch(`${remote.replace(/\/+$/, '')}/api/admin`, {
       method: 'POST',
@@ -70,11 +70,14 @@ if (remote) {
       }
     } else {
       const reason = response instanceof Error ? `${response.message}${(response.cause as { code?: string } | undefined)?.code ? ` (${(response.cause as { code: string }).code})` : ''}` : `${response.status} ${(await response.text()).slice(0, 200)}`;
-      log(`The job failed (${reason}).`);
       if (response instanceof Response && (response.status === 401 || response.status === 403)) process.exit(1);
+      // The network or the site hiccupped: the slice may well have run anyway, so try again soon.
+      log(`The job failed (${reason}); trying again in a minute.`);
+      await new Promise((resolve) => setTimeout(resolve, 60_000));
+      continue;
     }
     const wait = Math.min(1_800_000, 60_000 * 2 ** failures++);
-    log(`Nothing read in that slice; trying again in ${Math.round(wait / 60_000)} minutes.`);
+    log(`No model answered in that slice; trying again in ${Math.round(wait / 60_000)} minutes.`);
     await new Promise((resolve) => setTimeout(resolve, wait));
   }
   log(`${calls} model calls in ${Math.round((Date.now() - started) / 60_000)} minutes.`);
