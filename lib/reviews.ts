@@ -163,9 +163,10 @@ const EXTRACT_SCHEMA = {
           term: { type: 'STRING' },
           difficulty: { type: 'INTEGER', nullable: true },
           workload: { type: 'INTEGER', nullable: true },
+          quote: { type: 'STRING' },
           takeaway: { type: 'STRING' },
         },
-        required: ['entry', 'about', 'sentiment', 'with', 'term', 'difficulty', 'workload', 'takeaway'],
+        required: ['entry', 'about', 'sentiment', 'with', 'term', 'difficulty', 'workload', 'quote', 'takeaway'],
       },
     },
   },
@@ -182,6 +183,7 @@ const EXTRACT_SYSTEM = [
   'with: for a course, the P id of the listed professor the entry says it is about; for a professor, the C id of the listed course; else "".',
   'term: the semester it describes, like "Fall 2023" or "Spring 2021": as stated, else your best guess from the dates (a comment in March about a finished course most likely means the previous Fall); "" only when there is no date at all.',
   'difficulty: 1 (easy) to 5 (very hard), and workload: 1 (light) to 5 (heavy), only when the entry says how hard or how much work it is; else null.',
+  'quote: the words of the entry, copied exactly (up to 15), that say what it is like. Every item needs one: when no words in the entry say what it is like, there is no item. Never add anything the entry does not say: a post asking about workload or grading says nothing about them.',
   'takeaway: what the entry says about it, paraphrased in plain words, under 20 words. No student names; professors by surname. Only teaching, grading and how the class runs: nothing about a professor\'s looks, private life or character outside class.',
   'Return {"items": [...]}, with an empty list when no entry qualifies.',
 ].join('\n');
@@ -197,6 +199,26 @@ interface Thread {
   ids: string[];
   done: Set<string>;
   candidates: Candidate[];
+}
+
+/** A takeaway that only says someone asked. */
+const ASKING = /^(?:\w+ )?(?:asks?|asking|seeks?|seeking|looking for|requests?|requesting|wants? to know|wonders?|wondering|inquir\w*|curious)\b/i;
+
+/**
+ * Whether a model's quote is really in the post or comment (most of its words, in one sentence or across the text),
+ * and the sentence it comes from is not a question: what a student asked about is not what they said.
+ */
+function grounded(quote: string, text: string): boolean {
+  const words = [...new Set(fold(quote).split(' ').filter((word) => word.length >= 3))];
+  if (words.length < 2) return false;
+  let best = { share: 0, question: false };
+  for (const sentence of text.split(/(?<=[.!?\n])\s+/)) {
+    const said = new Set(fold(sentence).split(' '));
+    const share = words.filter((word) => said.has(word)).length / words.length;
+    if (share > best.share) best = { share, question: sentence.trim().endsWith('?') };
+  }
+  const whole = new Set(fold(text).split(' '));
+  return Math.max(best.share, words.filter((word) => whole.has(word)).length / words.length) >= 0.7 && !best.question;
 }
 
 /** A mention or a review written here, as a digest counts it. */
@@ -460,6 +482,7 @@ export async function runReviews(options: ReviewRun): Promise<ReviewResult> {
           const sentiment = String(item.sentiment ?? '').toLowerCase();
           const takeaway = tidy(item.takeaway, 200);
           if (!entries.includes(entry) || !about || !['positive', 'negative', 'neutral'].includes(sentiment) || takeaway.length < 6) continue;
+          if (!grounded(String(item.quote ?? ''), texts[entry]!) || ASKING.test(takeaway)) continue;
           const key = `${ids[entry]}|${about.entity}`;
           if (seen.has(key)) continue;
           seen.add(key);
