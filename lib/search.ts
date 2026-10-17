@@ -1,4 +1,6 @@
 /** Lexical (BM25) and dense retrieval over chunks, fused with reciprocal-rank fusion and a light recency prior. */
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tokenize, dayNumber } from './text.ts';
 import { topK, type VectorTable } from './vectors.ts';
 
@@ -32,6 +34,62 @@ export function buildBm25(docs: string[]): Bm25Index {
   const packed = new Map<string, Uint32Array>();
   for (const [term, list] of postings) packed.set(term, Uint32Array.from(list));
   return { n: docs.length, avgLength: docs.length ? total / docs.length : 1, lengths, postings: packed };
+}
+
+/** A hash of the passages an index was built from: a saved index is only read back for exactly the same passages. */
+export function corpusHash(docs: string[]): string {
+  const hash = createHash('sha1');
+  for (const doc of docs) hash.update(doc).update('\u0000');
+  return hash.digest('hex');
+}
+
+/**
+ * Tokenizing every passage is most of a cold start, so the build saves the index beside the corpus (scripts/ensure-index.ts)
+ * and instances read it back. Layout: header length (uint32), the header as JSON (hash, sizes, terms), padding to four
+ * bytes, the passage lengths (float32), then every term's postings one after another (uint32).
+ */
+export function writeBm25(file: string, index: Bm25Index, hash: string): void {
+  const terms = [...index.postings.keys()];
+  const sizes = terms.map((term) => index.postings.get(term)!.length);
+  const header = Buffer.from(JSON.stringify({ hash, n: index.n, avgLength: index.avgLength, terms, sizes }));
+  const start = Math.ceil((4 + header.length) / 4) * 4;
+  const total = sizes.reduce((sum, size) => sum + size, 0);
+  const out = Buffer.alloc(start + 4 * index.n + 4 * total);
+  out.writeUInt32LE(header.length, 0);
+  header.copy(out, 4);
+  Buffer.from(index.lengths.buffer, index.lengths.byteOffset, 4 * index.n).copy(out, start);
+  let at = start + 4 * index.n;
+  for (const term of terms) {
+    const list = index.postings.get(term)!;
+    Buffer.from(list.buffer, list.byteOffset, 4 * list.length).copy(out, at);
+    at += 4 * list.length;
+  }
+  writeFileSync(file, out);
+}
+
+/** The saved index for exactly these passages (by corpusHash), or null. */
+export function readBm25(file: string, hash: string): Bm25Index | null {
+  if (!existsSync(file)) return null;
+  try {
+    const raw = readFileSync(file);
+    const headerLength = raw.readUInt32LE(0);
+    const header = JSON.parse(raw.subarray(4, 4 + headerLength).toString('utf8')) as { hash: string; n: number; avgLength: number; terms: string[]; sizes: number[] };
+    if (header.hash !== hash) return null;
+    // Typed views need four-byte alignment; a Buffer may start anywhere in its memory.
+    const bytes = raw.byteOffset % 4 === 0 ? raw : Buffer.from(raw);
+    const start = Math.ceil((4 + headerLength) / 4) * 4;
+    const lengths = new Float32Array(bytes.buffer, bytes.byteOffset + start, header.n);
+    const postings = new Map<string, Uint32Array>();
+    let at = bytes.byteOffset + start + 4 * header.n;
+    header.terms.forEach((term, i) => {
+      postings.set(term, new Uint32Array(bytes.buffer, at, header.sizes[i]!));
+      at += 4 * header.sizes[i]!;
+    });
+    return { n: header.n, avgLength: header.avgLength, lengths, postings };
+  } catch (error) {
+    console.warn(`[search] could not read ${file}:`, (error as Error).message);
+    return null;
+  }
 }
 
 export function bm25Query(index: Bm25Index, terms: string[], k: number): Array<{ row: number; score: number }> {

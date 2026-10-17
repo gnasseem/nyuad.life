@@ -643,7 +643,21 @@ interface AskHandlers {
   onRedirect?(redirect: Redirect): void;
   onSources?(sources: SourceCard[]): void;
   onDelta?(text: string): void;
+  /** The answer shown so far is replaced: the source check corrected it. */
+  onReplace?(text: string): void;
   onDone?(info: { model: string; confidence: Confidence | null; truncated: boolean }): void;
+}
+
+let warmedAt = 0;
+
+/**
+ * Asks the server to load the archive while the student is still typing, so their question does not wait for a cold
+ * instance. At most every two minutes; failures do not matter.
+ */
+export function warmAsk(): void {
+  if (Date.now() - warmedAt < 120_000) return;
+  warmedAt = Date.now();
+  void fetch(`${apiBase()}/api/ask`, { credentials: 'include' }).catch(() => undefined);
 }
 
 /**
@@ -687,6 +701,10 @@ export async function askStream(question: string, history: ChatTurn[], handlers:
       case 'delta':
         answer += String(payload.text ?? '');
         handlers.onDelta?.(String(payload.text ?? ''));
+        break;
+      case 'replace':
+        answer = String(payload.text ?? '');
+        handlers.onReplace?.(answer);
         break;
       case 'done':
         finished = true;

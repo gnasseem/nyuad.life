@@ -20,3 +20,5 @@ data/posts*.jsonl*
 data/index/
 data/scrape-state.json
 data/removed.json
+# Built from the official index during the build (scripts/ensure-index.ts).
+data/official-index/bm25.bin

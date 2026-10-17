@@ -16,7 +16,7 @@ import { createApiServer } from './devserver.ts';
 import { embedderFromEnv } from './embeddings.ts';
 import { geminiConfig, normalize } from './gemini.ts';
 import { buildIndex } from './indexer.ts';
-import { ask, gatherSources } from './rag.ts';
+import { ask, forgetBoardReads, gatherSources } from './rag.ts';
 import { loadArchive, resetArchive } from './store.ts';
 
 const DIMS = 16;
@@ -202,6 +202,7 @@ describe('api', () => {
   beforeEach(() => {
     process.env.ROR_ANSWER_CACHE = '0';
     resetAnswerCache();
+    forgetBoardReads();
   });
 
   it('reports health, including which embedding provider the index needs', async () => {
@@ -319,14 +320,15 @@ describe('api', () => {
     expect(prompt).toContain('Lecture 001: Mon/Wed 10:00–11:15, Social Science C2 Room 001 · Rana Dania · open');
   });
 
-  it('ends a slow draft at the deadline without exposing unchecked fragments', async () => {
+  it('ends a slow draft at the deadline, keeping what was streamed and saying it stopped early', async () => {
     const archive = await loadArchive();
     const started = Date.now();
-    const result = await ask(archive, geminiConfig()!, { question: 'take your time with the calculus professor', stream: false }, {}, undefined, { catalog: null, reranker: null, deadline: Date.now() + 1_500 });
+    let streamed = '';
+    const result = await ask(archive, geminiConfig()!, { question: 'take your time: best calculus professor?', stream: true }, { delta: (text) => { streamed += text; } }, undefined, { catalog: null, reranker: null, deadline: Date.now() + 1_500 });
     expect(Date.now() - started).toBeLessThan(4_000);
-    expect(result.truncated).not.toBe(true);
-    expect(result.answer).toContain("couldn't verify");
-    expect(result.answer).not.toContain('part 0');
+    expect(streamed).toMatch(/^part 0\. /);
+    expect(result.truncated).toBe(true);
+    expect(result.confidence?.level).toBe('low');
   });
 
   it('orders threads by the cross-encoder when there is one', async () => {

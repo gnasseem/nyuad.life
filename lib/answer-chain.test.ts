@@ -13,7 +13,7 @@ import { MemoryBoardStore } from './board-store.ts';
 import { geminiConfig, GeminiError, markUnavailable, resetModelState } from './gemini.ts';
 import { buildIndex } from './indexer.ts';
 import { atCapacity, checkModels, liteChat, markFailed, modelOrder, ProviderError, providersFromEnv, resetProviderState, siteJson, streamChat, ThinkFilter, usable, type Provider } from './providers.ts';
-import { answerWriters, ask, standaloneQuestion } from './rag.ts';
+import { answerWriters, ask, forgetBoardReads, standaloneQuestion } from './rag.ts';
 import { loadArchive, resetArchive, type Archive } from './store.ts';
 
 const posts = [
@@ -150,24 +150,46 @@ function zai(id: string): Provider {
 const context = { catalog: null, reranker: null, cache: false } as const;
 
 describe('the answer model chain', () => {
-  it('does not expose a wrong draft before its checked replacement, and streams exactly the returned answer', async () => {
+  /** What the student sees: the streamed text, swapped for a replacement when one comes. */
+  function screen() {
+    let text = '';
+    const replaced: string[] = [];
+    return {
+      events: { delta: (chunk: string) => { text += chunk; }, replace: (whole: string) => { replaced.push(whole); text = whole; } },
+      get text() { return text; },
+      replaced,
+    };
+  }
+
+  it('streams the draft at once and replaces it when the check finds what the sources do not support', async () => {
     draftReply = 'Take the other teacher for 999 AED [99].\nConfidence: high';
-    const deltas: string[] = [];
-    const result = await ask(archive, geminiConfig()!, { question: 'best calculus professor?', stream: true }, { delta: (text) => deltas.push(text) }, undefined, { ...context, backups: [] });
-    expect(deltas.join('')).toBe(result.answer);
+    const shown = screen();
+    const result = await ask(archive, geminiConfig()!, { question: 'best calculus professor?', stream: true }, shown.events, undefined, { ...context, backups: [] });
+    expect(shown.replaced).toHaveLength(1);
+    expect(shown.text).toBe(result.answer);
     expect(result.answer).toContain('Dania');
     expect(result.answer).toContain('2026');
     expect(result.answer).not.toMatch(/999|other teacher|99/);
   });
 
-  it('does not release a draft when the checker invents a supporting passage', async () => {
-    checkedReply = { claims: [{ text: 'Dania is perfect.', supports: [{ source: 1, passage: 999 }] }] };
-    const deltas: string[] = [];
-    const result = await ask(archive, geminiConfig()!, { question: 'best calculus professor?', stream: true }, { delta: (text) => deltas.push(text) }, undefined, { ...context, backups: [] });
-    expect(deltas.join('')).toBe(result.answer);
-    expect(result.answer).toContain("couldn't verify");
+  it('keeps the streamed draft when the check finds nothing unsupported, without the confidence line', async () => {
+    checkedReply = { ...CHECKED, unsupported: [] };
+    const shown = screen();
+    const result = await ask(archive, geminiConfig()!, { question: 'best calculus professor?', stream: true }, shown.events, undefined, { ...context, backups: [] });
+    expect(shown.replaced).toHaveLength(0);
+    expect(shown.text.trim()).toBe(result.answer);
+    expect(result.answer).toBe('Take it with **Dania** [1].\n\n- **Teaching:** clear and fair [1].');
+    expect(result.confidence?.level).toBe('medium');
+  });
+
+  it('keeps but flags the draft when the checker invents a supporting passage', async () => {
+    checkedReply = { unsupported: ['Dania is perfect.'], claims: [{ text: 'Dania is perfect.', supports: [{ source: 1, passage: 999 }] }] };
+    const shown = screen();
+    const result = await ask(archive, geminiConfig()!, { question: 'best calculus professor?', stream: true }, shown.events, undefined, { ...context, backups: [] });
+    expect(shown.replaced).toHaveLength(0);
+    expect(result.answer).toContain('Dania');
     expect(result.answer).not.toContain('perfect');
-    expect(result.confidence?.level).toBe('low');
+    expect(result.confidence).toEqual({ level: 'low', reason: 'the answer could not be checked against its sources' });
     expect(result.sources.length).toBeGreaterThan(0);
   });
 

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { checkedAnswer, gatherSources, matchesPerson, personName, safeRewrite, parseConfidence, searchQueries, sourcesBlock, systemPrompt } from './rag.ts';
+import { checkedAnswer, draftProblems, gatherSources, withoutConfidence, matchesPerson, personName, safeRewrite, parseConfidence, searchQueries, sourcesBlock, systemPrompt } from './rag.ts';
 import type { OfficialCorpus } from './official.ts';
 import type { Archive } from './store.ts';
 import { buildBm25 } from './search.ts';
 import { emptyTable } from './vectors.ts';
 import { buildCatalog } from './courses.ts';
+import { answerKey } from './answer-cache.ts';
 
 it('requires existing observations and uses the selected reply date, not just the thread date', () => {
   const evidence = new Map([[1, '[1] Post by Student on 17 Apr 2016\nThoughts on this professor?\nComments:\n- One student (1 Nov 2023): Lectures were confusing but exams were fair.\n- Another student [question, not a reported experience]: Is he strict about attendance?'], [2, '[2] Official NYUAD page: Card Services\nThe office is open 24/7 in Building A4.']]);
@@ -275,3 +276,26 @@ it('keeps a timetable candidate when another passage on the same page repeats th
   const result = await gatherSources(archive, 'pool hours', 'pool hours', { cfg: null, official, catalog: null, reranker: null, board: null });
   expect(sourcesBlock(archive, result.cards, result.entries)).toContain('Friday: 6am–10pm');
 });
+
+it('streams an answer without its closing confidence line, with model citations made plain', () => {
+  let shown = '';
+  const stream = withoutConfidence((text) => { shown += text; });
+  for (const part of ['Take it with Dania【1', '†L2-L4】.\nCon', 'sider the 8am section [2].\n\nConfid', 'ence: high – two threads']) stream.push(part);
+  stream.flush();
+  expect(shown).toBe('Take it with Dania[1].\nConsider the 8am section [2].\n\n');
+  expect(stream.sent).toBe(shown);
+});
+
+it('finds the mistakes in a draft that need no model to see', () => {
+  const evidence = new Map([[1, '[1] Official NYUAD page: Card Services, read 2026-10-01\nThe office is in Building A4. https://students.nyuad.nyu.edu/card']]);
+  expect(draftProblems('Go to Building A4 [1].', evidence)).toEqual([]);
+  expect(draftProblems('Go to A4 [3], see https://example.com since 2019 [n].', evidence)).toEqual(['placeholder citation', 'citation [3] has no source', 'link https://example.com is in no source', 'year 2019 is in no source']);
+});
+
+it('treats near-duplicate questions as one for the answer cache, and different ones as different', () => {
+  expect(answerKey('Hey, does anyone know when D2 opens?')).toBe(answerKey('when do d2 open'));
+  expect(answerKey('What time does the Marketplace close?')).toBe(answerKey('marketplace close what time'));
+  expect(answerKey('when does D1 open')).not.toBe(answerKey('when does D2 open'));
+  expect(answerKey('is the pool open')).not.toBe(answerKey('is the pool not open'));
+});
+

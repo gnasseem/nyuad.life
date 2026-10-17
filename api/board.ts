@@ -45,7 +45,7 @@ import { accountKey, clearEmailSession, emailNetId, emailSession, otpDigest, req
 import { claimedIdentity, limitDurably, NETID_TAKEN, ownerOf, requireMember, requireProfile } from '../lib/identity.ts';
 import { reviewPost, screenPost, type PostKind, type ReviewedKind } from '../lib/moderation.ts';
 import { providersFromEnv, warmModels } from '../lib/providers.ts';
-import { retrieve } from '../lib/rag.ts';
+import { forgetBoardReads, retrieve } from '../lib/rag.ts';
 import { loadArchive, summarizePost } from '../lib/store.ts';
 import { collapseWhitespace } from '../lib/text.ts';
 
@@ -219,6 +219,7 @@ export default route(['GET', 'POST'], async (req, res) => {
         throw error;
       });
       recordEvent('review');
+      forgetBoardReads();
       sendJson(res, 200, { review: publicReview(saved, profile.netId) });
       return;
     }
@@ -226,6 +227,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       rateLimit(req, 10, 4, 'board-review');
       const profile = await requireProfile(store, body.netId, body.key);
       if (!await store.deleteReview(courseCode(body.code), profile.netId)) throw new ApiError(404, 'You have not reviewed this course.', 'not_found');
+      forgetBoardReads();
       sendJson(res, 200, { ok: true });
       return;
     }

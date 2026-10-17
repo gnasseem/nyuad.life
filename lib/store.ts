@@ -9,7 +9,7 @@ import { gunzipSync } from 'node:zlib';
 import { chunkPosts } from './chunker.ts';
 import { cleanPosts, FILTERS_VERSION } from './filters.ts';
 import { enrichPost, readPostsJsonl, sortNewestFirst } from './posts.ts';
-import { buildBm25, type Bm25Index } from './search.ts';
+import { buildBm25, corpusHash, readBm25, type Bm25Index } from './search.ts';
 import { redactContacts } from './text.ts';
 import type { Chunk, IndexMeta, IndexedPost, SourcePost } from './types.ts';
 import { decodeTable, emptyTable, selectRows, type VectorTable } from './vectors.ts';
@@ -178,13 +178,23 @@ function assemble(
     chunkPost,
     postChunk,
     vectors,
-    bm25: buildBm25(chunks.map((chunk) => chunk.text)),
+    bm25: savedOrBuilt(bm25File(), chunks.map((chunk) => chunk.text)),
     byCourse,
     byTopic,
     source,
     loadedAt: new Date().toISOString(),
     loadMs: Date.now() - started,
   };
+}
+
+/** Where the build saves the archive's keyword index (scripts/ensure-index.ts). */
+export function bm25File(): string {
+  return path.join(indexDir(), 'bm25.bin');
+}
+
+/** The keyword index saved by the build when it was built from these exact passages, else built now. */
+export function savedOrBuilt(file: string, texts: string[]): Bm25Index {
+  return readBm25(file, corpusHash(texts)) ?? buildBm25(texts);
 }
 
 function push(map: Map<string, number[]>, key: string, value: number): void {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { api, ApiError, askStream, type SourceCard } from '../api';
+import { api, ApiError, askStream, warmAsk, type SourceCard } from '../api';
 import { ChatGPTSignIn } from '../components/ChatGPT';
 import { RedirectCard } from '../components/RedirectCard';
 import { KIND_LABEL, SourceRow } from '../components/SourceRow';
@@ -57,6 +57,7 @@ export function AskPage({ resumeId, history }: Props) {
   // saved first, marked as cut short, so coming back to Ask shows the conversation with "Ask again".
   useEffect(() => {
     mounted.current = true;
+    warmAsk();
     return () => {
       mounted.current = false;
       if (!abortRef.current) return;
@@ -140,6 +141,7 @@ export function AskPage({ resumeId, history }: Props) {
             onRedirect: (redirect) => patchMessage(modelMessage.id, { redirect, status: undefined }),
             onSources: (sources) => patchMessage(modelMessage.id, { sources }),
             onDelta: (text) => patchMessage(modelMessage.id, (message) => ({ content: message.content + text, status: undefined })),
+            onReplace: (text) => patchMessage(modelMessage.id, { content: text, status: undefined }),
             onDone: ({ confidence }) => patchMessage(modelMessage.id, (message) => ({ confidence, content: stripConfidence(message.content) })),
           },
           controller.signal,
@@ -292,6 +294,7 @@ export function AskPage({ resumeId, history }: Props) {
         value={input}
         onChange={(event) => setInput(event.target.value)}
         onKeyDown={onKey}
+        onFocus={warmAsk}
         placeholder={empty ? 'Ask about a course, a professor, housing, visas…' : 'Ask a follow-up'}
         maxLength={600}
         aria-label="Your question"

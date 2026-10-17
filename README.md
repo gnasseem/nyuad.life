@@ -7,8 +7,9 @@ other students wrote here.
 Everyone signs up once (name, NetID, major and year) after a short animated tour of the site; the API refuses answers,
 archive browsing, plan reading and contacts to anyone who has not.
 
-- **Ask.** Original questions and focused campus aliases searched together with keyword coverage. Campus services use keyword retrieval and local passage matching; student experience questions also use archive vectors and Voyage's bounded cross-encoder, with the same bounded fallback when a keyword search finds no evidence. `ROR_RETRIEVAL=keyword` or `hybrid` forces either approach for comparison. Official retrieval keeps several candidate passages per page so an FAQ cannot hide a timetable; extracted service sidebars and reference links remain available to the answer.
-  Answers are checked against supporting passages before any answer text reaches the browser. Unknown citations, invented passage references and unsupported review years are rejected; a failed check leaves the sources available with a clear verification message. Review summaries retain dates, and course-specific threads are read ahead of general professor discussions.
+- **Ask.** Original questions and focused campus aliases searched together with keyword coverage. Campus services use keyword retrieval; student experience questions also use archive vectors. Voyage's bounded cross-encoder reads the candidates for every question, so a thread that answers what the official pages leave out joins them (at most three, newest first, none from another NYU site unless asked) and an official page that only shares words is left out; a review digest that already answers the question skips both the vectors and the cross-encoder. `ROR_RETRIEVAL=keyword` or `hybrid` forces either approach for comparison. Official retrieval keeps several candidate passages per page so an FAQ cannot hide a timetable; extracted service sidebars and reference links remain available to the answer.
+  The answer streams to the browser as it is written, so the first words appear within about a second. Once complete it is checked against the supporting passages: invented citations, links or years and statements no passage supports make the checked version replace it on screen; when the check cannot run, the answer stays, marked unchecked. Review summaries retain dates, and course-specific threads are read ahead of general professor discussions.
+  The Ask page asks the server to load the archive when it opens, so a question rarely waits for a cold start; each instance builds its keyword indexes once at build time (`data/index/bm25.bin`) and keeps the board's answers and the review digests in memory, refreshing them in the background.
   Answers are written by Gemini, with backup models when Gemini is overloaded or spent, or on the student's own ChatGPT plan
   when they sign in with ChatGPT. Past conversations are listed down the left, as in a chat app. A question about a course or a professor gets the Albert schedule first (course codes
   in any spelling, titles the way students say them, "calc", "intro to cs", or a subject for "classes about machine
@@ -68,6 +69,8 @@ The group archive and its search index are not in the repository (see "Data and 
 - **Where it is kept.** The posts (`posts.jsonl`) and the search index built from them live in a private Vercel Blob
   store, never in git; the build pulls the index from there. Phone numbers and personal email addresses are taken out
   before anything is served.
+- **Questions asked.** Each Ask question is kept for 90 days in `guide_summaries` (`asklog:`), without who asked it,
+  with what it was answered from and how long it took, to see what students ask and where answers miss.
 - **Who sees it.** Only signed-in NYU Abu Dhabi students: an account needs a code sent to a `@nyu.edu` address, and
   the API refuses answers and archive browsing to anyone without one.
 - **Removing your posts.** Email gnn9245@nyu.edu from your NYU address with a link to the post, or ask for everything
@@ -109,8 +112,8 @@ search, courses, plan and the board are rate-limited per IP.
 ## Keeping answers up for free
 
 Free model tiers can be overloaded (503), rate-limited (429) or just slow. Ask moves down a chain before writing any
-text, and does not wait on a slow model: when the model writing an answer has not written a word within three and a
-half seconds, the next one starts beside it (at most three at once) and the first to write wins, the others are
+text, and does not wait on a slow model: when the model writing an answer has not written a word within two seconds,
+the next one starts beside it (at most three at once) and the first to write wins, the others are
 stopped. A model beaten that way is left out of the chain for ten minutes, so the next questions go straight to the
 quicker one.
 
@@ -184,8 +187,8 @@ instances never overwrite each other. Rows older than eight days are removed.
 Limits checked against official documentation on 2026-10-15. Production keys are non-exportable Vercel secrets, so
 local tests use fake providers; an administrator can run Settings → Check models for current live latency and availability.
 
-Opening questions are also cached for six hours (`lib/answer-cache.ts`): the same question asked again, in any case or
-punctuation, is answered from the cache with no model call. Registration-week questions are asked many times a day, so
+Opening questions are also cached for a day (`lib/answer-cache.ts`): the same question asked again, in any case,
+punctuation, word order or with filler ("hey, does anyone know…"), is answered from the cache with no model call. Registration-week questions are asked many times a day, so
 this saves much of the quota. The cache lives in memory and in the board's `guide_summaries` table when Supabase is set
 up, so every serverless instance shares it; expired entries are removed.
 

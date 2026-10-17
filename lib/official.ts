@@ -9,8 +9,8 @@ import { createHash } from 'node:crypto';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { chunkDocument } from './chunker.ts';
 import { EmbeddingError, embedderForIndex, PROVIDER_LABELS, type Embedder } from './embeddings.ts';
-import { bm25Query, buildBm25, denseQuery, type Bm25Index } from './search.ts';
-import { dataRoot } from './store.ts';
+import { bm25Query, denseQuery, type Bm25Index } from './search.ts';
+import { dataRoot, savedOrBuilt } from './store.ts';
 import { bestWindow, collapseWhitespace, extractCourseCodes, tokenize, truncate } from './text.ts';
 import type { Chunk, IndexMeta, SourceCard } from './types.ts';
 import { concatTables, decodeTable, emptyTable, encodeTable, quantize, selectRows, type VectorTable } from './vectors.ts';
@@ -229,7 +229,7 @@ function assemble(meta: IndexMeta, docs: OfficialDoc[], chunks: Chunk[], vectors
     bySection.set(doc.section, [...(bySection.get(doc.section) ?? []), index]);
     if (doc.code) byCode.set(doc.code, index);
   });
-  return { meta, docs, docPosition, chunks, chunkDoc, vectors, bm25: buildBm25(chunks.map((chunk) => chunk.text)), bySection, byCode, source };
+  return { meta, docs, docPosition, chunks, chunkDoc, vectors, bm25: savedOrBuilt(path.join(officialIndexDir(), 'bm25.bin'), chunks.map((chunk) => chunk.text)), bySection, byCode, source };
 }
 
 /* ---------- Retrieval ---------- */

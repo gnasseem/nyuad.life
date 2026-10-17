@@ -7,6 +7,7 @@
  */
 import { createHmac, randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
+import type { BoardStore } from './board-store.ts';
 import { usageDay } from './model-usage.ts';
 import { supabaseConfig, type SupabaseConfig } from './supabase.ts';
 
@@ -237,4 +238,24 @@ export function resetAppUsage(): void {
   memory.clear();
   unsaved.clear();
   savedAt = 0;
+}
+
+/* ---------- Ask questions ---------- */
+
+const QUESTIONS = 'asklog:';
+const QUESTION_DAYS = 90;
+let lastQuestionSweep = 0;
+
+/**
+ * Each Ask question, kept for 90 days without who asked it, with how it went: what it was answered from, whether the
+ * answer said it could not find anything, and how long the first words took. Read offline to see what students ask
+ * and where answers miss.
+ */
+export async function recordQuestion(store: BoardStore | null, entry: { question: string; followUp: boolean; model: string; confidence: string; sources: string[]; cached: boolean; missing: boolean; firstMs?: number }, now = Date.now()): Promise<void> {
+  if (!store?.persistent || process.env.VITEST) return;
+  await store.putSummary(`${QUESTIONS}${new Date(now).toISOString()}:${randomUUID().slice(0, 8)}`, { ...entry, question: entry.question.slice(0, 600) });
+  if (now - lastQuestionSweep > 6 * 3_600_000) {
+    lastQuestionSweep = now;
+    await store.deleteSummaries(QUESTIONS, new Date(now - QUESTION_DAYS * 86_400_000).toISOString());
+  }
 }

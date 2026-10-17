@@ -115,8 +115,10 @@ const EMAIL_ADDRESS = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
  * them out. An office's address ("nyuad.registrar@nyu.edu") stays; a NetID address or a gmail goes.
  */
 export function redactContacts(text: string): string {
-  if (!text || (!text.includes('@') && !/\d{3}/.test(text))) return text;
+  if (!text) return text;
+  // Each pattern only where it could match: running them over every passage was a fifth of a cold start.
+  if (/\d{3}/.test(text)) text = text.replace(PHONE_NUMBER, '[phone number removed]');
+  if (!text.includes('@')) return text;
   return text
-    .replace(PHONE_NUMBER, '[phone number removed]')
     .replace(EMAIL_ADDRESS, (email) => (/@(?:[\w-]+\.)*nyu\.edu$/i.test(email) && !/^[a-z]{2,4}\d{2,6}@/i.test(email) ? email : '[email removed]'));
 }

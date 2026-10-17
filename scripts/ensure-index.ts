@@ -10,8 +10,9 @@ import path from 'node:path';
 import { embedderFromEnv } from '../lib/embeddings.ts';
 import { loadDotEnv } from '../lib/env.ts';
 import { buildIndex } from '../lib/indexer.ts';
-import { indexDir, postsFile } from '../lib/store.ts';
-import { buildOfficialIndex, officialFile, officialIndexDir, readOfficialJsonl } from '../lib/official.ts';
+import { bm25File, indexDir, loadArchive, postsFile } from '../lib/store.ts';
+import { corpusHash, writeBm25 } from '../lib/search.ts';
+import { buildOfficialIndex, loadOfficial, officialFile, officialIndexDir, readOfficialJsonl } from '../lib/official.ts';
 
 loadDotEnv();
 const dir = indexDir();
@@ -38,4 +39,14 @@ if (process.env.VERCEL === '1' && existsSync(officialFile())) {
     if (!embedder) throw new Error('Refreshing official sources needs an embedding key on Vercel.');
     await buildOfficialIndex({ file: officialFile(), outDir: officialIndexDir(), embedder, log: (message) => console.log(`[official-index] ${message}`) });
   }
+}
+
+// Instances read the keyword indexes back instead of tokenizing every passage on a cold start (lib/search.ts).
+if (existsSync(path.join(dir, 'meta.json')) || existsSync(postsFile())) {
+  const started = Date.now();
+  const archive = await loadArchive();
+  writeBm25(bm25File(), archive.bm25, corpusHash(archive.chunks.map((chunk) => chunk.text)));
+  const official = await loadOfficial().catch(() => null);
+  if (official) writeBm25(path.join(officialIndexDir(), 'bm25.bin'), official.bm25, corpusHash(official.chunks.map((chunk) => chunk.text)));
+  console.log(`[ensure-index] Saved the keyword indexes in ${Date.now() - started} ms.`);
 }

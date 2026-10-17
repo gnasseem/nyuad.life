@@ -1,5 +1,5 @@
 import { alertModelsDown } from '../lib/admin.ts';
-import { recordEvent } from '../lib/app-usage.ts';
+import { recordEvent, recordQuestion } from '../lib/app-usage.ts';
 import { boardStore } from '../lib/board-store.ts';
 import { addCookies, chatgptConfig, ChatGPTError, freshSession, readSession, sessionCookies } from '../lib/chatgpt.ts';
 import { geminiConfig } from '../lib/gemini.ts';
@@ -7,9 +7,10 @@ import { ApiError, rateLimit, readJson, route, sendJson, startSse } from '../lib
 import { limitDurably, requireMember } from '../lib/identity.ts';
 import { loadOfficial } from '../lib/official.ts';
 import { providersFromEnv, warmModels } from '../lib/providers.ts';
-import { ask, validateAsk } from '../lib/rag.ts';
+import { loadCatalog } from '../lib/courses.ts';
+import { ask, validateAsk, warmBoard } from '../lib/rag.ts';
 import { loadArchive } from '../lib/store.ts';
-import type { AskRequest } from '../lib/types.ts';
+import type { AskRequest, AskResponse } from '../lib/types.ts';
 
 export const config = { maxDuration: 60 };
 
@@ -18,7 +19,18 @@ const DEADLINE_MS = 54_000;
 /** Errors that mean every model in the chain failed: the administrators are emailed (lib/admin.ts). */
 const MODELS_DOWN = new Set(['quota', 'busy', 'model_error']);
 
-export default route(['POST'], async (req, res) => {
+export default route(['GET', 'POST'], async (req, res) => {
+  // The Ask page calls this when it opens: the instance reads the archive, the official pages, the schedule and the
+  // board while the student types, so the question does not wait for a cold start. Nothing is answered.
+  if (req.method === 'GET') {
+    rateLimit(req, 30, 30 / 60, 'ask-warm');
+    const started = Date.now();
+    warmBoard(boardStore());
+    await Promise.all([warmModels().catch(() => undefined), loadArchive(), loadOfficial().catch(() => null)]);
+    loadCatalog();
+    sendJson(res, 200, { ok: true, ms: Date.now() - started });
+    return;
+  }
   const deadline = Date.now() + DEADLINE_MS;
   // Per address only loosely: a campus or a phone network puts many students behind one. The real limits are per
   // student, below, once the request is known to come from one.
@@ -68,6 +80,19 @@ export default route(['POST'], async (req, res) => {
   // Saving the answer to the cache happens after the student has it; the function stays up until it is done.
   const deferred: Array<Promise<unknown>> = [warming];
   const defer = (work: Promise<unknown>) => void deferred.push(work.catch(() => undefined));
+  const noteQuestion = (result: AskResponse) => {
+    if (result.screened || result.redirect) return;
+    defer(recordQuestion(board, {
+      question: request.question,
+      followUp: (request.history?.length ?? 0) > 0,
+      model: result.model,
+      confidence: result.confidence?.level ?? '',
+      sources: [...new Set(result.sources.map((card) => card.kind))],
+      cached: result.cached ?? false,
+      missing: /couldn[’']t (?:confirm|find|verify)|do(?:es)? not (?:contain|specify|state|provide|mention)|no (?:information|evidence)/i.test(result.answer.slice(0, 200)),
+      firstMs: result.timings?.first,
+    }));
+  };
   const noteFailure = (error: unknown) => {
     if (!(error instanceof ApiError) || !MODELS_DOWN.has(error.code)) return;
     recordEvent('ask_failed');
@@ -79,6 +104,7 @@ export default route(['POST'], async (req, res) => {
       const result = await ask(archive, cfg, request, {}, undefined, { board, official, deadline, chatgpt, backups, defer });
       console.info(`[ask] model=${result.model} cached=${Boolean(result.cached)} truncated=${Boolean(result.truncated)} sources=${result.sources.length}`);
       recordEvent(result.cached ? 'ask_cached' : 'ask');
+      noteQuestion(result);
       sendJson(res, 200, result);
     } catch (error) {
       noteFailure(error);
@@ -106,12 +132,14 @@ export default route(['POST'], async (req, res) => {
         redirect: (redirect) => sse.send('redirect', redirect),
         sources: (sources) => sse.send('sources', { sources }),
         delta: (text) => sse.send('delta', { text }),
+        replace: (text) => sse.send('replace', { text }),
       },
       controller.signal,
       { board, official, deadline, chatgpt, backups, defer },
     );
     console.info(`[ask] model=${result.model} cached=${Boolean(result.cached)} truncated=${Boolean(result.truncated)} sources=${result.sources.length}`);
     recordEvent(result.cached ? 'ask_cached' : 'ask');
+    noteQuestion(result);
     sse.send('done', { model: result.model, confidence: result.confidence, truncated: result.truncated ?? false, cached: result.cached ?? false, retrieval: result.retrieval });
   } catch (error) {
     noteFailure(error);

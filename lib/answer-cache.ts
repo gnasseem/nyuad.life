@@ -6,13 +6,16 @@
  */
 import { createHash } from 'node:crypto';
 import type { BoardStore } from './board-store.ts';
-import { truncate } from './text.ts';
+import { stem, truncate } from './text.ts';
 import type { AskResponse } from './types.ts';
 
-/** Long enough to absorb a busy day, short enough that new notices, listings and board answers show up. */
-export const ANSWER_TTL_MS = 6 * 3_600_000;
+/**
+ * A day: questions come a few dozen a day, so a shorter life caught almost nothing. Answers built on posts from this
+ * site are never kept (lib/rag.ts), so new notices and board answers still show up at once.
+ */
+export const ANSWER_TTL_MS = 24 * 3_600_000;
 /** Bumped whenever the prompt changes, so answers written under the old one are not served. */
-const VERSION = 'v12';
+const VERSION = 'v13';
 const PREFIX = `answer:${VERSION}:`;
 const MAX_HOT = 500;
 
@@ -21,9 +24,19 @@ export type CachedAnswer = Pick<AskResponse, 'answer' | 'sources' | 'model' | 'c
 const hot = new Map<string, CachedAnswer>();
 let lastSweep = 0;
 
-/** Case, punctuation and spacing do not make a different question. */
+/**
+ * Words that never change what is asked. Question words, negations and everything else stay: "when does the gym open"
+ * and "where is the gym" are different questions, and so are "is it open" and "is it not open".
+ */
+const FILLER = new Set('a an the is are am was be do does did please pls plz hey hi hello guys anyone anybody someone somebody know tell me i my you your can could would will to of for in on at so just actually currently quick question'.split(' '));
+
+/**
+ * Near-duplicates are one question: case, punctuation, spacing, word order, plurals and filler ("hey, does anyone know
+ * …", "please") do not make a different one.
+ */
 export function answerKey(question: string): string {
-  const normalized = question.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const words = question.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[’']/g, '').split(/[^\p{L}\p{N}]+/u).filter((word) => word && !FILLER.has(word));
+  const normalized = [...new Set(words.map(stem))].sort().join(' ');
   return PREFIX + createHash('sha256').update(normalized).digest('base64url').slice(0, 32);
 }
 
