@@ -1170,7 +1170,9 @@ function questionFrom(row: Row): Question {
 const DIGEST_COLUMNS = 'entity,kind,name,positive,negative,neutral,score,difficulty,workload,verdict,likes,warnings,breakdown,first_date,last_date,recent,weight,sources,updated_at';
 
 function digestFrom(row: Row): Digest {
-  const scale = (value: unknown) => (value === null || value === undefined ? null : Number(value));
+  // Real columns come back as 4.300000190734863: one decimal is what was written.
+  const tenth = (value: unknown) => Math.round(Number(value) * 10) / 10;
+  const scale = (value: unknown) => (value === null || value === undefined ? null : tenth(value));
   return {
     entity: String(row.entity),
     kind: row.kind === 'prof' ? 'prof' : 'course',
@@ -1178,7 +1180,7 @@ function digestFrom(row: Row): Digest {
     positive: Number(row.positive ?? 0),
     negative: Number(row.negative ?? 0),
     neutral: Number(row.neutral ?? 0),
-    score: Number(row.score),
+    score: tenth(row.score),
     difficulty: scale(row.difficulty),
     workload: scale(row.workload),
     verdict: String(row.verdict ?? ''),
@@ -1188,7 +1190,7 @@ function digestFrom(row: Row): Digest {
     firstDate: row.first_date ? String(row.first_date).slice(0, 10) : '',
     lastDate: row.last_date ? String(row.last_date).slice(0, 10) : '',
     recent: Number(row.recent ?? 0),
-    weight: Number(row.weight ?? 0),
+    weight: Math.round(Number(row.weight ?? 0) * 100) / 100,
     sources: (row.sources as Digest['sources'] | null) ?? [],
     postIds: (row.post_ids as string[] | null) ?? [],
     reviewKeys: (row.review_keys as string[] | null) ?? [],

@@ -53,7 +53,7 @@ export default route(['GET'], async (req, res) => {
     if (!catalog.byCode.has(normalized) && !bulletinEntry(official, normalized)) throw new ApiError(404, 'No course with that code.', 'not_found');
     if (queryString(req, 'rating')) {
       const [digest] = (await boardStore()?.getDigests([courseKey(catalog, normalized)]).catch(() => [])) ?? [];
-      sendJson(res, 200, { rating: courseRating(digest) ?? await oldCourse(courseKey(catalog, normalized).slice('course:'.length)) }, 300);
+      sendJson(res, 200, { rating: courseRating(digest) }, 300);
       return;
     }
     if (queryString(req, 'view')) {
@@ -134,7 +134,7 @@ async function courseView(official: OfficialCorpus | null, catalog: Catalog, cod
   const names = [...new Set([...detail.instructors, ...offerings.flatMap((offering) => offering.professors)])];
   const key = courseKey(catalog, code);
   const digests = new Map(((await boardStore()?.getDigests([key, ...names.map(profKey)]).catch(() => [])) ?? []).map((digest) => [digest.entity, digest]));
-  const rating = courseRating(digests.get(key)) ?? await oldCourse(key.slice('course:'.length));
+  const rating = courseRating(digests.get(key));
   const withThem = new Map((rating?.professors ?? []).map((part) => [profKey(part.name), part]));
   const lastTerm = (name: string) => offerings.find((offering) => offering.professors.includes(name))?.term ?? '';
   const professors = [...new Set([...names, ...(rating?.professors ?? []).map((part) => part.name)])].map((name) => {
@@ -179,7 +179,7 @@ async function profView(catalog: Catalog, asked: string) {
   const [digest] = (await boardStore()?.getDigests([key]).catch(() => [])) ?? [];
   if (!entry && !digest) throw new ApiError(404, 'No professor by that name.', 'not_found');
   const name = entry?.name ?? digest!.name;
-  const rating = profRating(digest) ?? await oldProf(name);
+  const rating = profRating(digest);
   const now = termOrder(catalog.current);
   const withThem = new Map((rating?.courses ?? []).map((part) => [part.code, part]));
   const codes = [...new Set([...(entry?.courses.keys() ?? []), ...withThem.keys()])];
@@ -206,7 +206,7 @@ async function profRatings(param: string) {
   const ratings: Record<string, ReturnType<typeof profRating> | null> = {};
   for (const name of names) {
     const digest = digests.get(profKey(name));
-    ratings[name] = profRating(digest) ?? await oldProf(name);
+    ratings[name] = profRating(digest);
   }
   return { ratings, pending: [] as string[] };
 }
@@ -235,62 +235,6 @@ async function scoreIndex(): Promise<ScoreIndex> {
     if (digest.kind === 'course') index.courses[digest.entity.slice('course:'.length)] = { score: digest.score, basis, difficulty: level(digest.difficulty), workload: level(digest.workload), verdict: oneLine(digest.verdict) };
     else index.profs[digest.name] = { score: digest.score, basis, verdict: oneLine(digest.verdict) };
   }
-  await addOldScores(index);
   scoreCache = { at: Date.now(), index };
   return index;
-}
-
-/* ---------- Until the review digests are filled ---------- */
-
-// The ratings that used to be written when someone opened a course or professor, read as they are (nothing writes
-// them any more), for whatever has no digest yet while the first run of scripts/reviews.ts fills review_digests.
-
-const OLD_COURSE = 'course-rating:v6:';
-const OLD_PROF = 'prof-rating:v5:';
-
-interface OldRating {
-  score: number;
-  difficulty?: number | null;
-  workload?: number | null;
-  verdict: string;
-  pros?: string[];
-  cons?: string[];
-  basis: number;
-  confidence: 'high' | 'medium' | 'low';
-  sources: Array<{ url: string; date: string; excerpt: string }>;
-}
-
-async function oldRating(key: string): Promise<OldRating | null> {
-  const saved = (await boardStore()?.getSummary(key).catch(() => null))?.payload as (OldRating & { none?: boolean }) | undefined;
-  return saved && !saved.none && typeof saved.score === 'number' ? saved : null;
-}
-
-const none = { positive: 0, negative: 0, neutral: 0 };
-
-async function oldCourse(code: string): Promise<ReturnType<typeof courseRating>> {
-  const old = await oldRating(`${OLD_COURSE}${code}`);
-  return old && { score: old.score, difficulty: old.difficulty ?? null, workload: old.workload ?? null, verdict: old.verdict, pros: old.pros ?? [], cons: old.cons ?? [], tips: [], basis: old.basis, confidence: old.confidence, counts: none, professors: [], from: '', to: '', sources: old.sources };
-}
-
-async function oldProf(name: string): Promise<ReturnType<typeof profRating>> {
-  const old = await oldRating(`${OLD_PROF}${profKey(name).slice('prof:'.length)}`);
-  return old && { score: old.score, basis: old.basis, verdict: old.verdict, confidence: old.confidence, likes: [], warnings: [], counts: none, courses: [], from: '', to: '', sources: old.sources };
-}
-
-async function addOldScores(index: ScoreIndex): Promise<void> {
-  const store = boardStore();
-  if (!store) return;
-  const [courses, profs] = await Promise.all([store.listSummaryFields(OLD_COURSE, ['score', 'basis', 'difficulty', 'workload', 'verdict', 'none']).catch(() => []), store.listSummaryFields(OLD_PROF, ['score', 'basis', 'verdict', 'none']).catch(() => [])]);
-  const named = new Set(Object.keys(index.profs).map((name) => profKey(name)));
-  for (const row of courses) {
-    const code = row.key.slice(OLD_COURSE.length);
-    if (row.fields.none || typeof row.fields.score !== 'number' || index.courses[code]) continue;
-    index.courses[code] = { score: row.fields.score, basis: Number(row.fields.basis) || 0, difficulty: level(row.fields.difficulty as number | null), workload: level(row.fields.workload as number | null), verdict: oneLine(row.fields.verdict) };
-  }
-  for (const row of profs) {
-    if (row.fields.none || typeof row.fields.score !== 'number' || named.has(`prof:${row.key.slice(OLD_PROF.length)}`)) continue;
-    // The old keys hold the folded name; the lists look professors up by the name the schedule gives them.
-    const name = loadCatalog().instructors.get(row.key.slice(OLD_PROF.length));
-    if (name) index.profs[name] = { score: row.fields.score, basis: Number(row.fields.basis) || 0, verdict: oneLine(row.fields.verdict) };
-  }
 }
