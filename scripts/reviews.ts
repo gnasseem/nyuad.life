@@ -11,6 +11,8 @@
  *   npm run reviews -- --minutes 240   stop starting new work after four hours; the next run carries on
  *   npm run reviews -- --workers 3     model calls at once (default 3)
  *   npm run reviews -- --limit 20      only the 20 newest unread threads (a trial)
+ *   npm run reviews -- --models all    call every model the site has, GLM first, not only the ones Ask leans on
+ *                                      least (or name them: --models zai,groq,gemini)
  */
 import { boardStore } from '../lib/board-store.ts';
 import { loadCatalog } from '../lib/courses.ts';
@@ -28,6 +30,7 @@ const value = (name: string) => {
 const started = Date.now();
 const deadline = started + (Number(value('minutes')) || 100_000) * 60_000;
 const workers = Math.max(1, Number(value('workers')) || 3);
+const models = value('models');
 const limit = Number(value('limit')) || undefined;
 const remote = value('remote');
 const log = (message: string) => console.log(`[reviews] ${message}`);
@@ -51,7 +54,7 @@ if (remote) {
     const response = await fetch(`${remote.replace(/\/+$/, '')}/api/admin`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify({ op: 'reviews', workers, limit }),
+      body: JSON.stringify({ op: 'reviews', workers, limit, models }),
       signal: AbortSignal.timeout(330_000),
     }).catch((error: Error) => error);
     const failed = response instanceof Error || !response.ok;
@@ -88,7 +91,7 @@ if (remote) {
     process.exit(1);
   }
   try {
-    const result = await runReviews({ store, archive: await loadArchive(), catalog: loadCatalog(), deadline, end: deadline + 300_000, workers, limit, log });
+    const result = await runReviews({ store, archive: await loadArchive(), catalog: loadCatalog(), deadline, end: deadline + 300_000, workers, models, limit, log });
     report(result);
     log(`${result.calls} model calls in ${Math.round((Date.now() - started) / 60_000)} minutes${result.exhausted ? '; stopped early because no model answered' : result.done ? '' : '; stopped at the time limit, run again to carry on'}.`);
   } catch (error) {

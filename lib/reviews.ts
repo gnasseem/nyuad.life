@@ -33,9 +33,16 @@ export function reviewsJobToken(serviceKey: string): string {
   return createHmac('sha256', serviceKey).update('nyuad.life reviews job').digest('hex');
 }
 
-/** The providers a run may call, in order. */
-export function reviewModels(env: NodeJS.ProcessEnv = process.env): string[] {
-  return (env.REVIEWS_MODELS || 'zai,groq,cloudflare,mistral').split(',').map((id) => id.trim().toLowerCase()).filter(Boolean);
+/** Every provider the site can call, GLM first: for a run asked to go as fast as the keys allow. */
+const ALL_MODELS = ['zai', 'groq', 'cloudflare', 'gemini', 'openrouter', 'mistral', 'gateway'];
+
+/**
+ * The providers a run may call, in order: the ones asked for ("all" for every one the site has), else REVIEWS_MODELS,
+ * else the ones Ask leans on least.
+ */
+export function reviewModels(asked = '', env: NodeJS.ProcessEnv = process.env): string[] {
+  const list = (asked || env.REVIEWS_MODELS || 'zai,groq,cloudflare,mistral').split(',').map((id) => id.trim().toLowerCase()).filter(Boolean);
+  return list.includes('all') ? ALL_MODELS : list.filter((id) => ALL_MODELS.includes(id));
 }
 
 const tidy = (text: unknown, max: number) => truncate(collapseWhitespace(String(text ?? '').replace(/\s*\[\d+\](?:\[\d+\])*/g, '')), max);
@@ -454,6 +461,8 @@ export interface ReviewRun {
   end: number;
   /** Model calls at once. */
   workers: number;
+  /** Which providers may be called, as reviewModels() reads them ("all", or "zai,groq"); REVIEWS_MODELS when empty. */
+  models?: string;
   /** Read only this many of the newest unread threads (a trial). */
   limit?: number;
   log(message: string): void;
@@ -475,7 +484,7 @@ export interface ReviewResult {
 export async function runReviews(options: ReviewRun): Promise<ReviewResult> {
   const { store, archive, catalog, log } = options;
   const students = studentNames(archive, catalog);
-  const order = reviewModels();
+  const order = reviewModels(options.models);
   const gemini = order.includes('gemini') ? geminiConfig() : null;
   const backups = providersFromEnv().filter((provider) => order.includes(provider.family));
   if (!gemini && backups.length === 0) throw new Error(`No model key for ${order.join(', ')}: set ZAI_API_KEY (GLM, free) or GROQ_API_KEY, or widen REVIEWS_MODELS.`);

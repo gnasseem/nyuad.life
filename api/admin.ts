@@ -42,7 +42,7 @@ export default route(['GET', 'POST'], async (req, res) => {
     const started = Date.now();
     // Three minutes of reading, and nothing still running after four: the function may run five, and a caller's fetch
     // gives up on a response that has not started after five.
-    const result = await runReviews({ store: board, archive: await loadArchive(), catalog: loadCatalog(), deadline: started + 180_000, end: started + 240_000, workers: Math.min(4, Math.max(1, Number(body.workers) || 3)), limit: Number(body.limit) || undefined, log: (message) => console.log(`[reviews] ${message}`) });
+    const result = await runReviews({ store: board, archive: await loadArchive(), catalog: loadCatalog(), deadline: started + 180_000, end: started + 240_000, workers: Math.min(8, Math.max(1, Number(body.workers) || 3)), models: typeof body.models === 'string' ? body.models.slice(0, 100) : undefined, limit: Number(body.limit) || undefined, log: (message) => console.log(`[reviews] ${message}`) });
     sendJson(res, 200, result);
     return;
   }

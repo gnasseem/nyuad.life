@@ -306,7 +306,7 @@ Supabase service key (`reviewsJobToken` in lib/reviews.ts), so it needs only `SU
 `REVIEWS_JOB_TOKEN` (a GitHub Actions secret) in CI. Plain `npm run reviews` runs it on this machine instead, with
 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, the archive's index (`npm run archive -- pull index`) and free model keys.
 `REVIEWS_MODELS` names the providers it may call, in order (default `zai,groq,cloudflare,mistral`: GLM first; Gemini and
-OpenRouter are left to Ask unless named).
+OpenRouter are left to Ask unless named; `--models all` calls every provider the site has, GLM still first).
 
 Work is saved thread by thread, so it can be stopped, crash or run out of quota at any point and the next run carries
 on; a second run straight after a finished one makes no model calls. Digests are folded only once every thread is
