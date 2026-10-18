@@ -501,10 +501,10 @@ describe('api', () => {
     await helperPost({ op: 'profile', netId: 'hlp1234', key: 'helper-key-1', name: 'Helen Helper', major: 'Physics', classOf: 2027 });
     expect((await helperPost({ op: 'answer', netId: 'hlp1234', key: 'helper-key-1', questionId: question.id, text: 'D2 until midnight' })).answer).toBeTruthy();
     expect((await helperPost({ op: 'answer', netId: 'hlp1234', key: 'helper-key-1', questionId: question.id, text: 'Also the Marketplace' })).error).toBe('already_answered');
-    const feed = await getJson(`${apiUrl}/api/board?op=feed`, { headers });
-    const entry = feed.questions.find((item: { id: string }) => item.id === question.id);
-    expect(entry).toMatchObject({ mine: true, answers: [expect.objectContaining({ text: 'D2 until midnight' })] });
-    expect(JSON.stringify(feed)).not.toContain('askerKey');
+    const mine = await getJson(`${apiUrl}/api/board?op=mine`, { headers });
+    const entry = mine.questions.find((item: { id: string }) => item.id === question.id);
+    expect(entry).toMatchObject({ answers: [expect.objectContaining({ text: 'D2 until midnight' })] });
+    expect(JSON.stringify(mine)).not.toContain('askerKey');
   });
 
   it('screens what students post', async () => {
@@ -557,9 +557,6 @@ describe('api', () => {
       expect(rating.sources).toEqual([expect.objectContaining({ url: 'https://fb/p1' })]);
       expect(rating).not.toHaveProperty('postIds');
     }
-    const { ratings } = await getJson(`${apiUrl}/api/courses?profs=${encodeURIComponent('Rana Dania|Nobody Here')}`);
-    expect(ratings['Rana Dania']).toMatchObject({ score: 4.2, basis: 7, verdict: 'Students like it.', likes: ['Clear lectures'], courses: [{ code: 'MATH-UH 1012', positive: 4, negative: 0, neutral: 1, score: 4.5 }] });
-    expect(ratings['Nobody Here']).toBeNull();
     const scores = await getJson(`${apiUrl}/api/courses?ratings=1`);
     expect(scores.courses['MATH-UH 1012']).toEqual({ score: 4.2, basis: 7, difficulty: 3, workload: null, verdict: 'Students like it.' });
     expect(scores.profs['Rana Dania']).toEqual({ score: 4.2, basis: 7, verdict: 'Students like it.' });
@@ -590,7 +587,7 @@ describe('api', () => {
     expect(plan.wants).toEqual([{ label: '', codes: ['MATH-UH 1012'], sessions: [] }]);
     expect(plan.reply).toBe('I added Calculus and kept your time preferences.');
     expect(plan.missing).toEqual(['an Arts Core', 'Nobody Here is not teaching this term']);
-    expect(plan.rules).toEqual({ earliest: '09:00', latest: '', requiredStarts: [], avoidStarts: [], daysOff: ['Fri', 'Sat'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Rana Dania'], avoid: [] });
+    expect(plan.rules).toEqual({ earliest: '09:00', latest: '', requiredStarts: [], avoidStarts: [], daysOff: ['Fri', 'Sat'], maxPerDay: 3, noBackToBack: true, shape: 'compact', waitlisted: false, bestRated: true, prefer: ['Rana Dania'], avoid: [], place: [] });
     const call = geminiCalls.at(-1)!;
     expect(call.prompt).toContain('MATH-UH 1012 · Calculus');
     expect(call.prompt).toContain('Current plan:\n- Calculus: MATH-UH 1012 (sessions 71, 72)');

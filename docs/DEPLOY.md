@@ -25,17 +25,18 @@ archive browsing, plan reading and contacts to anyone who has not.
   or professor's page in Reviews; the digest is never listed as a source. A question about something a digest does not
   keep (an exam, a textbook, attendance) still reads the course's own threads. "Easiest Arts Core" or "best CS
   professors" is answered from the subject's digests, ranked.
-- **Questions.** When the archive falls short, a question goes to students: a feed of every question with its answers,
-  newest first, that anyone can answer in place, filtered to the ones for your major and year, the unanswered ones or
-  your own; the + button asks a new one. Nobody can answer their own question or answer one twice. Answered questions
-  are cited by Ask. The Ask home page puts the questions you are most likely to know first, answerable right there,
-  and says when one of your own questions got a new answer.
+- **Asking students.** When Ask cannot answer from the archive (an answer that is not well sourced, a failed one, or a
+  request for someone on campus right now), "Ask students" posts the question in one tap, anonymously. Students in
+  the asker's major and year are offered it first, one at a time, in a "can you answer?" card on the Ask home page,
+  answerable or skipped right there. Answers appear under the question in the asker's conversation, and the history
+  marks conversations with new ones. Nobody can answer their own question or answer one twice. Answered questions
+  are cited by Ask.
 - **Events.** Scheduled campus gatherings with required dates, locations and host details, browsed by day with calendar downloads. Events drop off one day after starting. Service requests and general notices are rejected.
 - **Market.** What the group is mostly used for besides questions: things for sale (up for three weeks), wanted (two)
   or free (one), offers to buy or sell Falcons and Campus Dirhams (two separate balances, each with its own order book;
   five days) and shared rides by day (gone three hours after they leave). Contact details are fetched one post at a
   time, on tap. Lost & found posts stay up for two weeks in their own market tab. Ask routes lost-item notices here,
-  while replacement and procedural questions still get an answer. Live requests go to Questions; Ask never sends students to a group chat.
+  while replacement and procedural questions still get an answer. Live requests are put to students from Ask; Ask never sends students to a group chat.
 - **Reviews.** One search over courses and professors together, by code, title, nickname ("mvc", "calc") or name;
   results are mixed and ranked, Abu Dhabi courses first, each with its score and one-line verdict. A course page shows
   the score, difficulty, workload, a short verdict, what students like and warn about, and its professors (this
@@ -47,19 +48,23 @@ archive browsing, plan reading and contacts to anyone who has not.
   planned here ends, or when they open a course they likely took (planned for a term well under way, or an
   introductory course in their major's subject past their first year); it asks once per course, and "Don't ask
   again" stops it. Everything shown comes from review digests (below), so nothing on these pages calls a model.
-- **Plan.** A schedule builder after [Horarium](https://github.com/Phoenix-3139/Horarium). Choose any school or study
-  away site in Albert, then say what you need ("calc, intro to CS, any Arts Core, nothing before 10, Fridays off"). A
-  model reads the request against that site's real course list and rules. Students compare its course options with Albert
-  descriptions before building the week, or add a course from its page in Reviews. The week's rules (local class hours,
-  teaching days, days off, classes a day, shape, breaks,
-  waitlists) are set beside the courses. The browser then finds every combination where no two classes meet at once
-  (`lib/schedule.ts`): one section of every component, lectures paired with their own recitation or lab, seven-week
-  halves sharing a slot, closed and waitlisted sections only when allowed. Hard rules (hours, days off, classes a day,
-  no back-to-back, professors to avoid) always hold; within them plans are ranked by how students rate the professors
-  (from the same review digests as Reviews) and, for "any of" slots, the courses,
-  then by days on campus, gaps, early starts, preferred professors and seats. Each plan is drawn as a week, summed up in
-  a line ("Top-rated professors · 3 days on campus · Fridays free") and listed with class numbers to copy into Albert.
-  When nothing fits it says which rule or which courses are in the way and offers the change that would make it fit.
+- **Plan.** A schedule builder after [Horarium](https://github.com/Phoenix-3139/Horarium), used like Ask: one box
+  takes the whole request ("calc, intro to CS, any Arts Core, nothing before 10, Fridays off") and later changes
+  ("move the lab to Tuesday", "swap Prof X out", "no 9am"). The school starts at Abu Dhabi, every profile being an NYU
+  Abu Dhabi student, and a pill above the box changes it and the semester. A model reads the request against that
+  site's real course list (`api/plan.ts`), with the review digests' course ratings beside each course, and chooses the
+  courses itself: one for a named course, a short list for "any Arts Core", from which the planner takes whichever
+  fits the week best. Professors named with "out", "not" or "with", a course part moved to given days, the courses
+  already in the plan (kept unless the student asks to take one out) and seven-week sessions (only when asked for)
+  are read or guarded without the model, so a small or busy model cannot undo them. What it understood shows under
+  the box as chips, each removable with a tap. The browser then finds every combination where no two classes meet
+  at once (`lib/schedule.ts`): one section of every component, lectures paired with their own recitation or lab,
+  seven-week halves sharing a slot, closed and waitlisted sections only when allowed. Hard rules (hours, days off,
+  classes a day, no back-to-back, professors to avoid, a part's days) always hold; within them plans are ranked by
+  how students rate the professors and, for "any of" slots, the courses (the review digests, read once), then by
+  days on campus, gaps, early starts, preferred professors and seats. The best plan is drawn as a week with its class
+  numbers to copy into Albert, and the others are a swipe away. When nothing fits it says which rule or which courses
+  are in the way and offers each change that would make it fit as a tap.
 
 Everything is TypeScript in one repository: `api/` and `lib/` are Vercel serverless functions, `web/` is a Vite and
 React app, `scripts/` holds the scraper, the crawler and the indexer, and `supabase/schema.sql` is the board schema.
@@ -109,8 +114,8 @@ The group archive and its search index are not in the repository (see "Data and 
    comes from a real probe of the database and `board.problem` says what is wrong when it is false.
 
 Routes: `GET /api/health`, `/api/search` (`q=`, `topic=`, `sort=`, `page=`), `/api/post?id=`, `/api/courses` (`term=`,
-`all=1`, `code=`, `code=&rating=1`, `profs=A|B`, `ratings=1`); `POST /api/ask` (server-sent events), `POST /api/plan`;
-`GET|POST /api/board` (`op=stats|question|recent|feed|mine|announcements|offers|listings|contact|leaderboard` on GET,
+`all=1`, `code=`, `code=&rating=1`, `ratings=1`); `POST /api/ask` (server-sent events), `POST /api/plan`;
+`GET|POST /api/board` (`op=stats|mine|announcements|offers|listings|contact` on GET,
 `profile|ask|next|answer|skip|announce|unannounce|offer|offer_done|unoffer|listing|listing_done|unlisting` on POST). Ask,
 search, courses, plan and the board are rate-limited per IP.
 

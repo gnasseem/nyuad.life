@@ -1,27 +1,26 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { api, boardProblem as describeBoardProblem, onSignupRequired, type ChatGPTStatus, type Health, type Profile } from './api';
+import { api, boardProblem as describeBoardProblem, onSignupRequired, type ChatGPTStatus, type Health, type Profile, type QuestionWithAnswers } from './api';
 import { APP_NAME } from './brand';
 import { HistoryPanel } from './components/HistoryPanel';
 import { Feedback } from './components/Feedback';
 import { Wordmark } from './components/Logo';
 import { ProfileModal } from './components/ProfileForm';
 import { RatePrompt } from './components/Rate';
-import { AppContext, type Prefill, type ProfileRequest } from './context';
+import { AppContext, type Prefill, type ProfileRequest, type StudentAnswers } from './context';
 import { initials } from './format';
-import { IconAsk, IconBag, IconBook, IconCalendar, IconMegaphone, IconQuestions, IconShield, IconUser } from './icons';
+import { IconAsk, IconBag, IconBook, IconCalendar, IconMegaphone, IconShield, IconUser } from './icons';
 import { AskPage } from './pages/Ask';
 import { navigate, onLinkClick, routePath, useRoute, type Route } from './router';
-import { applyTheme, loadActiveConversation, loadConversations, loadOnboarded, loadProfile, loadSidebarClosed, loadTheme, onConversationsChange, saveOnboarded, saveAccountKey, saveProfile, saveSidebarClosed, type Conversation, type Theme } from './store';
+import { applyTheme, loadActiveConversation, loadConversations, loadOnboarded, loadProfile, loadSeenAnswers, saveSeenAnswers, loadSidebarClosed, loadTheme, onConversationsChange, saveOnboarded, saveAccountKey, saveProfile, saveSidebarClosed, type Conversation, type Theme } from './store';
 import { standingFor } from './year';
 
-type Line = 'ask' | 'questions' | 'notices' | 'market' | 'guide' | 'plan';
+type Line = 'ask' | 'notices' | 'market' | 'guide' | 'plan';
 
 // Ask is the page most visits open on, so it ships with the app; the others load when first opened, and are fetched
 // in the background once the first screen is up so that opening them later is instant.
 const loaders = {
   plan: () => import('./pages/Plan'),
   courses: () => import('./pages/Courses'),
-  questions: () => import('./pages/Questions'),
   events: () => import('./pages/Announcements'),
   market: () => import('./pages/Market'),
   post: () => import('./pages/Post'),
@@ -32,8 +31,6 @@ const loaders = {
 };
 const PlanPage = lazy(() => loaders.plan().then((module) => ({ default: module.PlanPage })));
 const CoursesPage = lazy(() => loaders.courses().then((module) => ({ default: module.CoursesPage })));
-const QuestionsPage = lazy(() => loaders.questions().then((module) => ({ default: module.QuestionsPage })));
-const QuestionPage = lazy(() => loaders.questions().then((module) => ({ default: module.QuestionPage })));
 const AnnouncementsPage = lazy(() => loaders.events().then((module) => ({ default: module.AnnouncementsPage })));
 const MarketPage = lazy(() => loaders.market().then((module) => ({ default: module.MarketPage })));
 const PostPage = lazy(() => loaders.post().then((module) => ({ default: module.PostPage })));
@@ -53,13 +50,52 @@ const NAV: Array<{ route: Route; label: string; line: Line; icon: typeof IconAsk
   { route: { name: 'ask' }, label: 'Ask', line: 'ask', icon: IconAsk, matches: ['ask'] },
   { route: { name: 'plan' }, label: 'Plan', line: 'plan', icon: IconCalendar, matches: ['plan'] },
   { route: { name: 'courses' }, label: 'Reviews', line: 'guide', icon: IconBook, matches: ['courses', 'professors', 'threads', 'post'] },
-  { route: { name: 'questions' }, label: 'Questions', line: 'questions', icon: IconQuestions, matches: ['questions', 'question'] },
   { route: { name: 'announcements' }, label: 'Events', line: 'notices', icon: IconMegaphone, matches: ['announcements'] },
   { route: { name: 'market', tab: 'items' }, label: 'Market', line: 'market', icon: IconBag, matches: ['market'] },
 ];
 
-const PAGE_TITLE: Partial<Record<Route['name'], string>> = { questions: 'Questions', question: 'Question', announcements: 'Events', market: 'Market', courses: 'Reviews', professors: 'Professors', threads: 'Threads', post: 'Thread', plan: 'Plan', settings: 'Settings', admin: 'Admin' };
+const PAGE_TITLE: Partial<Record<Route['name'], string>> = { announcements: 'Events', market: 'Market', courses: 'Reviews', professors: 'Professors', threads: 'Threads', post: 'Thread', plan: 'Plan', settings: 'Settings', admin: 'Admin' };
 const DEFAULT_PROFILE_REQUEST = { title: 'Your details', reason: '' };
+
+/**
+ * The questions put to students from Ask, with their answers: fetched only when a saved conversation holds one, again
+ * every few minutes while the tab is open, so a new answer shows up in that conversation and in the history.
+ */
+function useStudentAnswers(conversations: Conversation[], enabled: boolean): StudentAnswers {
+  const [questions, setQuestions] = useState<Map<string, QuestionWithAnswers>>(() => new Map());
+  const [seen, setSeen] = useState(loadSeenAnswers);
+  const asked = conversations.some((conversation) => conversation.messages.some((message) => message.asked));
+  const refresh = useCallback(() => {
+    if (!enabled) return;
+    api.board
+      .mine()
+      .then((result) => setQuestions(new Map(result.questions.map((question) => [question.id, question]))))
+      .catch(() => undefined);
+  }, [enabled]);
+  useEffect(() => {
+    if (!asked) return;
+    refresh();
+    const timer = window.setInterval(() => document.visibilityState === 'visible' && refresh(), 180_000);
+    return () => window.clearInterval(timer);
+  }, [asked, refresh]);
+  const markSeen = useCallback(
+    (ids: string[]) =>
+      setSeen((current) => {
+        const changed = ids.filter((id) => questions.has(id) && current[id] !== questions.get(id)!.answers.length);
+        if (!changed.length) return current;
+        const next = { ...current, ...Object.fromEntries(changed.map((id) => [id, questions.get(id)!.answers.length])) };
+        saveSeenAnswers(next);
+        return next;
+      }),
+    [questions],
+  );
+  return useMemo(() => ({ questions, seen, markSeen, refresh }), [questions, seen, markSeen, refresh]);
+}
+
+/** Conversations holding a question students answered since it was last opened. */
+function unreadConversations(conversations: Conversation[], students: StudentAnswers): Set<string> {
+  return new Set(conversations.filter((conversation) => conversation.messages.some((message) => message.asked && (students.questions.get(message.asked.id)?.answers.length ?? 0) > (students.seen[message.asked.id] ?? 0))).map((conversation) => conversation.id));
+}
 
 function useConversations(): Conversation[] {
   const [items, setItems] = useState(loadConversations);
@@ -81,7 +117,6 @@ export function App() {
   const [theme, setThemeState] = useState<Theme>(loadTheme);
   const [toastState, setToastState] = useState<{ message: string; leaving: boolean; id: number } | null>(null);
   const [askPrefill, setAskPrefillState] = useState<(Prefill & { token: number }) | null>(null);
-  const [boardPrefill, setBoardPrefill] = useState('');
   const [chatgpt, setChatGPT] = useState<ChatGPTStatus | null>(null);
   const [admin, setAdmin] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
@@ -205,6 +240,7 @@ export function App() {
   };
 
   const boardProblem = useMemo(() => describeBoardProblem(health), [health]);
+  const students = useStudentAnswers(conversations, Boolean(profile) && !boardProblem);
 
   // Back from ChatGPT: say how it went once, and take the marker out of the address.
   useEffect(() => {
@@ -220,11 +256,12 @@ export function App() {
   }, []);
 
   const context = useMemo(
-    () => ({ health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, setBoardPrefill, chatgpt, refreshChatGPT, admin, refreshAdmin }),
-    [health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, boardPrefill, chatgpt, refreshChatGPT, admin, refreshAdmin],
+    () => ({ health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, students, chatgpt, refreshChatGPT, admin, refreshAdmin }),
+    [health, boardProblem, profile, setProfile, requestProfile, theme, setTheme, toast, askPrefill, setAskPrefill, students, chatgpt, refreshChatGPT, admin, refreshAdmin],
   );
 
   const currentConversation = route.name === 'ask' ? search.get('c') : null;
+  const unread = useMemo(() => unreadConversations(conversations, students), [conversations, students]);
   const onAsk = route.name === 'ask';
   const togglePanel = () => {
     const next = !panelOpen;
@@ -239,10 +276,6 @@ export function App() {
 
   const page = (() => {
     switch (route.name) {
-      case 'questions':
-        return <QuestionsPage search={search} />;
-      case 'question':
-        return <QuestionPage id={route.id} />;
       case 'announcements':
         return <AnnouncementsPage />;
       case 'market':
@@ -262,7 +295,7 @@ export function App() {
       case 'admin':
         return <AdminPage />;
       default:
-        return <AskPage resumeId={currentConversation ?? undefined} history={{ open: panelOpen, count: conversations.length, toggle: togglePanel }} />;
+        return <AskPage resumeId={currentConversation ?? undefined} history={{ open: panelOpen, count: conversations.length, unread: unread.size, toggle: togglePanel }} />;
     }
   })();
 
@@ -307,7 +340,7 @@ export function App() {
         <main className="main" key={pageKey}>
           {onAsk ? (
             <div className="ask-shell">
-              <HistoryPanel conversations={conversations} current={currentConversation} open={panelOpen} onClose={closePanel} />
+              <HistoryPanel conversations={conversations} current={currentConversation} open={panelOpen} onClose={closePanel} unread={unread} />
               <div className="ask-body">
                 <ErrorBoundary>{page}</ErrorBoundary>
               </div>

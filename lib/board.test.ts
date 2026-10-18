@@ -278,7 +278,7 @@ describe('SupabaseBoardStore', () => {
   });
 });
 
-describe('Falcon and Campus Dirham offers, and the leaderboard', () => {
+describe('Falcon and Campus Dirham offers', () => {
   it('validates offers and summarises the market', async () => {
     const { validateOffer, summarizeMarket } = await import('./board.ts');
     const sell = validateOffer({ side: 'sell', amount: '500', rate: '0.85', contactKind: 'whatsapp', contact: '+971 50 123 4567', note: 'today only' }, now);
@@ -314,23 +314,6 @@ describe('Falcon and Campus Dirham offers, and the leaderboard', () => {
     expect((await store.listOffersByPoster('key-1234567'))[0]?.status).toBe('done');
     expect(await store.closeOffer(offer.id, 'key-1234567', true)).toBe(true);
     expect(await store.listOffersByPoster('key-1234567')).toEqual([]);
-  });
-
-  it('ranks helpers with weekly streaks', async () => {
-    const { leaderboard, weekOf } = await import('./board.ts');
-    expect(weekOf('2026-09-29T12:00:00Z')).toBe(weekOf('2026-10-04T23:00:00Z')); // Tuesday and Sunday, same Monday-based week
-    expect(weekOf('2026-10-05T00:00:00Z')).toBe(weekOf('2026-09-29T12:00:00Z') + 7);
-    const answer = (helper: string, daysAgo: number): Answer => ({ id: `${helper}-${daysAgo}`, questionId: 'q', text: 'x', helperNetId: helper, helperName: helper.toUpperCase(), helperMajor: 'Physics', helperYear: 'junior', createdAt: new Date(now.getTime() - daysAgo * 86_400_000).toISOString() });
-    const board = leaderboard([answer('a', 1), answer('a', 8), answer('a', 15), answer('b', 1), answer('b', 2), answer('b', 3), answer('b', 30), answer('c', 40)], now, 10, 'a');
-    // b answered on Monday (this week) and Saturday/Sunday (last week): two consecutive weeks.
-    expect(board.map((entry) => [entry.name, entry.answers, entry.streak, entry.me])).toEqual([
-      ['B', 4, 2, false],
-      ['A', 3, 3, true],
-      ['C', 1, 0, false],
-    ]);
-    // NetIDs work as a login on the board, so the leaderboard never carries them.
-    expect(JSON.stringify(board)).not.toMatch(/"netId"/);
-    expect(new Set(board.map((entry) => entry.id)).size).toBe(3);
   });
 });
 

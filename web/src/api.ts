@@ -145,9 +145,6 @@ export interface Answer {
 
 /** A question with its answers in place of the count of them. */
 export type QuestionWithAnswers = Omit<Question, 'answers'> & { answers: Answer[] };
-/** A question in the feed: `mine` when this browser asked it. */
-/** `byMe`: this student already answered or skipped it. */
-export type FeedQuestion = QuestionWithAnswers & { mine?: boolean; byMe?: 'answer' | 'skip' };
 
 /** What an admin can remove. */
 export type AdminTarget = 'question' | 'answer' | 'notice' | 'listing' | 'offer' | 'review';
@@ -320,17 +317,6 @@ export interface MarketSummary {
   bestBid: number | null;
   medianRate: number | null;
   volume: number;
-}
-
-export interface LeaderboardEntry {
-  id: string;
-  /** This row is the helper who asked. */
-  me: boolean;
-  name: string;
-  major: string;
-  year: Standing | '';
-  answers: number;
-  lastAnswerAt: string;
 }
 
 /* ---------- Courses ---------- */
@@ -564,20 +550,6 @@ function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
   return hit;
 }
 
-/** Professors' ratings this session already has; null is a professor students have not written about. */
-const profMemo = new Map<string, ProfRating | null>();
-
-/** Ratings for these professors: the ones this session has, and the rest from the server, 24 at a time. */
-async function profRatings(names: string[]): Promise<Map<string, ProfRating | null>> {
-  const missing = names.filter((name) => !profMemo.has(name));
-  for (let at = 0; at < missing.length; at += 24) {
-    const ask = missing.slice(at, at + 24);
-    const result = await request<{ ratings: Record<string, ProfRating | null> }>(`/api/courses?profs=${encodeURIComponent(ask.join('|'))}`);
-    for (const name of ask) profMemo.set(name, result.ratings[name] ?? null);
-  }
-  return new Map(names.map((name) => [name, profMemo.get(name) ?? null]));
-}
-
 const RATED_KEY = 'room.rated';
 
 /**
@@ -604,7 +576,6 @@ export function onRecount(listener: (code: string, result: Recount) => void): ()
 /** Takes a recount in: the session's list scores and cached ratings, and the pages to ask for fresh. */
 function recounted(code: string, result: Recount): void {
   recountListeners.forEach((listener) => listener(code, result));
-  memo.delete(`rating:${code}`);
   memo.delete('my-reviews');
   const keys = [code, ...Object.keys(result.profs ?? {}).map((name) => `prof:${name}`)];
   try {
@@ -620,7 +591,6 @@ function recounted(code: string, result: Recount): void {
     if (result.course === null) delete index.courses[code];
     else if (result.course) index.courses[code] = { score: result.course.score, basis: result.course.basis, difficulty: result.course.difficulty, workload: result.course.workload, verdict: result.course.verdict };
     for (const [name, rating] of Object.entries(result.profs ?? {})) {
-      profMemo.set(name, rating);
       if (rating) index.profs[name] = { score: rating.score, basis: rating.basis, verdict: rating.verdict };
       else delete index.profs[name];
     }
@@ -655,10 +625,7 @@ export const api = {
     data: () => request<AdminData>('/api/admin?op=data'),
     resolveReport: (id: string, resolved: boolean) => post<{ ok: true }>('/api/admin', { op: 'resolve-report', id, resolved }),
     stats: () => request<{ open: number; answered: number; answers: number; helpers: number }>('/api/board?op=stats'),
-    recent: () => request<{ questions: QuestionWithAnswers[] }>('/api/board?op=recent'),
-    question: (id: string) => request<{ question: Question; answers: Answer[] }>(`/api/board?op=question&id=${encodeURIComponent(id)}`),
     mine: (_key?: string) => request<{ questions: QuestionWithAnswers[] }>('/api/board?op=mine'),
-    feed: (before?: string) => request<{ questions: FeedQuestion[]; more: boolean; next: string | null }>(`/api/board?op=feed${before ? `&before=${encodeURIComponent(before)}` : ''}`),
     announcements: () => request<{ announcements: Announcement[] }>('/api/board?op=announcements'),
     // The browser key goes with everything done as a NetID: the server only lets the browser that set a NetID up act as it.
     profile: (body: { netId: string; name: string; major: string; classOf: number }) => post<{ profile: Profile }>('/api/board', { op: 'profile', key: askerKey(), ...body }),
@@ -677,7 +644,6 @@ export const api = {
     listing: (body: ListingDraft & { netId: string; key: string }) => post<{ listing: Listing }>('/api/board', { op: 'listing', ...body }),
     listingDone: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'listing_done', ...body }),
     unlisting: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unlisting', ...body }),
-    leaderboard: (_netId?: string) => request<{ helpers: LeaderboardEntry[] }>('/api/board?op=leaderboard'),
     reviews: (code: string) => request<{ reviews: CourseReview[]; open?: boolean }>(`/api/board?op=reviews&code=${encodeURIComponent(code)}`),
     profReviews: (name: string) => request<{ reviews: CourseReview[] }>(`/api/board?op=prof_reviews&name=${encodeURIComponent(name)}`),
     review: async (body: { code: string; rating: number | null; profRating: number | null; difficulty: number | null; workload: number | null; text: string; term: string; professor: string; anonymous: boolean }) => {
@@ -717,11 +683,9 @@ export const api = {
     list: (term: string, school?: string) => cached(`courses:${term}:${school ?? ''}`, () => request<{ term: string; courses: CourseRow[] }>(`/api/courses?term=${encodeURIComponent(term)}${school ? `&school=${encodeURIComponent(school)}` : ''}`)),
     all: () => cached('courses:all:2', () => request<{ courses: CourseEntry[] }>('/api/courses?all=2')),
     detail: (code: string) => request<CourseDetail>(`/api/courses?code=${encodeURIComponent(code)}`),
-    rating: (code: string) => cached(`rating:${code}`, () => request<{ rating: CourseRating | null }>(`/api/courses?code=${encodeURIComponent(code)}&rating=1`)),
     scores: () => cached('scores', () => request<ScoreIndex>('/api/courses?ratings=1')),
     view: (code: string) => request<CourseView>(`/api/courses?code=${encodeURIComponent(code)}&view=1${freshness(code)}`),
     prof: (name: string) => request<ProfView>(`/api/courses?prof=${encodeURIComponent(name)}${freshness(`prof:${name}`)}`),
-    profs: profRatings,
   },
 };
 

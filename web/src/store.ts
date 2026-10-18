@@ -20,6 +20,8 @@ export interface Message {
   pending?: boolean;
   /** The answer stopped before it finished: the time or length limit, a dropped connection, or the page was left. */
   truncated?: boolean;
+  /** Put to students with "Ask students": the board question, and answers to close questions it already had. */
+  asked?: { id: string; at: string; similar?: Array<{ text: string; answer: string }> };
 }
 
 export interface Conversation {

@@ -1,6 +1,6 @@
 /**
  * The student board, the announcements feed and the market, on one route so the function count stays small:
- *   GET  /api/board?op=stats | question&id= | recent | feed[&before=] | mine | announcements | offers | listings | contact&type=offer|listing&id= | leaderboard
+ *   GET  /api/board?op=stats | mine | announcements | offers | listings | contact&type=offer|listing&id=
  *   (the browser key and NetID travel in the x-ror-key and x-ror-netid headers; older clients put the key in &key=)
  *   (offers covers both currencies, Falcons and Campus Dirhams; each offer says which)
  *   POST /api/board { op: profile | ask | next | answer | skip | announce | unannounce | offer | offer_done | unoffer
@@ -8,7 +8,6 @@
  */
 import {
   eligibleQuestions,
-  leaderboard,
   pickNext,
   searchBoard,
   standingFor,
@@ -100,7 +99,7 @@ export default route(['GET', 'POST'], async (req, res) => {
     sendJson(res, 200, { ok: true });
     return;
   }
-  const publicReads = ['stats', 'announcements', 'offers', 'listings', 'recent', 'feed', 'leaderboard', 'question', 'reviews', 'prof_reviews'];
+  const publicReads = ['stats', 'announcements', 'offers', 'listings', 'reviews', 'prof_reviews'];
   if (req.method === 'POST' || !publicReads.includes(op)) {
     const session = requireEmailSession(req);
     if (body.netId && body.netId !== session.netId) throw new ApiError(403, 'Use the account you logged in with.', 'identity_mismatch');
@@ -136,34 +135,6 @@ export default route(['GET', 'POST'], async (req, res) => {
       sendJson(res, 200, { listings: open.map(publicListing), mine: mine.map(publicListing) });
       return;
     }
-    case 'recent': {
-      rateLimit(req, 60, 60, 'board-read');
-      const questions = await store.listAnswered(12);
-      const answers = await store.listAnswers(questions.map((question) => question.id));
-      sendJson(res, 200, {
-        questions: questions.map((question) => ({ ...publicQuestion(question), answers: answers.filter((answer) => answer.questionId === question.id).map(publicAnswer) })),
-      });
-      return;
-    }
-    case 'feed': {
-      rateLimit(req, 60, 60, 'board-read');
-      const before = queryString(req, 'before').trim();
-      const page = await store.listFeed(FEED_PAGE, before || undefined);
-      const pending = before ? [] : await store.listOpen(300);
-      const questions = [...new Map([...pending, ...page].map((entry) => [entry.id, entry])).values()];
-      const me = emailSession(req)?.netId;
-      const [answers, events] = await Promise.all([store.listAnswers(questions.map((question) => question.id)), me ? store.listEventsByHelper(me) : Promise.resolve([])]);
-      const key = /^[a-z0-9-]{8,64}$/i.test(headerKey) ? headerKey : '';
-      // What this student already did with each question, so the feed and the home page stop offering it to them.
-      const byMe = new Map<string, 'answer' | 'skip'>();
-      for (const event of events) if (event.kind !== 'view' && byMe.get(event.questionId) !== 'answer') byMe.set(event.questionId, event.kind);
-      sendJson(res, 200, {
-        questions: questions.map((question) => ({ ...publicQuestion(question), mine: Boolean(key) && question.askerKey === key, byMe: byMe.get(question.id), answers: answers.filter((answer) => answer.questionId === question.id).map(publicAnswer) })),
-        more: page.length === FEED_PAGE,
-        next: page.at(-1)?.createdAt ?? null,
-      });
-      return;
-    }
     case 'contact': {
       // A handful a minute is plenty for a person and slow for a scraper; and only members see contacts at all.
       rateLimit(req, 12, 4, 'board-contact');
@@ -176,21 +147,6 @@ export default route(['GET', 'POST'], async (req, res) => {
       const found = await store.getContact(type, id, new Date());
       if (!found) throw new ApiError(404, 'That post is closed or gone.', 'not_found');
       sendJson(res, 200, found);
-      return;
-    }
-    case 'leaderboard': {
-      rateLimit(req, 60, 60, 'board-read');
-      // "You" is only marked for the NetID this browser owns: marking any NetID asked about would let anyone find which
-      // NetID belongs to which name on the board.
-      const me = await ownNetId(store, req);
-      sendJson(res, 200, { helpers: leaderboard(await recentAnswers(store), new Date(), 10, me) });
-      return;
-    }
-    case 'question': {
-      rateLimit(req, 60, 60, 'board-read');
-      const question = await store.getQuestion(queryString(req, 'id').trim());
-      if (!question) throw new ApiError(404, 'No question with that id.', 'not_found');
-      sendJson(res, 200, { question: publicQuestion(question), answers: (await store.listAnswers([question.id])).map(publicAnswer) });
       return;
     }
     case 'reviews': {
@@ -382,7 +338,6 @@ export default route(['GET', 'POST'], async (req, res) => {
       const anonymous = body.anonymous === true;
       const answer = await store.createAnswer({ questionId: question.id, text, helperNetId: profile.netId, helperName: anonymous ? 'Anonymous' : profile.name, helperMajor: anonymous ? '' : profile.major, helperYear: anonymous ? '' : standingFor(profile.classOf) });
       await Promise.all([store.recordEvent({ questionId: question.id, netId: profile.netId, kind: 'answer' }), store.bump(question.id, { answers: 1 }), store.touchProfile(profile.netId, true)]);
-      answersMemo = null;
       statsMemo = null;
       recordEvent('answer');
       sendJson(res, 200, { answer: publicAnswer(answer), answered: profile.answers + 1 });
@@ -438,8 +393,6 @@ async function review(kind: ReviewedKind, ...parts: Array<string | null | undefi
   if (screened) throw new ApiError(screened.reason === 'unreviewed' ? 503 : 422, screened.message, `blocked_${screened.reason}`);
 }
 
-const FEED_PAGE = 30;
-
 /** NetID -> when this instance last marked them seen: once every half hour is plenty for "active today". */
 const seenAt = new Map<string, number>();
 const SEEN_EVERY_MS = 30 * 60_000;
@@ -452,18 +405,9 @@ async function seen(store: BoardStore, netId: string, lastSeenAt: string): Promi
   await store.touchProfile(netId, false).catch((error: Error) => console.warn('[board] could not mark a member seen:', error.message));
 }
 
-/** The leaderboard and the counts change slowly and are read on every visit: each instance keeps them a minute. */
-let answersMemo: { at: number; answers: Promise<Answer[]> } | null = null;
+/** The counts change slowly and are read on every visit: each instance keeps them a minute. */
 let statsMemo: { at: number; stats: ReturnType<BoardStore['stats']> } | null = null;
 const MEMO_MS = 60_000;
-
-function recentAnswers(store: BoardStore): Promise<Answer[]> {
-  if (!answersMemo || Date.now() - answersMemo.at > MEMO_MS) {
-    answersMemo = { at: Date.now(), answers: store.listRecentAnswers(3000) };
-    answersMemo.answers.catch(() => (answersMemo = null));
-  }
-  return answersMemo.answers;
-}
 
 function boardStats(store: BoardStore): ReturnType<BoardStore['stats']> {
   if (!statsMemo || Date.now() - statsMemo.at > MEMO_MS) {
@@ -478,17 +422,6 @@ function localTime(iso: string): string {
   return new Date(iso).toLocaleString('en-GB', { timeZone: 'Asia/Dubai', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-/** The NetID this browser has set up, judged by its headers; empty when it has none or the headers do not hold up. */
-async function ownNetId(store: BoardStore, req: ApiRequest): Promise<string> {
-  const { netId, key } = claimedIdentity(req);
-  if (!netId || !key) return '';
-  try {
-    return (await requireProfile(store, netId, key)).netId;
-  } catch {
-    return '';
-  }
-}
-
 /** Posts a question; also returns what the archive and the board already know, so nobody waits for an answer they had. */
 async function askQuestion(store: BoardStore, body: Body) {
   const text = validateQuestionText(body.text);
@@ -497,8 +430,9 @@ async function askQuestion(store: BoardStore, body: Body) {
   allow('question', text);
   allow('name', askerName);
   await review('question', text);
+  // A request for someone on campus right now is what posting is for; only requests with a page of their own go there.
   const redirect = detectRedirect(text);
-  if (redirect) return { redirect };
+  if (redirect && redirect.domain !== 'live') return { redirect };
 
   const archive = await loadArchive();
   const cfg = geminiConfig();

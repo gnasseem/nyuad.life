@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { ChatGPTStatus, Health, Profile } from './api';
+import type { ChatGPTStatus, Health, Profile, QuestionWithAnswers } from './api';
 import type { Theme } from './store';
 
 export interface Prefill {
@@ -10,6 +10,14 @@ export interface Prefill {
 export interface ProfileRequest {
   title?: string;
   reason?: string;
+}
+
+export interface StudentAnswers {
+  questions: Map<string, QuestionWithAnswers>;
+  seen: Record<string, number>;
+  /** Counts these questions' answers as read. */
+  markSeen(ids: string[]): void;
+  refresh(): void;
 }
 
 export interface AppState {
@@ -25,9 +33,8 @@ export interface AppState {
   toast(message: string): void;
   askPrefill: (Prefill & { token: number }) | null;
   setAskPrefill(prefill: Prefill | null): void;
-  /** A question carried from Ask to the board's "ask students" form. */
-  boardPrefill: string;
-  setBoardPrefill(text: string): void;
+  /** The questions this browser put to students from Ask, with their answers, and how many of those were seen. */
+  students: StudentAnswers;
   /** Sign in with ChatGPT for this browser; null until the server has answered. */
   chatgpt: ChatGPTStatus | null;
   refreshChatGPT(): void;
@@ -47,8 +54,7 @@ export const AppContext = createContext<AppState>({
   toast: () => {},
   askPrefill: null,
   setAskPrefill: () => {},
-  boardPrefill: '',
-  setBoardPrefill: () => {},
+  students: { questions: new Map(), seen: {}, markSeen: () => {}, refresh: () => {} },
   chatgpt: null,
   refreshChatGPT: () => {},
   admin: false,

@@ -10,11 +10,12 @@ schedule. Live at **[nyuad.life](https://nyuad.life)** (NYU sign-in required).
 ## What it does
 
 - **Ask.** A question is answered from the Room of Requirement forum archive, official NYUAD pages, the Albert class
-  schedule and answers other students wrote here, with numbered citations and a confidence level.
-- **Questions.** When the archive falls short, the question goes to other students, lifted for those in the
-  asker's major or year. Answered questions become sources for Ask.
-- **Plan.** "Calc, intro to CS, any Arts Core, nothing before 10, Fridays off" becomes clash-free timetables, ranked by
-  how students rate the professors.
+  schedule and answers other students wrote here, with numbered citations and a confidence level. When the archive
+  falls short, one tap asks other students; their answers appear under the question and in the asker's history, and
+  become sources for Ask. Students likely to know see a "can you answer?" card on the Ask home page.
+- **Plan.** One box: "calc, intro to CS, any Arts Core, nothing before 10, Fridays off" becomes clash-free weeks to
+  swipe through, ranked by how students rate the professors and courses. What it understood shows as removable chips,
+  and "move the lab to Tuesday" or "no 9am" changes the plan.
 - **Reviews.** Every course and professor in Albert's schedule, rated from every forum post and comment about them
   (read offline into one digest each, with the split by professor) and reviews students wrote here.
 - **Events and Market.** Campus events, things for sale, Falcon and Campus Dirham trades, and shared rides.
@@ -74,7 +75,7 @@ Deploying, scraping, indexing and admin mode are in [docs/DEPLOY.md](docs/DEPLOY
 ## Tech
 
 TypeScript throughout. React 19 and Vite for the web app, Vercel serverless functions for the API, Supabase Postgres
-for accounts, questions and reviews, Voyage AI for embeddings and reranking, and a private Vercel Blob store for the
+for accounts, questions put to students and reviews, Voyage AI for embeddings and reranking, and a private Vercel Blob store for the
 archive and its index. Playwright drives the forum, Albert and official-page scrapers, Resend sends the NYU sign-in
 codes, and GitHub Actions runs the weekly official-page crawl and the incremental re-indexing. Tests use Vitest with a
 fake model and PGlite in place of the database.

@@ -15,13 +15,6 @@ export const IconAsk = (p: SVGProps<SVGSVGElement>) => (
     <path d="M12 3v5.4M12 15.6V21M3 12h5.4M15.6 12H21" />
   </svg>
 );
-export const IconQuestions = (p: SVGProps<SVGSVGElement>) => (
-  <svg {...base(p)}>
-    <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H9l-4 4z" />
-    <path d="M10 9.2a2 2 0 1 1 2.8 1.8c-.5.3-.8.6-.8 1.2" />
-    <circle cx="12" cy="14.2" r="0.5" fill="currentColor" />
-  </svg>
-);
 export const IconMegaphone = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}>
     <path d="M4 10v4a1 1 0 0 0 1 1h3l8 4V5L8 9H5a1 1 0 0 0-1 1z" />

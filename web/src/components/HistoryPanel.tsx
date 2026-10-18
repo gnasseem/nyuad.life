@@ -30,7 +30,7 @@ function grouped(conversations: Conversation[], now = new Date()): Array<{ label
  * it was last used. On a wide screen it sits beside the conversation and can be folded away; on a phone it slides in
  * over the page.
  */
-export function HistoryPanel({ conversations, current, open, onClose }: { conversations: Conversation[]; current: string | null; open: boolean; onClose(): void }) {
+export function HistoryPanel({ conversations, current, open, onClose, unread }: { conversations: Conversation[]; current: string | null; open: boolean; onClose(): void; unread: Set<string> }) {
   const [query, setQuery] = useState('');
   const panel = useRef<HTMLElement>(null);
   const wide = useMedia('(min-width: 1100px)');
@@ -123,7 +123,7 @@ export function HistoryPanel({ conversations, current, open, onClose }: { conver
                       title={conversation.title}
                       aria-current={current === conversation.id ? 'page' : undefined}
                     >
-                      <b>{conversation.title || 'Untitled'}</b><span className="hist-preview">{conversation.messages.filter((message) => message.role === 'model').at(-1)?.content.replace(/[*#`\[\]]/g, '').slice(0, 100) || 'Open conversation'}</span>
+                      <b>{conversation.title || 'Untitled'}</b>{unread.has(conversation.id) && <span className="hist-new">New answer from a student</span>}<span className="hist-preview">{conversation.messages.filter((message) => message.role === 'model').at(-1)?.content.replace(/[*#`\[\]]/g, '').slice(0, 100) || 'Open conversation'}</span>
                     </a>
                     <button type="button" onClick={() => remove(conversation.id)} aria-label={`Delete "${conversation.title}"`}>
                       <IconTrash />

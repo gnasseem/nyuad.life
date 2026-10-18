@@ -521,7 +521,7 @@ export function validateAnnouncement(body: Record<string, unknown>, now = new Da
   const text = String(body.body ?? '').replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   if (text.length < 12 || text.length > 1500) throw new ApiError(400, 'Describe the event in 12 to 1,500 characters: what is happening and who is hosting.', 'bad_details');
   meaningful(text, 'event description');
-  if (body.kind !== undefined && body.kind !== 'event') throw new ApiError(400, 'This board is for events. Use Market for items and services, or Questions for help.', 'bad_kind');
+  if (body.kind !== undefined && body.kind !== 'event') throw new ApiError(400, 'This board is for events. Use Market for items and services, or ask students from Ask for help.', 'bad_kind');
   if (/\b(?:cleaners? (?:needed|wanted)|(?:hiring|looking for|need(?:ed)?) (?:a |an )?(?:cleaner|maid|housekeeper)|tutor(?:ing)? (?:available|needed|wanted))\b/i.test(`${title} ${text}`)) throw new ApiError(400, 'This is a service request, not an event. Use Market instead.', 'bad_kind');
   const rawDate = String(body.startsAt ?? '');
   const parsed = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(rawDate) ? Date.parse(rawDate) : NaN;
@@ -561,53 +561,6 @@ export function searchAnnouncements(announcements: Announcement[], query: string
     .filter(({ row, score }) => top > 0 && score / top >= 0.5 && covers(row))
     .slice(0, limit)
     .map(({ row, score }) => ({ announcement: announcements[row]!, score: score / top }));
-}
-
-/* ---------- Leaderboard ---------- */
-
-export interface LeaderboardEntry {
-  /** The row's rank as a handle. Never derived from the NetID: NetIDs are short enough that a hash of one is reversible. */
-  id: string;
-  /** Set when the entry is the helper who asked. */
-  me: boolean;
-  name: string;
-  major: string;
-  year: Standing | '';
-  answers: number;
-  /** Consecutive calendar weeks (Monday to Sunday) with at least one answer, ending this week or last week. */
-  streak: number;
-  lastAnswerAt: string;
-}
-
-/** Monday 00:00 UTC of the week a date falls in, as a day number. */
-export function weekOf(iso: string): number {
-  const day = Math.floor(Date.parse(iso) / 86_400_000);
-  const weekday = (day + 3) % 7; // 1970-01-01 was a Thursday
-  return day - weekday;
-}
-
-/** Ranks helpers by answers written, with a streak of consecutive weeks; the most recent answer breaks ties. */
-export function leaderboard(answers: Answer[], now = new Date(), limit = 10, viewerNetId = ''): LeaderboardEntry[] {
-  const byHelper = new Map<string, Answer[]>();
-  for (const answer of answers) byHelper.set(answer.helperNetId, [...(byHelper.get(answer.helperNetId) ?? []), answer]);
-  const thisWeek = weekOf(now.toISOString());
-  const entries: LeaderboardEntry[] = [];
-  for (const [netId, list] of byHelper) {
-    const sorted = [...list].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const weeks = new Set(sorted.map((answer) => weekOf(answer.createdAt)));
-    let streak = 0;
-    let week = weeks.has(thisWeek) ? thisWeek : thisWeek - 7;
-    while (weeks.has(week)) {
-      streak++;
-      week -= 7;
-    }
-    const latest = sorted[0]!;
-    entries.push({ id: '', me: netId === viewerNetId, name: latest.helperName, major: latest.helperMajor, year: latest.helperYear, answers: list.length, streak, lastAnswerAt: latest.createdAt });
-  }
-  return entries
-    .sort((a, b) => b.answers - a.answers || b.streak - a.streak || b.lastAnswerAt.localeCompare(a.lastAnswerAt))
-    .slice(0, limit)
-    .map((entry, index) => ({ ...entry, id: String(index + 1) }));
 }
 
 /* ---------- Exchanges: Falcons and Campus Dirhams ---------- */

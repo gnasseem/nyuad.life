@@ -1,21 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { api, ApiError, askStream, warmAsk, type SourceCard } from '../api';
+import { api, ApiError, askStream, warmAsk, type Question, type QuestionWithAnswers, type SourceCard } from '../api';
+import { AdminRemove } from '../components/AdminRemove';
 import { ChatGPTSignIn } from '../components/ChatGPT';
 import { RedirectCard } from '../components/RedirectCard';
 import { KIND_LABEL, SourceRow } from '../components/SourceRow';
 import { useApp } from '../context';
-import { formatDate, plural } from '../format';
-import { IconArrow, IconCheck, IconChevron, IconCopy, IconPlus, IconSidebar, IconStop } from '../icons';
+import { formatDate, initials, plural, relativeDate } from '../format';
+import { IconArrow, IconChat, IconCheck, IconChevron, IconCopy, IconPlus, IconSidebar, IconStop } from '../icons';
 import { Markdown } from '../markdown';
 import { useMedia } from '../motion';
 import { navigate, onLinkClick } from '../router';
-import { loadConversations, saveConversation, setActiveConversation, toHistory, uid, type Conversation, type Message } from '../store';
+import { askerKey, loadConversations, saveConversation, setActiveConversation, toHistory, uid, type Conversation, type Message } from '../store';
 
 interface Props {
   resumeId?: string;
   /** The conversation list beside Ask: whether it is showing, how many it holds, and the button that folds it. */
-  history: { open: boolean; count: number; toggle(): void };
+  history: { open: boolean; count: number; unread: number; toggle(): void };
 }
 
 interface Hot {
@@ -35,7 +36,7 @@ const STAGES: Array<{ label: string; match: RegExp }> = [
 ];
 
 export function AskPage({ resumeId, history }: Props) {
-  const { health, toast, askPrefill, setAskPrefill, setBoardPrefill, chatgpt, refreshChatGPT } = useApp();
+  const { health, toast, askPrefill, setAskPrefill, chatgpt, refreshChatGPT, students } = useApp();
   const [conversation, setConversation] = useState<Conversation>(() => (resumeId && loadConversations().find((entry) => entry.id === resumeId)) || fresh());
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
@@ -46,6 +47,7 @@ export function AskPage({ resumeId, history }: Props) {
   const [reportId, setReportId] = useState<string | null>(null);
   const [reportReason, setReportReason] = useState('');
   const [reporting, setReporting] = useState(false);
+  const [posting, setPosting] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -255,10 +257,36 @@ export function AskPage({ resumeId, history }: Props) {
     setHot({ messageId, n, rect });
   };
 
-  const askStudents = (question: string) => {
-    setBoardPrefill(question);
-    navigate({ name: 'questions' });
+  /** Posts the question this answer was for to students, anonymously; their answers then show up under it. */
+  const askStudents = async (modelId: string) => {
+    const question = questionBefore(conversationRef.current.messages, modelId);
+    if (!question || posting) return;
+    setPosting(modelId);
+    try {
+      const result = await api.board.ask({ text: question, key: askerKey() });
+      if (result.question) {
+        const similar = (result.similar ?? []).filter((entry) => entry.answers.length).slice(0, 2).map((entry) => ({ text: entry.text, answer: entry.answers[0]!.text }));
+        patchMessage(modelId, { asked: { id: result.question.id, at: result.question.createdAt, similar } });
+        saveConversation(conversationRef.current);
+        students.refresh();
+      } else if (result.redirect) {
+        patchMessage(modelId, { redirect: result.redirect });
+        saveConversation(conversationRef.current);
+      }
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Could not ask students. Try again.');
+    } finally {
+      setPosting(null);
+    }
   };
+
+  // Answers students sent to this conversation's questions count as read once they are on screen.
+  const askedIds = conversation.messages.flatMap((message) => (message.asked ? [message.asked.id] : []));
+  const askedKey = askedIds.join(',');
+  useEffect(() => {
+    if (askedIds.length) students.markSeen(askedIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [askedKey, students.markSeen]);
 
   const popover = useMemo(() => {
     if (!hot?.rect) return null;
@@ -281,8 +309,9 @@ export function AskPage({ resumeId, history }: Props) {
   // Beside Ask on a wide screen the list has its own fold button; folded away, or on a phone, this brings it back.
   const historyButton =
     history.count > 0 && (!wide || !history.open) ? (
-      <button type="button" className="icon-btn history-btn" onClick={history.toggle} aria-label="Your conversations" title="Your conversations" aria-controls="conversation-history" aria-expanded={history.open}>
+      <button type="button" className="icon-btn history-btn" onClick={history.toggle} aria-label={history.unread ? 'Your conversations, with new answers from students' : 'Your conversations'} title="Your conversations" aria-controls="conversation-history" aria-expanded={history.open}>
         <IconSidebar />
+        {history.unread > 0 && <span className="history-dot" aria-hidden="true" />}
       </button>
     ) : null;
 
@@ -346,7 +375,7 @@ export function AskPage({ resumeId, history }: Props) {
             ) : (
               <div key={message.id} data-id={message.id} className={`turn model${message.pending && !message.content ? ' pending' : ''}`}>
                 {message.status && <Route status={message.status} />}
-                {message.redirect && <RedirectCard redirect={message.redirect} />}
+                {message.redirect && (message.redirect.domain === 'live' ? !message.asked && <RedirectCard redirect={message.redirect} onAction={() => void askStudents(message.id)} busy={posting === message.id} /> : <RedirectCard redirect={message.redirect} />)}
                 {message.sources && message.sources.length > 0 && !message.redirect && <SourceStrip sources={message.sources} hot={hot?.messageId === message.id ? hot.n : null} onPick={(n) => jumpToSource(message.id, n)} onHover={(n) => setHot(n === null ? null : { messageId: message.id, n })} />}
                 {message.content && (
                   <div className="answer">
@@ -377,6 +406,11 @@ export function AskPage({ resumeId, history }: Props) {
                         <a className="link-btn" href={`/threads?q=${encodeURIComponent(questionBefore(conversation.messages, message.id))}`} onClick={onLinkClick}>
                           Search the group's threads instead
                         </a>
+                        {!message.asked && (
+                          <button type="button" className="link-btn" onClick={() => void askStudents(message.id)} disabled={posting === message.id}>
+                            {posting === message.id ? 'Asking students…' : 'Ask students'}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -413,9 +447,9 @@ export function AskPage({ resumeId, history }: Props) {
                       )}
                     </button>
                     <button type="button" className="foot-btn" onClick={() => { setReportId(reportId === message.id ? null : message.id); setReportReason(''); }}>Report answer</button>
-                    {(!message.confidence || message.confidence.level !== 'high') && (
-                      <button type="button" className="foot-btn ask-students" onClick={() => askStudents(questionBefore(conversation.messages, message.id))}>
-                        Ask students <IconArrow />
+                    {(!message.confidence || message.confidence.level !== 'high') && !message.asked && (
+                      <button type="button" className="foot-btn ask-students" onClick={() => void askStudents(message.id)} disabled={posting === message.id}>
+                        {posting === message.id ? 'Asking students…' : <>Ask students <IconArrow /></>}
                       </button>
                     )}
                   </div>
@@ -434,6 +468,7 @@ export function AskPage({ resumeId, history }: Props) {
                   </div>
                 )}
                 {!message.pending && message.confidence?.reason && message.confidence.level !== 'high' && <p className="confidence-reason">{message.confidence.reason}</p>}
+                {message.asked && <StudentReplies asked={message.asked} question={students.questions.get(message.asked.id)} />}
                 {message.sources && message.sources.length > 0 && (
                   <div className={`collapse${expanded.has(message.id) || message.error ? ' open' : ''}`} inert={!expanded.has(message.id) && !message.error}>
                     <div>
@@ -523,7 +558,141 @@ function Home({ composer, historyButton, answersOff }: { composer: ReactNode; hi
           ))}
         </div>
       </section>
+      <CanYouAnswer />
     </div>
+  );
+}
+
+/** What students said to a question put to them from this answer, or that it is waiting for them. */
+function StudentReplies({ asked, question }: { asked: NonNullable<Message['asked']>; question?: QuestionWithAnswers }) {
+  const answers = question?.answers ?? [];
+  return (
+    <section className="students" data-line="questions" aria-label="Answers from students">
+      <div className="students-head">
+        <IconChat />
+        <b>{answers.length ? `${plural(answers.length, 'student')} answered` : 'Asked students'}</b>
+        <span>{relativeDate(asked.at)}</span>
+      </div>
+      {answers.length === 0 && <p className="students-wait">Students who might know will see it. Their answers appear here and in your conversations.</p>}
+      {answers.map((answer) => (
+        <div key={answer.id} className="students-answer">
+          <span className="meta">
+            <span className="avatar sm">{initials(answer.helperName)}</span>
+            <b>{answer.helperName}</b>
+            {answer.helperMajor && <span>{answer.helperMajor}</span>}
+            <span>{relativeDate(answer.createdAt)}</span>
+          </span>
+          <p>{answer.text}</p>
+        </div>
+      ))}
+      {answers.length === 0 && (asked.similar?.length ?? 0) > 0 && (
+        <div className="students-similar">
+          <span>Students answered something close already</span>
+          {asked.similar!.map((entry) => (
+            <p key={entry.text}>
+              <b>{entry.text}</b> {entry.answer}
+            </p>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** A question another student is waiting on, picked for this student's major and year, answerable right here. */
+function CanYouAnswer() {
+  const { profile, setProfile, boardProblem, toast } = useApp();
+  const [question, setQuestion] = useState<Question | null>(null);
+  const [writing, setWriting] = useState(false);
+  const [text, setText] = useState('');
+  const [anonymous, setAnonymous] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const netId = profile?.netId;
+
+  const load = useCallback(() => {
+    if (!netId || boardProblem) return;
+    api.board
+      .next(netId, askerKey())
+      .then((result) => setQuestion(result.question))
+      .catch(() => setQuestion(null));
+  }, [netId, boardProblem]);
+  useEffect(load, [load]);
+
+  if (!question || !profile) return null;
+
+  const done = () => {
+    setWriting(false);
+    setText('');
+    setQuestion(null);
+  };
+  const send = async () => {
+    if (text.trim().length < 2 || busy) return;
+    setBusy(true);
+    try {
+      const result = await api.board.answer({ netId: profile.netId, questionId: question.id, text: text.trim(), anonymous });
+      setProfile({ ...profile, answers: result.answered });
+      toast('Thanks. They will see your answer in Ask.');
+      done();
+    } catch (error) {
+      toast(error instanceof ApiError || error instanceof Error ? error.message : 'Could not send the answer.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const skip = () => {
+    void api.board.skip({ netId: profile.netId, questionId: question.id }).then(load, () => undefined);
+    done();
+  };
+
+  return (
+    <section className="can-answer" data-line="questions" aria-labelledby="can-answer-title">
+      <div className="can-answer-head">
+        <span id="can-answer-title">Can you answer?</span>
+        <span className="faint small">{relativeDate(question.createdAt)}</span>
+        <AdminRemove type="question" id={question.id} label={question.text} compact onRemoved={done} />
+      </div>
+      <p className="can-answer-q">{question.text}</p>
+      {writing ? (
+        <div className="can-answer-form">
+          <textarea
+            className="input"
+            rows={3}
+            maxLength={1200}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                void send();
+              }
+            }}
+            placeholder="What you know: be specific, and say when it was"
+            aria-label="Your answer"
+            autoFocus
+          />
+          <label className="check">
+            <input type="checkbox" checked={anonymous} onChange={(event) => setAnonymous(event.target.checked)} /> Answer without my name
+          </label>
+          <div className="can-answer-actions">
+            <button type="button" className="btn ghost sm" onClick={() => setWriting(false)}>
+              Cancel
+            </button>
+            <button type="button" className="btn primary sm" onClick={() => void send()} disabled={busy || text.trim().length < 2}>
+              {busy ? 'Sending' : 'Send answer'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="can-answer-actions">
+          <button type="button" className="btn ghost sm" onClick={skip}>
+            Not me
+          </button>
+          <button type="button" className="btn sm" onClick={() => setWriting(true)}>
+            <IconChat /> Answer
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
 

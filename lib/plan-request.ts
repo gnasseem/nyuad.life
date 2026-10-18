@@ -1,4 +1,4 @@
-import { clock, normalizeRules, type Rules, type SolverCourse } from './schedule.ts';
+import { clock, normalizeRules, type Placement, type Rules, type SolverCourse } from './schedule.ts';
 
 const ALIASES: Record<string, string> = {
   cso: 'computer systems organization', cs: 'computer science', compsci: 'computer science',
@@ -33,7 +33,8 @@ export function matchingCourses<T extends SolverCourse>(courses: T[], text: stri
 export function namedCourseList(courses: SolverCourse[], text: string): { wants: Array<{ label: string; codes: string[]; sessions: Array<'71' | '72'> }>; missing: string[] } | null {
   const list = text.replace(/^\s*(?:please\s+)?(?:(?:i\s+(?:want|need|would like)(?:\s+to take)?)|(?:add|take))\s+/i, '')
     .replace(/\b(prob(?:s|ability)?)(?:\s+and\s+|\s*&\s*)(stats?|statistics)\b/gi, '$1 $2');
-  if (/[?]|\b(?:no|not|before|after|off|only|instead|remove|drop|replace|prefer|avoid|core|elective|weeks?|semester|recommend|why|how|best|good)\b/i.test(list)) return null;
+  // Anything about times, days, seats or professors is for the model; this only takes a plain list of courses.
+  if (/[?]|\b(?:no|not|before|after|off|only|instead|remove|drop|replace|swap|move|put|prefer|avoid|core|elective|weeks?|semester|recommend|why|how|best|good|fine|ok(?:ay)?|waitlists?|waitlisted|full|closed|mornings?|afternoons?|evenings?|gaps?|breaks?|back[ -]to[ -]back|a day|per day|prof(?:essor)?s?|am|pm|mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?)\b/i.test(list)) return null;
   const pieces = matchingCourses(courses, list).length ? [list] : list.split(/[,;\n]+|\s+and\s+/i).map((piece) => piece.trim().replace(/[.!]+$/, '')).filter(Boolean);
   if (!pieces.length || pieces.length > 8) return null;
   const wants: Array<{ label: string; codes: string[]; sessions: Array<'71' | '72'> }> = [];
@@ -116,4 +117,52 @@ export function simpleRuleRequest(text: string, current: Rules): Rules | null {
   if (!Object.keys(patch).length) return null;
   const remaining = rest.replace(/\b\d{1,2}(?:[:.]\d{2})?\s*(?:[ap]\.?m\.?)?s?\b/g, '').replace(/\b(?:i|a|an|on|at|am|pm|want|need|prefer|please|class|classes|course|courses|and|or|no|not|don't|do|avoid|without|have|include|starting|start|nothing|before|after|earlier|later|than|done|finish|end|by|until|between|to|my|be)\b/g, '').replace(/[^a-z]/g, '');
   return remaining ? null : normalizeRules({ ...current, ...patch });
+}
+
+/**
+ * Professors the request names, by full name or surname, and whether it wants them out ("swap Le Jan out", "not
+ * Kassab") or in ("with Pötsch"): so a professor rule holds whatever the model made of the sentence.
+ */
+export function namedProfessors(text: string, teaching: string[]): { avoid: string[]; prefer: string[] } {
+  const fold = (value: string) => value.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const avoid = new Set<string>();
+  const prefer = new Set<string>();
+  // Each clause says what it wants of the professors it names: "calc with Dania, no back to back" keeps Dania.
+  for (const clause of text.split(/[,;]|\b(?:and|but)\b/i)) {
+    const said = ` ${fold(clause)} `;
+    const named = teaching.filter((name) => {
+      const words = fold(name).split(' ');
+      const surname = words.at(-1) ?? '';
+      return said.includes(` ${words.join(' ')} `) || (surname.length >= 4 && said.includes(` ${surname} `));
+    });
+    if (!named.length) continue;
+    const out = /\b(?:swap|switch|out|avoid|not|no|without|instead|except|anyone but|don'?t|drop|replace)\b/.test(said);
+    const keep = /\b(?:with|prefer|want|take|get|keep)\b/.test(said);
+    for (const name of named) {
+      if (out) avoid.add(name);
+      else if (keep) prefer.add(name);
+    }
+  }
+  return { avoid: [...avoid], prefer: [...prefer].filter((name) => !avoid.has(name)) };
+}
+
+const PARTS: Array<[RegExp, string]> = [[/\b(?:labs?|laboratory)\b/, 'Laboratory'], [/\b(?:recs?|recitations?)\b/, 'Recitation'], [/\b(?:lecs?|lectures?)\b/, 'Lecture'], [/\bseminars?\b/, 'Seminar']];
+const DAY_WORDS: Record<string, string> = { mon: 'Mon', monday: 'Mon', mondays: 'Mon', tue: 'Tue', tues: 'Tue', tuesday: 'Tue', tuesdays: 'Tue', wed: 'Wed', wednesday: 'Wed', wednesdays: 'Wed', thu: 'Thu', thur: 'Thu', thurs: 'Thu', thursday: 'Thu', thursdays: 'Thu', fri: 'Fri', friday: 'Fri', fridays: 'Fri', sat: 'Sat', saturday: 'Sat', sun: 'Sun', sunday: 'Sun' };
+
+/**
+ * "Move the lab to Tuesday", "programming lab on Tue or Thu": a part of a course in the plan put on given days. The
+ * course is the one the words name, or the only one in the plan with that part; nothing when that is unclear.
+ */
+export function requestedPlacement(text: string, courses: SolverCourse[]): Placement[] {
+  const said = text.toLowerCase();
+  if (/\b(?:no|not|avoid|without|never|off)\b/.test(said)) return [];
+  const component = PARTS.find(([pattern]) => pattern.test(said))?.[1];
+  const tail = said.split(/\b(?:to|on|onto)\b/).slice(1).join(' ');
+  const days = [...new Set(tail.split(/[^a-z]+/).map((word) => DAY_WORDS[word]).filter((day): day is string => !!day))];
+  if (!component || !days.length) return [];
+  const withPart = courses.filter((course) => course.sections.some((section) => section.component === component));
+  const words = new Set(courseWords(said));
+  const named = withPart.filter((course) => said.includes(course.code.toLowerCase()) || courseWords(course.title).some((word) => word.length > 3 && words.has(word)));
+  const picked = named.length ? named : withPart.length === 1 ? withPart : [];
+  return picked.map((course) => ({ code: course.code, component, days }));
 }

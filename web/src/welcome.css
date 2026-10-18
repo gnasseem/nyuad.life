@@ -130,8 +130,6 @@
 .sq-answer { position: relative; padding: 0.55em 0.8em 0.55em 2em; border-radius: 0.7em; background: var(--line-soft); color: var(--ink-2); line-height: 1.4; animation: appear 0.45s var(--ease) 1.3s both; }
 .sq-answer::before { content: ''; position: absolute; left: 0.75em; top: 0.85em; width: 0.75em; height: 0.75em; box-sizing: border-box; border-radius: 50%; border: 0.22em solid var(--line); }
 .sq-pill { justify-self: start; padding: 0.35em 0.6em; border-radius: 0.35em; background: var(--amber-soft); color: var(--amber-ink); font: 650 0.8em/1 var(--text); }
-.sq-plus { position: absolute; right: -0.55em; bottom: -0.7em; display: grid; place-items: center; width: 1.65em; height: 1.65em; border-radius: 0.55em; background: var(--line-fill); color: var(--line-on); font: 500 1.75em/1 var(--text); box-shadow: var(--shadow-2); animation: stop-pop 0.45s var(--ease) 1.8s both, nudge 2.6s ease-in-out 2.6s infinite; }
-@keyframes nudge { 0%, 70%, 100% { transform: scale(1); } 80% { transform: scale(1.12); } 90% { transform: scale(0.97); } }
 
 @media (max-width: 700px) {
   .welcome-head { padding-inline: 16px; }

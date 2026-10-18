@@ -1,62 +1,38 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { matchingCourses } from '../../../lib/plan-request.ts';
-import { clock, DAYS, DAY_NAMES, DEFAULT_RULES, highlights, lanes, minutes, normalizeRules, PRIMARY, sectionFits, sessionHalf, solve, WEEKDAYS, type Choice, type Fix, type Option, type Quality, type Rules, type SolverCourse, type Want } from '../../../lib/schedule.ts';
-import { api, ApiError, type CourseRating, type CourseRow, type PlanSchool, type ProfRating, type Term } from '../api';
-import { Segmented } from '../components/Segmented';
-import { Sign } from '../components/Sign';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type UIEvent } from 'react';
+import { clock, DAY_NAMES, DAYS, DEFAULT_RULES, highlights, lanes, minutes, normalizeRules, PRIMARY, sessionHalf, solve, WEEKDAYS, type Choice, type Fix, type Option, type Quality, type Rules, type SolverCourse, type Want } from '../../../lib/schedule.ts';
+import { api, ApiError, type CourseRow, type PlanSchool, type ScoreIndex, type Term } from '../api';
 import { useApp } from '../context';
-import { IconArrow, IconBack, IconBolt, IconCheck, IconChevronRight, IconClose, IconCopy } from '../icons';
+import { IconArrow, IconBack, IconCheck, IconChevron, IconChevronRight, IconClose, IconCopy, IconPlus } from '../icons';
 import { navigate, onLinkClick, useRoute } from '../router';
 import { loadPlan, rememberPlanned, savePlan, uid, type PlanMessage, type SavedPlan } from '../store';
 
 type PlanWant = Want & { label: string };
 
-const SHAPES: Array<{ id: Rules['shape']; label: string }> = [
-  { id: 'any', label: 'Any' },
-  { id: 'compact', label: 'Fewer days' },
-  { id: 'spread', label: 'Lighter days' },
-];
-const SHAPE_HELP: Record<Rules['shape'], string> = {
-  any: 'Balances gaps and class times.',
-  compact: 'Packs classes into as few days on campus as it can, even with gaps.',
-  spread: 'Spreads classes over the week so no day is long.',
-};
-const MOST_PER_DAY = 4;
+/** Every profile on the site is an NYU Abu Dhabi student, so plans start there; the place pill changes it. */
+const HOME_SCHOOL = 'Abu Dhabi';
+const OPTIONS = 6;
 const SHORT: Record<string, string> = { Lecture: 'Lec', Seminar: 'Sem', Recitation: 'Rec', Laboratory: 'Lab', Studio: 'Studio', Workshop: 'Wksp' };
-/** How far a rating counts, by how sure it is: a thin one is pulled toward average. */
-const TRUST: Record<ProfRating['confidence'], number> = { high: 1, medium: 0.8, low: 0.55 };
 /** NYUAD's usual load is 16 credits a term; under 12 or over 18 is unusual. */
 const LOAD = { usual: 16, low: 12, high: 18 };
+const PLACEHOLDER = 'calc, intro to CS, any Arts Core, nothing before 10, Fridays off';
+const EXAMPLES = ['CSO, Algorithms and a CS elective, no 8:30s', 'Computer Programming for Engineers, Digital Logic and Multivariable Calculus', 'Microeconomics, Statistics and two Core courses, at most two classes a day'];
 
-interface SiteTimes { starts: string[]; ends: string[]; from: number; to: number; days: string[] }
+interface SiteTimes { from: number; to: number; days: string[] }
 
-function siteTimes(courses: CourseRow[], primary = false): SiteTimes {
+/** The hours and days the site teaches, for the week view's frame. */
+function siteTimes(courses: CourseRow[]): SiteTimes {
   const meetings = courses.flatMap((course) => course.sections.filter((section) => section.status !== 'cancelled').flatMap((section) => section.meetings.filter((meeting) => meeting.days.length && meeting.start && meeting.end)));
-  const lectures = primary ? courses.flatMap((course) => course.sections.filter((section) => section.status !== 'cancelled' && PRIMARY.includes(section.component)).flatMap((section) => section.meetings.filter((meeting) => meeting.days.length && meeting.start && meeting.end))) : [];
-  const controls = lectures.length ? lectures : meetings;
-  // Start with the site's recurring lecture slots; once courses are added, show all their actual meeting times.
-  const slots = (field: 'start' | 'end') => {
-    const counts = new Map<string, number>();
-    for (const meeting of controls) counts.set(meeting[field], (counts.get(meeting[field]) ?? 0) + 1);
-    const regular = primary ? [...counts].filter(([, count]) => count >= 5).map(([time]) => time) : [];
-    return (regular.length ? regular : [...counts.keys()]).filter(Boolean).sort();
-  };
-  const starts = slots('start');
-  const ends = slots('end');
-  const from = starts.length ? Math.floor(minutes(starts[0]!) / 60) * 60 : 8 * 60;
-  const to = ends.length ? Math.ceil(minutes(ends.at(-1)!) / 60) * 60 : 20 * 60;
+  const starts = meetings.map((meeting) => minutes(meeting.start));
+  const ends = meetings.map((meeting) => minutes(meeting.end));
+  const from = starts.length ? Math.floor(Math.min(...starts) / 60) * 60 : 8 * 60;
+  const to = ends.length ? Math.ceil(Math.max(...ends) / 60) * 60 : 20 * 60;
   const taught = new Set(meetings.flatMap((meeting) => meeting.days));
-  return { starts, ends, from, to: Math.max(to, from + 60), days: taught.size ? DAYS.filter((day) => taught.has(day)) : [...WEEKDAYS] };
+  return { from, to: Math.max(to, from + 60), days: taught.size ? DAYS.filter((day) => taught.has(day)) : [...WEEKDAYS] };
 }
 
 /** Only regular semesters have the weekly schedule this planner models. */
 function regularTerms(terms: Term[]): Term[] {
   return terms.filter((term) => /^(fall|spring)\b/i.test(term.name));
-}
-
-/** The term students plan for: the newest regular semester in the schedule. */
-function planTerm(terms: Term[]): string {
-  return regularTerms(terms)[0]?.name ?? '';
 }
 
 /** Albert sometimes drops trailing code attributes in a later term; the term's own code wins. */
@@ -65,19 +41,24 @@ function termCode(rows: CourseRow[], code: string): string | null {
   return rows.find((row) => row.code === code)?.code ?? rows.find((row) => base(row.code) === base(code))?.code ?? null;
 }
 
-/** Which plan this is, by its class numbers, so it can be found again after the list is ranked anew. */
-function signature(option: Option): string {
-  return option.choices.flatMap((choice) => choice.sections.map((section) => section.classNumber)).join(',');
+/** "Pötsch, Thomas" and "Thomas Potsch" alike, as the review digests key professors. */
+function personKey(name: string): string {
+  const [last, first] = name.split(',').map((part) => part.trim());
+  return (first ? `${first} ${last}` : name).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
-function weigh(rating: { score: number; confidence: ProfRating['confidence'] }): number {
-  return 3 + (rating.score - 3) * TRUST[rating.confidence];
+/** A rating counts by how many students it rests on: a thin one is pulled toward average. */
+function weigh(entry: { score: number; basis: number }): number {
+  const trust = entry.basis >= 10 ? 1 : entry.basis >= 4 ? 0.8 : 0.55;
+  return 3 + (entry.score - 3) * trust;
 }
 
 /**
- * The schedule builder: say what you need in your own words or add courses one by one, set the rules, and see the
- * plans that fit as a week, best first. The planning runs in the browser (lib/schedule.ts), ranked by what students
- * wrote about the professors as their ratings come in; the model only reads the request into courses and rules.
+ * The schedule builder as a conversation: one box takes the whole request ("calc, intro to CS, any Arts Core, nothing
+ * before 10, Fridays off") and later changes ("move the lab to Tuesday", "no 9am"); the plans that fit come back as
+ * weeks to swipe through, best first. The model reads the words into courses and rules (api/plan.ts), the browser
+ * plans (lib/schedule.ts), ranked by the review digests' ratings of the professors and courses. What it understood
+ * sits under the box as chips, each one removable.
  */
 export function PlanPage() {
   const { search } = useRoute();
@@ -85,37 +66,17 @@ export function PlanPage() {
   const [saved, setSaved] = useState<SavedPlan>(loadPlan);
   const [schools, setSchools] = useState<PlanSchool[]>([]);
   const [terms, setTerms] = useState<Term[] | null>(null);
-  const [scraped, setScraped] = useState('');
   const [rows, setRows] = useState<{ term: string; courses: CourseRow[] } | null>(null);
   const [error, setError] = useState('');
   const [text, setText] = useState('');
   const [reading, setReading] = useState(false);
-  const [viewing, setViewing] = useState<{ key: string; index: number } | null>(null);
-  const [showChat, setShowChat] = useState(false);
-  const [courseQuery, setCourseQuery] = useState('');
+  const [where, setWhere] = useState(false);
+  const scores = useScores();
   const requestRef = useRef<HTMLTextAreaElement>(null);
-  const chatRef = useRef<HTMLDivElement>(null);
   const requestId = useRef(0);
   const chat = saved.chat ?? [];
-  const lastReply = chat.at(-1)?.role === 'assistant' ? chat.at(-1) : undefined;
-
-  useEffect(() => {
-    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
-  }, [chat.length, reading, showChat]);
-
-  useEffect(() => {
-    const element = requestRef.current;
-    if (!element) return;
-    element.style.height = 'auto';
-    element.style.height = `${Math.min(160, element.scrollHeight)}px`;
-  }, [text]);
-
-  useEffect(() => {
-    requestId.current++;
-    setReading(false);
-    return () => { requestId.current++; };
-  }, [saved.term, saved.school]);
-  const term = saved.term && regularTerms(terms ?? []).some((entry) => entry.name === saved.term) ? saved.term : planTerm(terms ?? []);
+  const lastReply = chat.at(-1)?.role === 'assistant' ? chat.at(-1)!.text : '';
+  const school = saved.school || HOME_SCHOOL;
 
   const update = (patch: Partial<SavedPlan>) =>
     setSaved((current) => {
@@ -125,100 +86,99 @@ export function PlanPage() {
     });
 
   useEffect(() => {
+    const element = requestRef.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = `${Math.min(160, element.scrollHeight)}px`;
+  }, [text]);
+
+  useEffect(() => {
     api.courses.terms().then((result) => setSchools(result.schools ?? [])).catch((err) => setError(err instanceof Error ? err.message : 'Could not load the schools.'));
   }, []);
 
   useEffect(() => {
-    if (schools.length && saved.school && !schools.some((school) => school.id === saved.school)) update({ school: '', term: '', wants: [], chat: [], rules: DEFAULT_RULES });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schools, saved.school]);
-
-  useEffect(() => {
-    if (!saved.school) { setTerms(null); return; }
     let live = true;
     setTerms(null);
     setError('');
     api.courses
-      .terms(saved.school)
-      .then((result) => { if (live) { setTerms(result.terms); setScraped(result.scraped); } })
+      .terms(school)
+      .then((result) => live && setTerms(result.terms))
       .catch((err) => live && setError(err instanceof Error ? err.message : 'Could not load the terms.'));
-    return () => { live = false; };
-  }, [saved.school]);
+    return () => {
+      live = false;
+    };
+  }, [school]);
+  const regular = regularTerms(terms ?? []);
+  const term = saved.term && regular.some((entry) => entry.name === saved.term) ? saved.term : regular[0]?.name ?? '';
 
   useEffect(() => {
-    if (!term || !saved.school) { setRows(null); return; }
+    if (!term) {
+      setRows(null);
+      return;
+    }
     let live = true;
     setRows(null);
-    setError('');
     api.courses
-      .list(term, saved.school)
+      .list(term, school)
       .then((result) => live && setRows(result))
       .catch((err) => live && setError(err instanceof Error ? err.message : 'Could not load the courses.'));
     return () => {
       live = false;
     };
-  }, [term, saved.school]);
+  }, [term, school]);
 
-  // "Add to a plan" from a course: add it once the term's courses are in, then take it out of the address.
-  const adding = search.get('add');
+  // A request in flight is for the term and school it was sent with.
   useEffect(() => {
-    if (adding && !saved.school) update({ school: 'Abu Dhabi' });
+    requestId.current++;
+    setReading(false);
+  }, [term, school]);
+
+  // Moving to another term or school keeps the courses offered there and says which ones are not.
+  useEffect(() => {
+    if (!rows || rows.term !== term) return;
+    const kept: PlanWant[] = [];
+    const gone: string[] = [];
+    for (const want of saved.wants) {
+      const codes = [...new Set(want.codes.map((code) => termCode(rows.courses, code)).filter((code): code is string => !!code))];
+      if (codes.length) kept.push(codes.join() === want.codes.join() ? want : { ...want, codes });
+      else gone.push(want.label || want.codes[0]!);
+    }
+    if (kept.length === saved.wants.length && kept.every((want, i) => want === saved.wants[i])) return;
+    update({ wants: kept, chat: gone.length ? [...chat, { role: 'assistant', text: `Not offered at ${schoolLabel(schools, school)} in ${term}: ${gone.join(', ')}.` }] : chat });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adding, saved.school]);
+  }, [rows]);
+
+  // "Add to a plan" from a course page: add it once the term's courses are in, then take it out of the address.
+  const adding = search.get('add');
   useEffect(() => {
     if (!adding || !rows) return;
     const code = termCode(rows.courses, adding);
     if (!code) toast(`${adding} is not offered in ${rows.term}.`);
-    else if (!saved.wants.some((want) => want.codes.length === 1 && want.codes[0] === code)) update({ wants: [...saved.wants, { id: uid(), label: '', codes: [code] }] });
+    else if (!saved.wants.some((want) => want.codes.includes(code))) update({ wants: [...saved.wants, { id: uid(), label: '', codes: [code] }] });
     navigate({ name: 'plan' }, { replace: true, keepScroll: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adding, rows]);
 
   const catalog = useMemo(() => new Map((rows?.courses ?? []).map((row) => [row.code, row as SolverCourse])), [rows]);
   const titles = useMemo(() => new Map((rows?.courses ?? []).map((row) => [row.code, row.title])), [rows]);
-  const courseMatches = useMemo(() => matchingCourses(rows?.courses ?? [], courseQuery, true), [rows, courseQuery]);
-  const timing = useMemo(() => {
-    const wanted = new Set(saved.wants.flatMap((want) => want.codes));
-    const courses = rows?.courses ?? [];
-    const selected = courses.filter((course) => wanted.has(course.code));
-    return siteTimes(selected.length ? selected : courses, saved.school === 'Abu Dhabi' && selected.length === 0);
-  }, [rows, saved.wants, saved.school]);
-
-  // Who could teach in a plan: the professors of every section the rules allow, lecturers of named courses first.
-  const candidates = useMemo(() => {
-    const lead: string[] = [];
-    const rest: string[] = [];
-    for (const want of [...saved.wants].sort((a, b) => a.codes.length - b.codes.length)) {
-      for (const code of want.codes) {
-        for (const section of catalog.get(code)?.sections ?? []) if (sectionFits(section, saved.rules) && (!want.sessions?.length || want.sessions.some((half) => half === sessionHalf(section.session)))) (PRIMARY.includes(section.component) ? lead : rest).push(...section.instructors);
+  const timing = useMemo(() => siteTimes(rows?.courses ?? []), [rows]);
+  const quality = useMemo<Quality>(() => {
+    const byPerson = new Map(Object.entries(scores?.profs ?? {}).map(([name, entry]) => [personKey(name), entry]));
+    const profs = new Map<string, number>();
+    for (const row of rows?.courses ?? []) {
+      for (const section of row.sections) {
+        for (const name of section.instructors) {
+          const entry = byPerson.get(personKey(name));
+          if (entry && !profs.has(name)) profs.set(name, weigh(entry));
+        }
       }
     }
-    return [...new Set([...lead, ...rest])];
-  }, [catalog, saved.wants, saved.rules]);
-  // Courses worth comparing: the options of a slot with several that the rules allow.
-  const options = useMemo(() => [...new Set(saved.wants.filter((want) => want.codes.length > 1).flatMap((want) => want.codes.filter((code) => catalog.get(code)?.sections.some((section) => sectionFits(section, saved.rules)))))], [catalog, saved.wants, saved.rules]);
-  const profRatings = useProfRatings(candidates);
-  const courseRatings = useCourseRatings(options);
-  const quality = useMemo<Quality>(
-    () => ({
-      profs: new Map([...profRatings].flatMap(([name, rating]) => (rating ? [[name, weigh(rating)] as const] : []))),
-      courses: new Map([...courseRatings].flatMap(([code, rating]) => (rating ? [[code, weigh(rating)] as const] : []))),
-    }),
-    [profRatings, courseRatings],
-  );
-  // Ratings arrive a few at a time: the plans are ranked again once a burst has landed, not on every one.
-  const settled = useSettled(quality, 600);
-  const result = useMemo(() => (rows && saved.wants.length ? solve(catalog, saved.wants, saved.rules, settled, { options: 3, ms: 1200 }) : null), [catalog, rows, saved.wants, saved.rules, settled]);
-
-  // A new request starts at the best plan; new ratings keep the plan being looked at, wherever it now ranks.
-  useEffect(() => setViewing(null), [saved.wants, saved.rules, term]);
-  const index = useMemo(() => {
-    if (!result?.options.length || !viewing) return 0;
-    const found = result.options.findIndex((option) => signature(option) === viewing.key);
-    return found >= 0 ? found : Math.min(viewing.index, result.options.length - 1);
-  }, [result, viewing]);
-  const option = result?.options[index];
-  const go = (to: number) => result?.options[to] && setViewing({ key: signature(result.options[to]), index: to });
+    const courses = new Map(Object.entries(scores?.courses ?? {}).map(([code, entry]) => [code, weigh(entry)]));
+    return { profs, courses };
+  }, [scores, rows]);
+  const result = useMemo(() => (rows && saved.wants.length ? solve(catalog, saved.wants, saved.rules, quality, { options: OPTIONS, ms: 1200 }) : null), [catalog, rows, saved.wants, saved.rules, quality]);
+  const [index, setIndex] = useState(0);
+  const option = result?.options[Math.min(index, result.options.length - 1)];
 
   // The plan in view is remembered for its term, with its sections' professors, so once the term is over the site can
   // ask how each course went and who taught it.
@@ -229,54 +189,31 @@ export function PlanPage() {
     else for (const want of saved.wants) if (want.codes.length === 1) courses[want.codes[0]!] = [];
     rememberPlanned(term, courses);
   }, [option, term, rows, saved.wants]);
-  const why = option ? highlights(option, saved.rules, settled).join(' · ') : '';
 
   const setRules = (patch: Partial<Rules>) => update({ rules: { ...saved.rules, ...patch } });
-  const removeWant = (id: string) => update({ wants: saved.wants.filter((want) => want.id !== id) });
   const applyFix = (fix: Fix) =>
     update({
       ...(fix.drop ? { wants: saved.wants.filter((want) => want.id !== fix.drop) } : {}),
       ...(fix.rules ? { rules: { ...saved.rules, ...fix.rules } } : {}),
     });
 
-  const credits = useMemo(() => {
-    if (option) return { low: option.credits, high: option.credits };
-    let low = 0;
-    let high = 0;
-    for (const want of saved.wants) {
-      const values = want.codes.map((code) => catalog.get(code)).filter((course): course is SolverCourse => !!course).map((course) => parseFloat(course.credits) || 0);
-      if (!values.length) continue;
-      low += Math.min(...values);
-      high += Math.max(...values);
-    }
-    return { low, high };
-  }, [option, saved.wants, catalog]);
-
   const read = async (value = text) => {
     const request = value.trim();
-    if (!request || reading || !term || !saved.school || !rows?.courses.length) return;
+    if (!request || reading || !term || !rows?.courses.length) return;
     const id = ++requestId.current;
     const conversation: PlanMessage[] = [...chat, { role: 'user' as const, text: request }].slice(-23);
     update({ chat: conversation });
     setText('');
     setReading(true);
     try {
-      const plan = await api.plan.read({ term, school: saved.school, text: request, history: chat.slice(-8), current: { wants: saved.wants.map(({ label, codes, sessions }) => ({ label, codes, sessions })), rules: saved.rules }, major: profile?.major, year: profile?.year });
+      const plan = await api.plan.read({ term, school, text: request, history: chat.slice(-8), current: { wants: saved.wants.map(({ label, codes, sessions }) => ({ label, codes, sessions })), rules: saved.rules }, major: profile?.major, year: profile?.year });
       if (requestId.current !== id) return;
-      // A reply with no courses at all is a misreading, not a request to empty the plan ("Start over" does that).
-      const wants = plan.wants.length || saved.wants.length === 0 ? plan.wants.map((want) => ({ id: uid(), label: want.label, codes: want.codes, sessions: want.sessions })) : saved.wants;
+      // A reply with no courses at all is a misreading, not a request to empty the plan ("New plan" does that).
+      const wants = plan.wants.length || saved.wants.length === 0 ? plan.wants.map((want) => ({ id: saved.wants.find((known) => known.codes.join() === want.codes.join())?.id ?? uid(), label: want.label, codes: want.codes, sessions: want.sessions })) : saved.wants;
       const names = wants.map((want) => want.label || titles.get(want.codes[0]!) || want.codes[0]);
-      const rules = normalizeRules(plan.rules);
-      const summary = [
-        names.length ? `Your plan includes ${names.join(', ')}.` : 'Your preferences are saved. Add a course to build your week.',
-        rules.earliest ? `No classes before ${clock(rules.earliest)}.` : '',
-        rules.latest ? `Done by ${clock(rules.latest)}.` : '',
-        rules.daysOff.length ? `${rules.daysOff.join(', ')} off.` : '',
-        ...wants.filter((want) => want.sessions?.length).map((want) => `${want.label || titles.get(want.codes[0]!) || want.codes[0]}: ${want.sessions!.join(' or ')} (${want.sessions!.length === 2 ? 'either seven-week half' : want.sessions![0] === '71' ? 'first seven weeks' : 'second seven weeks'}).`),
-        ...plan.missing,
-      ].filter(Boolean).join(' ');
-      const reply = plan.reply ? [plan.reply, ...plan.missing.filter((note) => !plan.reply!.includes(note))].join(' ') : summary;
-      update({ wants, rules, chat: [...conversation, { role: 'assistant', text: reply }] });
+      const reply = plan.reply ? [plan.reply, ...plan.missing.filter((note) => !plan.reply!.includes(note))].join(' ') : [names.length ? `Planning ${names.join(', ')}.` : 'Saved. Name a course to build your week.', ...plan.missing].join(' ');
+      update({ wants, rules: normalizeRules(plan.rules), chat: [...conversation, { role: 'assistant', text: reply }] });
+      setIndex(0);
     } catch (err) {
       if (requestId.current === id) {
         setText((current) => current || request);
@@ -287,481 +224,322 @@ export function PlanPage() {
     }
   };
 
-  const clear = () => {
+  const startOver = () => {
+    requestId.current++;
+    setReading(false);
     update({ wants: [], rules: DEFAULT_RULES, chat: [] });
-    setShowChat(false);
+    setIndex(0);
+    requestRef.current?.focus();
   };
 
-  const rated = candidates.filter((name) => profRatings.get(name)).length;
-  const unread = candidates.filter((name) => !profRatings.has(name)).length;
+  const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      void read();
+    }
+  };
+
+  const toggleWhere = useCallback(() => setWhere((current) => !current), []);
+  const ready = Boolean(rows?.courses.length);
+  const empty = saved.wants.length === 0 && chat.length === 0;
+  const place = (
+    <WherePill
+      open={where}
+      onToggle={toggleWhere}
+      schools={schools}
+      school={school}
+      terms={regular}
+      term={term}
+      onSchool={(next) => update({ school: next, term: '' })}
+      onTerm={(next) => update({ term: next })}
+    />
+  );
 
   return (
-    <div className="page plan-page">
-      <Sign title="Plan" ar="الجدول" sub="Add your courses and see the weeks that fit. Change anything in plain language.">
-        {saved.school && terms && terms.length > 0 && (
-          <label className="term-pick">
-            <span className="sr-only">Semester</span>
-            <select className="input" value={term} onChange={(event) => { setRows(null); setText(''); update({ term: event.target.value, wants: [], chat: [] }); }} aria-label="Semester">
-              {regularTerms(terms).map((entry) => (
-                <option key={entry.name} value={entry.name}>
-                  {entry.name}{entry.courses !== undefined ? ` · ${entry.courses} ${entry.courses === 1 ? 'course' : 'courses'}` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
+    <div className={`page plan-page${empty ? ' plan-empty' : ''}`}>
+      <section className="plan-ask" aria-label="Plan assistant">
+        {empty ? <h1 className="plan-title">Plan a semester in one sentence</h1> : (
+          <div className="plan-head">
+            <h1>Plan</h1>
+            <button type="button" className="btn sm" onClick={startOver}>
+              <IconPlus /> <span>New plan</span>
+            </button>
+          </div>
         )}
-        {(saved.wants.length > 0 || chat.length > 0) && (
-          <button type="button" className="btn ghost sm" onClick={clear}>
-            Start over
-          </button>
-        )}
-      </Sign>
-      {error && <div className="alert error">{error}</div>}
-
-      <div className="plan-school">
-        <div>
-          <label htmlFor="plan-school">Where are you studying?</label>
-          <p>Only classes taught there appear. Times are local to the selected site.{scraped && saved.school ? ` Catalog updated: ${new Date(scraped).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.` : ''}</p>
-        </div>
-        <select id="plan-school" className="input" value={saved.school} onChange={(event) => { setRows(null); setText(''); update({ school: event.target.value, wants: [], chat: [], rules: DEFAULT_RULES }); }}>
-          <option value="">Choose a school or site</option>
-          {(['Campus', 'School', 'Study away'] as const).map((group) => <optgroup key={group} label={group === 'Campus' ? 'Degree campuses' : group === 'School' ? 'Schools' : 'Study away sites'}>{schools.filter((school) => school.group === group).map((school) => <option key={school.id} value={school.id}>{school.label}</option>)}</optgroup>)}
-        </select>
-      </div>
-      {saved.school && terms && regularTerms(terms).length === 0 && <div className="alert">No regular semester classes for this school or site are in the catalog yet.</div>}
-      {saved.school && rows?.courses.length === 0 && <div className="alert">No classes for this school or site are in the catalog for {term}. Try another semester.</div>}
-      {saved.school && rows?.courses.length ? <>
-
-      <section className="assistant" aria-label="Plan assistant">
-        <div className="composer assistant-bar">
-          <span className="assistant-mark" aria-hidden="true">
-            <IconBolt />
-          </span>
+        {place}
+        <div className={`composer${empty ? ' big' : ''}`}>
           <textarea
             ref={requestRef}
             id="plan-request"
             rows={1}
             value={text}
             maxLength={600}
-            disabled={reading}
             onChange={(event) => setText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                void read();
-              }
-            }}
-            placeholder={saved.wants.length ? 'Change anything: "no 8:30am or 5pm classes"' : 'CSO, Algo, French1, Probs and Stats…'}
-            aria-label="Tell the plan assistant what you need"
+            onKeyDown={onKey}
+            placeholder={empty ? PLACEHOLDER : 'Change anything: "move the lab to Tuesday", "no 9am"'}
+            aria-label="What you need this semester"
             enterKeyHint="send"
+            autoFocus={empty && window.matchMedia('(min-width: 900px)').matches}
           />
-          <button type="button" className="send" onClick={() => void read()} disabled={!text.trim() || reading || !rows?.courses.length} aria-label="Send to the plan assistant">
+          <button type="button" className="send" onClick={() => void read()} disabled={!text.trim() || reading || !ready} aria-label="Plan">
             <IconArrow />
           </button>
         </div>
+        {error && <div className="alert error">{error}</div>}
+        {terms && regular.length === 0 && <div className="alert">No regular semester classes for {schoolLabel(schools, school)} are in the catalog yet. Choose another place above.</div>}
+        {rows && rows.courses.length === 0 && <div className="alert">No classes for {schoolLabel(schools, school)} are in the catalog for {term}. Choose another semester above.</div>}
+        {!empty && <Understood wants={saved.wants} rules={saved.rules} titles={titles} onWants={(wants) => update({ wants })} onRules={setRules} />}
         {reading ? (
-          <p className="assistant-reply thinking" role="status">
+          <p className="plan-reply thinking" role="status">
             <span className="spinner" aria-hidden="true" /> Reading your request…
           </p>
         ) : lastReply ? (
-          <div className="assistant-reply">
-            <p>{lastReply.text}</p>
-            {chat.length > 2 && (
-              <button type="button" className="link-btn" onClick={() => setShowChat((current) => !current)} aria-expanded={showChat}>
-                {showChat ? 'Hide conversation' : `Show conversation (${chat.filter((message) => message.role === 'user').length})`}
+          <p className="plan-reply" role="status">{lastReply}</p>
+        ) : null}
+        {empty && (
+          <div className="prompts" aria-label="Try">
+            {EXAMPLES.map((example, i) => (
+              <button type="button" key={example} style={{ '--i': i } as CSSProperties} disabled={!ready || reading} onClick={() => void read(example)}>
+                {example}
               </button>
-            )}
-          </div>
-        ) : (
-          <div className="assistant-ideas" aria-label="Try">
-            {IDEAS.map((idea) => (
-              <button
-                key={idea}
-                type="button"
-                disabled={reading}
-                onClick={() => void read(idea)}
-              >
-                {idea}
-              </button>
-            ))}
-          </div>
-        )}
-        {showChat && chat.length > 2 && (
-          <div className="assistant-log" ref={chatRef} role="log" aria-label="Planning conversation">
-            {chat.slice(0, -1).map((message, i) => (
-              <div key={i} className={`plan-message ${message.role}`}>
-                {message.text}
-              </div>
             ))}
           </div>
         )}
       </section>
 
-      <div className={`plan${option ? ' has-plan' : ''}`}>
-        <fieldset className="plan-side" disabled={reading}>
-          <section className="plan-block" aria-labelledby="plan-courses">
-            <div className="plan-block-head">
-              <h2 id="plan-courses">Courses</h2>
-              {saved.wants.length > 0 && <Load low={credits.low} high={credits.high} />}
-            </div>
-            {saved.wants.length > 0 ? (
-              <div className="wants">
-                {saved.wants.map((want, i) => (
-                  <WantRow key={want.id} want={want} color={i} titles={titles} problem={result?.problems.find((problem) => problem.want === want.id)?.text} onRemove={() => removeWant(want.id)} onChoose={(code) => update({ wants: saved.wants.map((entry) => entry.id === want.id ? { ...entry, label: '', codes: [code] } : entry) })} />
-                ))}
-              </div>
-            ) : (
-              <p className="plan-empty-note">
-                Search below to add a course, or type your course list above.
-              </p>
-            )}
-            <label className="wf-field" htmlFor="plan-course-search">
-              <span>Add a course</span>
-              <input id="plan-course-search" className="input" value={courseQuery} placeholder="Course name, code or CSO…" onChange={(event) => setCourseQuery(event.target.value)} type="search" autoComplete="off" />
-            </label>
-            {courseQuery.trim() && <div className="plan-course-results" aria-label="Matching courses">
-              {courseMatches.slice(0, 8).map((course) => {
-                const added = saved.wants.some((want) => want.codes.length === 1 && want.codes[0] === course.code);
-                return <button key={course.code} type="button" disabled={added || saved.wants.length >= 8} onClick={() => {
-                  update({ wants: [...saved.wants, { id: uid(), label: '', codes: [course.code] }] });
-                  setCourseQuery('');
-                }}><span><b>{course.title}</b><small>{course.code} · {course.credits} credits</small></span>{added ? <IconCheck /> : <IconArrow />}</button>;
-              })}
-              {!courseMatches.length && <p className="plan-empty-note">No matching course in {term} at this site. Try another name or semester.</p>}
-            </div>}
-            {(saved.rules.prefer.length > 0 || saved.rules.avoid.length > 0) && (
-              <div className="chips plan-people" aria-label="Professors you asked for">
-                {saved.rules.prefer.map((name) => (
-                  <button key={`p-${name}`} type="button" className="chip on" onClick={() => setRules({ prefer: saved.rules.prefer.filter((entry) => entry !== name) })} aria-label={`Stop preferring ${name}`}>
-                    With {name} <IconClose />
-                  </button>
-                ))}
-                {saved.rules.avoid.map((name) => (
-                  <button key={`a-${name}`} type="button" className="chip on avoid" onClick={() => setRules({ avoid: saved.rules.avoid.filter((entry) => entry !== name) })} aria-label={`Stop avoiding ${name}`}>
-                    Not {name} <IconClose />
-                  </button>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <WeekFilter rules={saved.rules} timing={timing} onChange={setRules} ratings={saved.rules.bestRated && candidates.length > 0 ? (unread > 0 ? `Reading about ${unread} more professors…` : rated ? `${rated} of ${candidates.length} professors rated.` : 'No professor rated yet.') : 'From what students wrote about them.'} />
-        </fieldset>
-
-        <div className="plan-main">
-          {!rows && !error && <div className="skeleton" style={{ height: 420 }} />}
-          {rows && saved.wants.length === 0 && <WeekGrid option={null} timing={timing} daysOff={saved.rules.daysOff} empty="Add courses to see your week." />}
-          {result && result.problems.length > 0 && (
-            <>
-              <div className="alert warn plan-problems" role="status">
-                {result.problems.map((problem) => (
-                  <div key={problem.text} className="plan-problem">
-                    <p>{problem.text}</p>
-                    {problem.fixes.length > 0 && (
-                      <ul className="plan-fixes">
-                        {problem.fixes.map((fix) => (
-                          <li key={fix.label}>
-                            <button type="button" className="btn sm" onClick={() => applyFix(fix)}>
-                              {fix.label}
-                            </button>
-                            {fix.detail && <span>{fix.detail}.</span>}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <WeekGrid option={null} timing={timing} daysOff={saved.rules.daysOff} empty="Nothing fits yet." />
-            </>
-          )}
-          {result && option && (
-            <>
-              <div className="option-bar">
-                <div className="option-name">
-                  <div className="option-title">
-                    <b>Plan {index + 1}</b>
-                    <span>
-                      of {result.options.length}
-                      {result.partial ? '+' : ''} · {option.credits} credits
-                    </span>
-                  </div>
-                  {why && <p className="option-why">{why.charAt(0).toUpperCase() + why.slice(1)}</p>}
-                </div>
-                <div className="option-nav">
-                  <button type="button" className="icon-btn" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Previous plan">
-                    <IconBack />
-                  </button>
-                  <button type="button" className="icon-btn" onClick={() => go(index + 1)} disabled={index >= result.options.length - 1} aria-label="Next plan">
-                    <IconChevronRight />
-                  </button>
-                </div>
-              </div>
-              <WeekGrid option={option} timing={timing} daysOff={saved.rules.daysOff} />
-              <PlanList option={option} wants={saved.wants} profs={profRatings} />
-            </>
-          )}
-        </div>
-      </div>
-      </> : null}
+      {!empty && !rows && !error && <div className="skeleton" style={{ height: 420 }} />}
+      {result && result.problems.length > 0 && <Blocked problems={result.problems} onFix={applyFix} />}
+      {result && result.options.length > 0 && (
+        <Deck options={result.options} partial={result.partial} index={Math.min(index, result.options.length - 1)} onIndex={setIndex} rules={saved.rules} quality={quality} wants={saved.wants} timing={timing} scores={scores} />
+      )}
     </div>
   );
 }
 
-const IDEAS = ['Nothing before 10, Fridays off', 'No 8:30am or 5pm classes', 'At most two classes a day'];
-
-/** The week's rules in a line, for the folded preferences. */
-function rulesSummary(rules: Rules): string {
-  return [
-    rules.earliest ? `From ${clock(rules.earliest)}` : '',
-    rules.latest ? `done by ${clock(rules.latest)}` : '',
-    rules.requiredStarts.length ? `include ${rules.requiredStarts.map(clock).join(' and ')} starts` : '',
-    rules.avoidStarts.length ? `no ${rules.avoidStarts.map(clock).join(' or ')} starts` : '',
-    rules.daysOff.length ? `${rules.daysOff.join(', ')} off` : '',
-    rules.maxPerDay ? `max ${rules.maxPerDay} a day` : '',
-    rules.shape === 'compact' ? 'fewer days' : rules.shape === 'spread' ? 'lighter days' : '',
-    rules.noBackToBack ? 'breaks between' : '',
-    rules.waitlisted ? 'waitlists ok' : '',
-  ]
-    .filter(Boolean)
-    .join(' · ')
-    .replace(/^./, (first) => first.toUpperCase());
+function schoolLabel(schools: PlanSchool[], id: string): string {
+  return schools.find((school) => school.id === id)?.label ?? id;
 }
 
-/** A value that changes only once it has held still for a moment. */
-function useSettled<T>(value: T, ms: number): T {
-  const [settled, setSettled] = useState(value);
+/** Where and when the plan is for, changed in this one place: a pill that opens the school and the semester. */
+function WherePill({ open, onToggle, schools, school, terms, term, onSchool, onTerm }: { open: boolean; onToggle(): void; schools: PlanSchool[]; school: string; terms: Term[]; term: string; onSchool(id: string): void; onTerm(name: string): void }) {
+  const box = useRef<HTMLDivElement>(null);
+  // A tap anywhere else, or Escape, folds it away.
   useEffect(() => {
-    const timer = window.setTimeout(() => setSettled(value), ms);
-    return () => window.clearTimeout(timer);
-  }, [value, ms]);
-  return settled;
-}
-
-/** Ratings for these professors, from the review digests: null for one nobody has written about. */
-function useProfRatings(names: string[]): Map<string, ProfRating | null> {
-  const [ratings, setRatings] = useState<Map<string, ProfRating | null>>(() => new Map());
-  const key = names.join('|');
-  useEffect(() => {
-    if (!names.length) return;
-    let live = true;
-    api.courses
-      .profs(names)
-      .then((known) => live && setRatings(known))
-      .catch(() => undefined);
+    if (!open) return;
+    const away = (event: PointerEvent) => !box.current?.contains(event.target as Node) && onToggle();
+    const escape = (event: globalThis.KeyboardEvent) => event.key === 'Escape' && onToggle();
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', escape);
     return () => {
-      live = false;
+      document.removeEventListener('pointerdown', away);
+      document.removeEventListener('keydown', escape);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-  return ratings;
-}
-
-/** Ratings for the courses a slot could be filled with, two at a time; the first refusal (busy, rate limited, off) stops the rest. */
-function useCourseRatings(codes: string[]): Map<string, CourseRating | null> {
-  const [ratings, setRatings] = useState<Map<string, CourseRating | null>>(() => new Map());
-  const key = codes.join('|');
-  useEffect(() => {
-    if (!codes.length) return;
-    let live = true;
-    const queue = [...codes];
-    const next = async (): Promise<void> => {
-      const code = queue.shift();
-      if (!code || !live) return;
-      try {
-        const { rating } = await api.courses.rating(code);
-        if (live) setRatings((current) => (current.has(code) ? current : new Map(current).set(code, rating)));
-      } catch {
-        queue.length = 0;
-        return;
-      }
-      await next();
-    };
-    void Promise.all([next(), next()]);
-    return () => {
-      live = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-  return ratings;
-}
-
-function Load({ low, high }: { low: number; high: number }) {
-  const amount = low === high ? `${low}` : `${low} to ${high}`;
-  const note = high < LOAD.low ? `A light load: most students take ${LOAD.usual}, and under ${LOAD.low} is unusual.` : low > LOAD.high ? `A heavy load: most students take ${LOAD.usual}, and over ${LOAD.high} is unusual.` : '';
+  }, [open, onToggle]);
   return (
-    <p className={`plan-load${note ? ' off' : ''}`}>
-      <b>{amount} credits</b>
-      {note && <span>{note}</span>}
-    </p>
+    <div className="plan-where" ref={box}>
+      <button type="button" className="where-pill" onClick={onToggle} aria-expanded={open} aria-controls="plan-where">
+        {schoolLabel(schools, school)}
+        {term && <span>· {term}</span>}
+        <IconChevron className={open ? 'up' : undefined} />
+      </button>
+      {open && (
+        <div className="where-sheet" id="plan-where">
+          <label>
+            <span>Where</span>
+            <select className="input" value={school} onChange={(event) => onSchool(event.target.value)}>
+              {!schools.some((entry) => entry.id === school) && <option value={school}>{school}</option>}
+              {(['Campus', 'School', 'Study away'] as const).map((group) => (
+                <optgroup key={group} label={group === 'Campus' ? 'Degree campuses' : group === 'School' ? 'Schools' : 'Study away sites'}>
+                  {schools.filter((entry) => entry.group === group).map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Semester</span>
+            <select className="input" value={term} onChange={(event) => onTerm(event.target.value)} disabled={!terms.length}>
+              {terms.map((entry) => (
+                <option key={entry.name} value={entry.name}>
+                  {entry.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+    </div>
   );
 }
 
-/**
- * The week's rules, always in view: a bar of the teaching day with the hours you keep free hatched, the start and end
- * that set it, the days you want off, how many classes a day, the shape of the week and three switches.
- */
-function WeekFilter({ rules, timing, onChange, ratings }: { rules: Rules; timing: SiteTimes; onChange(patch: Partial<Rules>): void; ratings: string }) {
-  const { from, to } = timing;
-  const start = rules.earliest ? minutes(rules.earliest) : from;
-  const end = rules.latest ? minutes(rules.latest) : to;
-  const share = (time: number) => `${((Math.min(to, Math.max(from, time)) - from) / (to - from)) * 100}%`;
-  const changed = rules.earliest || rules.latest || rules.requiredStarts.length || rules.avoidStarts.length || rules.daysOff.length || rules.maxPerDay || rules.shape !== 'any' || rules.noBackToBack || rules.waitlisted || !rules.bestRated;
-  const summary = rulesSummary(rules);
+interface Chip {
+  key: string;
+  label: string;
+  /** The course's colour in the week, for course chips. */
+  color?: number;
+  remove(): void;
+}
+
+/** What the planner understood, as chips under the box: the courses, then the rules, each one a tap to take away. */
+function Understood({ wants, rules, titles, onWants, onRules }: { wants: PlanWant[]; rules: Rules; titles: Map<string, string>; onWants(wants: PlanWant[]): void; onRules(patch: Partial<Rules>): void }) {
+  const without = <T,>(list: T[], item: T) => list.filter((entry) => entry !== item);
+  const chips: Chip[] = [
+    ...wants.map((want, i) => ({
+      key: `want-${want.id}`,
+      label: `${want.codes.length === 1 ? titles.get(want.codes[0]!) ?? want.codes[0]! : want.label || `One of ${want.codes.length}`}${want.sessions?.length === 1 ? (want.sessions[0] === '71' ? ', first 7 weeks' : ', second 7 weeks') : want.sessions?.length ? ', 7 weeks' : ''}`,
+      color: i,
+      remove: () => onWants(wants.filter((entry) => entry.id !== want.id)),
+    })),
+    ...(rules.earliest ? [{ key: 'earliest', label: `Nothing before ${clock(rules.earliest)}`, remove: () => onRules({ earliest: '' }) }] : []),
+    ...(rules.latest ? [{ key: 'latest', label: `Done by ${clock(rules.latest)}`, remove: () => onRules({ latest: '' }) }] : []),
+    ...rules.daysOff.map((day) => ({ key: `off-${day}`, label: `${DAY_NAMES[day] ?? day}s off`, remove: () => onRules({ daysOff: without(rules.daysOff, day) }) })),
+    ...rules.avoidStarts.map((time) => ({ key: `avoid-${time}`, label: `No ${clock(time)} starts`, remove: () => onRules({ avoidStarts: without(rules.avoidStarts, time) }) })),
+    ...rules.requiredStarts.map((time) => ({ key: `need-${time}`, label: `A ${clock(time)} class`, remove: () => onRules({ requiredStarts: without(rules.requiredStarts, time) }) })),
+    ...(rules.maxPerDay ? [{ key: 'most', label: `At most ${rules.maxPerDay} a day`, remove: () => onRules({ maxPerDay: 0 }) }] : []),
+    ...(rules.noBackToBack ? [{ key: 'gap', label: 'Breaks between classes', remove: () => onRules({ noBackToBack: false }) }] : []),
+    ...(rules.shape !== 'any' ? [{ key: 'shape', label: rules.shape === 'compact' ? 'Fewer days on campus' : 'Lighter days', remove: () => onRules({ shape: 'any' }) }] : []),
+    ...(rules.waitlisted ? [{ key: 'wait', label: 'Waitlists are fine', remove: () => onRules({ waitlisted: false }) }] : []),
+    ...(!rules.bestRated ? [{ key: 'rated', label: 'Ratings ignored', remove: () => onRules({ bestRated: true }) }] : []),
+    ...rules.prefer.map((name) => ({ key: `with-${name}`, label: `With ${name}`, remove: () => onRules({ prefer: without(rules.prefer, name) }) })),
+    ...rules.avoid.map((name) => ({ key: `not-${name}`, label: `Not ${name}`, remove: () => onRules({ avoid: without(rules.avoid, name) }) })),
+    ...rules.place.map((placed) => ({ key: `place-${placed.code}-${placed.component}`, label: `${placed.code} ${(SHORT[placed.component] ?? placed.component).toLowerCase()} on ${placed.days.join('/')}`, remove: () => onRules({ place: without(rules.place, placed) }) })),
+  ];
+  if (!chips.length) return null;
   return (
-    <section className="plan-block week-filter" aria-labelledby="plan-week">
-      <div className="plan-block-head">
-        <h2 id="plan-week">Your week</h2>
-        {changed ? (
-          <button type="button" className="link-btn small" onClick={() => onChange({ ...DEFAULT_RULES, avoid: rules.avoid, prefer: rules.prefer })}>
-            Reset
+    <ul className="plan-chips" aria-label="What the plan follows">
+      {chips.map((chip) => (
+        <li key={chip.key} className={chip.color !== undefined ? 'course' : undefined} style={chip.color !== undefined ? ({ '--c': `var(--plan-${chip.color % 6})` } as CSSProperties) : undefined}>
+          <span>{chip.label}</span>
+          <button type="button" onClick={chip.remove} aria-label={`Remove ${chip.label}`}>
+            <IconClose />
           </button>
-        ) : null}
-      </div>
-      <p className="wf-summary">{summary || 'Any time, any day.'}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
-      <div className="wf-window" aria-hidden="true">
-        <div className="wf-track">
-          <span className="wf-band" style={{ left: share(start), right: `calc(100% - ${share(end)})` }} />
-          {Array.from({ length: Math.floor((to - from) / 60) - 1 }, (_, index) => from + (index + 1) * 60).map((time) => <i key={time} style={{ left: share(time) }} />)}
+/** Nothing fits: what is in the way, and the changes that would let it fit, each a tap. */
+function Blocked({ problems, onFix }: { problems: Array<{ text: string; fixes: Fix[] }>; onFix(fix: Fix): void }) {
+  return (
+    <section className="plan-blocked" role="status">
+      <h2>Nothing fits yet</h2>
+      {problems.map((problem) => (
+        <div key={problem.text} className="blocked-item">
+          <p>{problem.text}</p>
+          {problem.fixes.length > 0 && (
+            <div className="blocked-fixes">
+              {problem.fixes.map((fix) => (
+                <button key={fix.label} type="button" onClick={() => onFix(fix)} title={fix.detail}>
+                  {fix.label}
+                  {fix.detail && <small>{fix.detail}</small>}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-        <div className="wf-ends">
-          <span>{clock(from)}</span>
-          <span>{clock(to)}</span>
+      ))}
+    </section>
+  );
+}
+
+/** The plans that fit, best first, one week to a card: swipe or use the arrows to see the others. */
+function Deck({ options, partial, index, onIndex, rules, quality, wants, timing, scores }: { options: Option[]; partial: boolean; index: number; onIndex(index: number): void; rules: Rules; quality: Quality; wants: PlanWant[]; timing: SiteTimes; scores: ScoreIndex | null }) {
+  const track = useRef<HTMLDivElement>(null);
+  const settling = useRef(false);
+  // New plans start at the best one.
+  const first = options.map((entry) => entry.choices.flatMap((choice) => choice.sections.map((section) => section.classNumber)).join()).join('|');
+  useEffect(() => {
+    track.current?.scrollTo({ left: 0 });
+  }, [first]);
+
+  const go = (to: number) => {
+    const element = track.current;
+    if (!element || to < 0 || to >= options.length) return;
+    settling.current = true;
+    element.scrollTo({ left: to * element.clientWidth, behavior: 'smooth' });
+    onIndex(to);
+    window.setTimeout(() => (settling.current = false), 450);
+  };
+  const onScroll = (event: UIEvent<HTMLDivElement>) => {
+    if (settling.current) return;
+    const element = event.currentTarget;
+    const at = Math.round(element.scrollLeft / Math.max(1, element.clientWidth));
+    if (at !== index) onIndex(at);
+  };
+
+  return (
+    <section className="plan-deck" aria-label="Plans that fit" aria-roledescription="carousel">
+      <div className="deck-bar">
+        <div>
+          <b>{index === 0 ? 'Best plan' : `Plan ${index + 1}`}</b>
+          <span>
+            {' '}
+            of {options.length}
+            {partial ? '+' : ''} that fit
+          </span>
         </div>
-      </div>
-      <div className="wf-times">
-        <label className="wf-field">
-          <span>Earliest start</span>
-          <select className="input" value={rules.earliest} onChange={(event) => onChange({ earliest: event.target.value })}>
-            {['', ...new Set([...timing.starts, rules.earliest].filter(Boolean))].sort((a, b) => a.localeCompare(b)).map((time) => (
-              <option key={time} value={time}>
-                {time ? clock(time) : 'Any time'}
-              </option>
+        <div className="deck-nav">
+          <button type="button" className="icon-btn" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Previous plan">
+            <IconBack />
+          </button>
+          <span className="deck-dots" aria-hidden="true">
+            {options.map((_, i) => (
+              <i key={i} className={i === index ? 'on' : undefined} />
             ))}
-          </select>
-        </label>
-        <label className="wf-field">
-          <span>Done by</span>
-          <select className="input" value={rules.latest} onChange={(event) => onChange({ latest: event.target.value })}>
-            {['', ...new Set([...timing.ends, rules.latest].filter(Boolean))].sort((a, b) => a.localeCompare(b)).map((time) => (
-              <option key={time} value={time}>
-                {time ? clock(time) : 'Any time'}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <details className="plan-starts">
-        <summary>Specific class starts{rules.requiredStarts.length + rules.avoidStarts.length ? ` (${rules.requiredStarts.length + rules.avoidStarts.length})` : ''}</summary>
-        <p className="rule-help">Choose a time once to include it, again to avoid it, and again to clear.</p>
-        <div className="chips" aria-label="Specific class starts">
-          {[...new Set([...timing.starts, ...rules.requiredStarts, ...rules.avoidStarts])].sort().map((time) => {
-            const wanted = rules.requiredStarts.includes(time);
-            const avoided = rules.avoidStarts.includes(time);
-            return <button key={time} type="button" className={`chip${wanted ? ' on' : avoided ? ' on avoid' : ''}`} aria-label={`${clock(time)}: ${wanted ? 'required' : avoided ? 'avoided' : 'any'}`} onClick={() => onChange({ requiredStarts: wanted || avoided ? rules.requiredStarts.filter((entry) => entry !== time) : [...rules.requiredStarts, time], avoidStarts: wanted ? [...rules.avoidStarts, time] : rules.avoidStarts.filter((entry) => entry !== time) })}>{wanted ? 'Include ' : avoided ? 'Avoid ' : ''}{clock(time)}</button>;
-          })}
-        </div>
-      </details>
-
-      <div className="wf-row">
-        <span className="wf-label" id="wf-days">
-          Days on campus
-        </span>
-        <div className="wf-days" role="group" aria-labelledby="wf-days">
-          {timing.days.map((day) => {
-            const off = rules.daysOff.includes(day);
-            return (
-              <button key={day} type="button" className={`wf-day${off ? ' off' : ''}`} aria-pressed={off} aria-label={`${DAY_NAMES[day]}: ${off ? 'off' : 'on campus'}`} onClick={() => onChange({ daysOff: off ? rules.daysOff.filter((entry) => entry !== day) : [...rules.daysOff, day] })}>
-                <b>{day}</b>
-                <small>{off ? 'Off' : 'On'}</small>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="wf-row wf-inline">
-        <span className="wf-label" id="wf-most">
-          Classes a day
-        </span>
-        <div className="stepper" role="group" aria-labelledby="wf-most">
-          <button type="button" onClick={() => onChange({ maxPerDay: Math.max(0, (rules.maxPerDay || MOST_PER_DAY + 1) - 1) })} disabled={rules.maxPerDay === 1} aria-label="Fewer classes a day">
-            −
-          </button>
-          <output aria-live="polite">{rules.maxPerDay ? `At most ${rules.maxPerDay}` : 'Any'}</output>
-          <button type="button" onClick={() => onChange({ maxPerDay: rules.maxPerDay && rules.maxPerDay < MOST_PER_DAY ? rules.maxPerDay + 1 : 0 })} disabled={rules.maxPerDay === 0} aria-label="More classes a day">
-            +
+          </span>
+          <button type="button" className="icon-btn" onClick={() => go(index + 1)} disabled={index >= options.length - 1} aria-label="Next plan">
+            <IconChevronRight />
           </button>
         </div>
       </div>
-
-      <div className="wf-row">
-        <span className="wf-label">Shape</span>
-        <Segmented label="Shape of the week" value={rules.shape} onChange={(shape) => onChange({ shape })} options={SHAPES} />
-        <small className="rule-help">{SHAPE_HELP[rules.shape]}</small>
-      </div>
-
-      <div className="switches">
-        <Switch on={rules.bestRated} onChange={(bestRated) => onChange({ bestRated })} label="Best-rated professors first">
-          {ratings}
-        </Switch>
-        <Switch on={rules.noBackToBack} onChange={(noBackToBack) => onChange({ noBackToBack })} label="No back-to-back">
-          Leave a break between classes.
-        </Switch>
-        <Switch on={rules.waitlisted} onChange={(waitlisted) => onChange({ waitlisted })} label="Include waitlists">
-          Full sections you could waitlist.
-        </Switch>
+      <div className="deck-track" ref={track} onScroll={onScroll}>
+        {options.map((option, i) => (
+          <article key={i} className="deck-slide" aria-roledescription="slide" aria-label={`Plan ${i + 1} of ${options.length}`} inert={i !== index}>
+            <PlanSummary option={option} rules={rules} quality={quality} />
+            <WeekGrid option={option} timing={framed(timing, option)} daysOff={rules.daysOff} />
+            <PlanList option={option} wants={wants} scores={scores} />
+          </article>
+        ))}
       </div>
     </section>
   );
 }
 
-function Switch({ on, onChange, label, children }: { on: boolean; onChange(on: boolean): void; label: string; children: ReactNode }) {
+/** The week framed on the plan's own hours, with an hour either side, so a phone shows classes, not empty mornings. */
+function framed(timing: SiteTimes, option: Option): SiteTimes {
+  const meetings = option.choices.flatMap((choice) => choice.sections.flatMap((section) => section.meetings.filter((meeting) => meeting.start && meeting.end && meeting.days.length)));
+  if (!meetings.length) return timing;
+  const from = Math.max(timing.from, Math.floor(Math.min(...meetings.map((meeting) => minutes(meeting.start))) / 60) * 60 - 60);
+  const to = Math.min(timing.to, Math.ceil(Math.max(...meetings.map((meeting) => minutes(meeting.end))) / 60) * 60 + 60);
+  return { ...timing, from, to: Math.max(to, from + 120) };
+}
+
+function PlanSummary({ option, rules, quality }: { option: Option; rules: Rules; quality: Quality }) {
+  const why = highlights(option, rules, quality).join(' · ');
+  const load = option.credits < LOAD.low ? `a light load (most take ${LOAD.usual})` : option.credits > LOAD.high ? `a heavy load (most take ${LOAD.usual})` : '';
   return (
-    <button type="button" role="switch" aria-checked={on} className={`switch${on ? ' on' : ''}`} onClick={() => onChange(!on)}>
-      <span className="switch-track" aria-hidden="true" />
-      <span className="switch-text">
-        <b>{label}</b>
-        <small>{children}</small>
-      </span>
-    </button>
+    <p className="plan-summary">
+      <b>{option.credits} credits</b>
+      {load && <span className="off"> · {load}</span>}
+      {why && <span> · {why}</span>}
+    </p>
   );
 }
 
-function WantRow({ want, color, titles, problem, onRemove, onChoose }: { want: PlanWant; color: number; titles: Map<string, string>; problem?: string; onRemove(): void; onChoose(code: string): void }) {
-  const single = want.codes.length === 1;
-  return (
-    <div className={`want${problem ? ' stuck' : ''}`} style={{ '--c': `var(--plan-${color % 6})` } as CSSProperties}>
-      <span className="want-dot" aria-hidden="true" />
-      <div className="want-body">
-        {single ? (
-          <>
-            <span className="code">{want.codes[0]}</span>
-            <b>{titles.get(want.codes[0]!) ?? want.codes[0]}</b>
-          </>
-        ) : (
-          <>
-            <b>{want.label || 'One of these'}</b>
-            <span className="want-any" title={want.codes.map((code) => `${code} ${titles.get(code) ?? ''}`).join('\n')}>
-              Any of {want.codes.length}: {want.codes.slice(0, 3).join(', ')}
-              {want.codes.length > 3 ? '…' : ''}
-            </span>
-            <details className="plan-starts">
-              <summary>Choose a specific course</summary>
-              <div className="plan-course-results">{want.codes.map((code) => <button key={code} type="button" onClick={() => onChoose(code)}><span><b>{titles.get(code) ?? code}</b><small>{code}</small></span><IconArrow /></button>)}</div>
-            </details>
-          </>
-        )}
-        {want.sessions?.length ? <span className="want-any">7 weeks · {want.sessions.join(' or ')}</span> : null}
-        {problem && <span className="want-problem">{problem}</span>}
-      </div>
-      <button type="button" className="icon-btn" onClick={onRemove} aria-label="Remove">
-        <IconClose />
-      </button>
-    </div>
-  );
+/** The review digests' scores and verdicts for every course and professor, read once. */
+function useScores(): ScoreIndex | null {
+  const [scores, setScores] = useState<ScoreIndex | null>(null);
+  useEffect(() => {
+    api.courses
+      .scores()
+      .then(setScores)
+      .catch(() => setScores({ courses: {}, profs: {} }));
+  }, []);
+  return scores;
 }
 
 interface Block {
@@ -889,10 +667,11 @@ function WeekGrid({ option, timing, daysOff, empty }: { option: Option | null; t
 }
 
 /** The plan as a list: each course's sections with their class numbers, ready for Albert's shopping cart. */
-function PlanList({ option, wants, profs }: { option: Option; wants: PlanWant[]; profs: Map<string, ProfRating | null> }) {
+function PlanList({ option, wants, scores }: { option: Option; wants: PlanWant[]; scores: ScoreIndex | null }) {
   const { toast } = useApp();
   const [copied, setCopied] = useState(false);
   const numbers = option.choices.flatMap((choice) => choice.sections.map((section) => section.classNumber));
+  const byPerson = useMemo(() => new Map(Object.entries(scores?.profs ?? {}).map(([name, entry]) => [personKey(name), entry])), [scores]);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(numbers.join(', '));
@@ -904,18 +683,22 @@ function PlanList({ option, wants, profs }: { option: Option; wants: PlanWant[];
   };
   return (
     <div className="plan-list">
+      <div className="class-numbers">
+        <span>
+          Class numbers <b>{numbers.join(', ')}</b>
+        </span>
+        <button type="button" className="btn primary sm" onClick={() => void copy()}>
+          {copied ? <IconCheck className="pop-in" /> : <IconCopy />} {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
       {option.choices.map((choice) => (
-        <ChoiceRow key={choice.code} choice={choice} color={wants.findIndex((want) => want.id === choice.want)} profs={profs} />
+        <ChoiceRow key={choice.code} choice={choice} color={wants.findIndex((want) => want.id === choice.want)} course={scores?.courses[choice.code]} profs={byPerson} />
       ))}
-      <button type="button" className="btn" onClick={() => void copy()}>
-        {copied ? <IconCheck className="pop-in" /> : <IconCopy />} {copied ? 'Copied' : 'Copy class numbers'}
-      </button>
     </div>
   );
 }
 
-function ChoiceRow({ choice, color, profs }: { choice: Choice; color: number; profs: Map<string, ProfRating | null> }) {
-  const rating = useRating(choice.code);
+function ChoiceRow({ choice, color, course, profs }: { choice: Choice; color: number; course?: ScoreIndex['courses'][string]; profs: Map<string, ScoreIndex['profs'][string]> }) {
   // Which professor's verdict is open, as "class number:name".
   const [open, setOpen] = useState('');
   return (
@@ -925,14 +708,14 @@ function ChoiceRow({ choice, color, profs }: { choice: Choice; color: number; pr
           <span className="code">{choice.code}</span>
           <b>{choice.title}</b>
         </a>
-        {rating && (
-          <span className="choice-rating" title="AI rating of the course from students in the group">
-            {rating.score.toFixed(1)}
+        {course && (
+          <span className="choice-rating" title={course.verdict || `Rated by ${course.basis} students in the group`}>
+            {course.score.toFixed(1)}
           </span>
         )}
       </div>
       {choice.sections.map((section) => {
-        const shown = open.startsWith(`${section.classNumber}:`) ? profs.get(open.slice(section.classNumber.length + 1)) : null;
+        const shown = open.startsWith(`${section.classNumber}:`) ? profs.get(personKey(open.slice(section.classNumber.length + 1))) : undefined;
         return (
           <div key={section.classNumber} className="choice-sec">
             <span className="choice-part">
@@ -953,7 +736,7 @@ function ChoiceRow({ choice, color, profs }: { choice: Choice; color: number; pr
               {section.instructors.length === 0
                 ? 'Instructor not listed'
                 : section.instructors.map((name, i) => {
-                    const prof = profs.get(name);
+                    const prof = profs.get(personKey(name));
                     const id = `${section.classNumber}:${name}`;
                     return (
                       <Fragment key={name}>
@@ -974,7 +757,7 @@ function ChoiceRow({ choice, color, profs }: { choice: Choice; color: number; pr
               <p className="prof-verdict">
                 {shown.verdict}{' '}
                 <span>
-                  From {shown.basis} {shown.basis === 1 ? 'student' : 'students'} in the group{shown.confidence === 'low' ? ', so take it lightly' : ''}.
+                  From {shown.basis} {shown.basis === 1 ? 'student' : 'students'} in the group{shown.basis < 4 ? ', so take it lightly' : ''}.
                 </span>
               </p>
             )}
@@ -984,21 +767,4 @@ function ChoiceRow({ choice, color, profs }: { choice: Choice; color: number; pr
       })}
     </div>
   );
-}
-
-/** A course's AI rating, if students have written enough about it; the client asks once per course a session. */
-function useRating(code: string): CourseRating | null {
-  const [rating, setRating] = useState<CourseRating | null>(null);
-  useEffect(() => {
-    let live = true;
-    setRating(null);
-    api.courses
-      .rating(code)
-      .then((result) => live && setRating(result.rating))
-      .catch(() => null);
-    return () => {
-      live = false;
-    };
-  }, [code]);
-  return rating;
 }

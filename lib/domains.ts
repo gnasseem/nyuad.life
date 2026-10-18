@@ -68,7 +68,7 @@ export function detectRedirect(question: string, _env: NodeJS.ProcessEnv = proce
     return { domain: 'lost-found', title: 'Check Lost & found', message: 'Look for your item or post what was lost or found.', link: { url: LOST_FOUND_PATH, label: 'Open Lost & found' } };
   }
   if (LIVE.some((pattern) => pattern.test(text)) && LIVE_NEED.test(text)) {
-    return { domain: 'live', title: 'Ask students on Questions', message: 'Post your request so someone on campus can help.', link: { url: '/questions', label: 'Open Questions' } };
+    return { domain: 'live', title: 'Ask students', message: 'The archive cannot help with this right now. Post it so someone on campus can.', link: { url: '/', label: 'Ask students' } };
   }
   return null;
 }

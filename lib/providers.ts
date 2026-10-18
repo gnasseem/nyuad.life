@@ -722,7 +722,8 @@ export async function siteJson<T>(
       return generateJson<T>(cfg, { model, system: params.system, messages, responseSchema: params.schema, temperature, maxOutputTokens }, { retries: 0, signal, timeoutMs });
     },
     async (family, signal) => {
-      const text = await liteChat(family, { system: `${params.system}\nReply with one JSON object and nothing else.`, messages, json: true, temperature, maxOutputTokens, signal, tier: params.tier, attemptMs: params.attemptMs });
+      // Only Gemini takes a response schema; the others get it in words, or they guess the field names.
+      const text = await liteChat(family, { system: `${params.system}\nReply with one JSON object and nothing else, with exactly the fields of this schema (Gemini's OpenAPI subset): ${JSON.stringify(params.schema)}`, messages, json: true, temperature, maxOutputTokens, signal, tier: params.tier, attemptMs: params.attemptMs });
       return JSON.parse(text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '')) as T;
     },
   );

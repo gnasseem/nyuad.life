@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildCatalog, courseRows, type Offering } from './courses.ts';
-import { namedCourseList, requestedTimes, simpleRuleRequest } from './plan-request.ts';
+import { namedCourseList, namedProfessors, requestedPlacement, requestedTimes, simpleRuleRequest } from './plan-request.ts';
 import { DEFAULT_RULES, highlights, lanes, minutes, normalizeRules, solve, waysToTake, type Quality, type Rules, type SolverCourse, type SolverSection } from './schedule.ts';
 
 const TERM = { startDate: '2026-08-31', endDate: '2026-12-14' };
@@ -60,6 +60,10 @@ describe('ways to take a course', () => {
       sections: [section('1', 'Lecture', ['Mon'], '09:55', '11:10'), section('2', 'Laboratory', ['Tue'], '14:00', '16:00', { section: 'LAB1' }), section('3', 'Laboratory', ['Wed'], '14:00', '16:00', { section: 'LAB2' })],
     };
     expect(waysToTake(engr, 'w', DEFAULT_RULES).ways).toHaveLength(2);
+    const tuesday = rules({ place: [{ code: 'ENGR-UH 1000', component: 'Laboratory', days: ['Tue'] }] });
+    expect(waysToTake(engr, 'w', tuesday).ways.map((way) => way.sections[1]!.section)).toEqual(['LAB1']);
+    expect(waysToTake(engr, 'w', rules({ place: [{ code: 'ENGR-UH 1000', component: 'Laboratory', days: ['Thu'] }] })).why).toBe('has no laboratory on Thursday that fits');
+    expect(solve(new Map([[engr.code, engr]]), [{ id: 'w', codes: [engr.code] }], rules({ place: [{ code: 'ENGR-UH 1000', component: 'Laboratory', days: ['Thu'] }] })).problems[0]!.fixes[0]!.rules).toEqual({ place: [] });
   });
 
   it('says which rule keeps a course out', () => {
@@ -345,6 +349,26 @@ describe('requests in students’ own words', () => {
     expect(read?.missing).toEqual([]);
     expect(namedCourseList(courses.slice(1), 'CSO, Algo, French1, Probs and Stats')?.missing).toEqual(['CSO']);
     expect(namedCourseList(courses, 'Algo, no 8:30am classes')).toBeNull();
+  });
+
+  it('reads a course part moved to other days', () => {
+    const part = (component: string) => section('1', component, ['Mon'], '10:00', '11:00');
+    const programming = { code: 'ENGR-UH 1000', title: 'Computer Programming for Engineers', credits: '4', sections: [part('Lecture'), part('Laboratory')] };
+    const logic = { code: 'ENGR-UH 2013', title: 'Digital Logic', credits: '4', sections: [part('Lecture'), part('Laboratory')] };
+    const calc = { code: 'MATH-UH 1021', title: 'Multivariable Calculus', credits: '4', sections: [part('Lecture'), part('Recitation')] };
+    expect(requestedPlacement('move the programming lab to Tuesday', [programming, logic, calc])).toEqual([{ code: 'ENGR-UH 1000', component: 'Laboratory', days: ['Tue'] }]);
+    expect(requestedPlacement('recitation on tue or thu', [programming, logic, calc])).toEqual([{ code: 'MATH-UH 1021', component: 'Recitation', days: ['Tue', 'Thu'] }]);
+    expect(requestedPlacement('move the lab to Tuesday', [programming, logic])).toEqual([]);
+    expect(requestedPlacement('no labs on Friday', [programming])).toEqual([]);
+  });
+
+  it('reads professors to take out or keep, whatever the model made of it', () => {
+    const teaching = ['Yves Le Jan', 'Mohamad Hassan Kassab', 'Thomas Pötsch'];
+    expect(namedProfessors('swap Yves Le Jan out', teaching)).toEqual({ avoid: ['Yves Le Jan'], prefer: [] });
+    expect(namedProfessors('not kassab please', teaching).avoid).toEqual(['Mohamad Hassan Kassab']);
+    expect(namedProfessors('with Potsch', teaching).prefer).toEqual(['Thomas Pötsch']);
+    expect(namedProfessors('calc with Potsch, no back to back', teaching)).toEqual({ avoid: [], prefer: ['Thomas Pötsch'] });
+    expect(namedProfessors('calc and intro to cs, no 8:30am', teaching)).toEqual({ avoid: [], prefer: [] });
   });
 
   it('distinguishes requested starts, excluded starts and bounds on the day', () => {

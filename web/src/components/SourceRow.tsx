@@ -15,7 +15,6 @@ export const KIND_LABEL: Record<SourceCard['kind'], string> = { archive: 'Group 
 export function SourceRow({ source, hot, id, onHover }: Props) {
   const open = () => {
     if (source.kind === 'archive') navigate({ name: 'post', id: source.postId });
-    else if (source.kind === 'board') navigate({ name: 'question', id: source.postId });
     else if (source.kind === 'schedule') navigate(source.postId.startsWith('instructor:') ? { name: 'courses' } : { name: 'courses', code: source.postId }, source.postId.startsWith('instructor:') ? { search: `q=${encodeURIComponent(source.postId.slice(11))}` } : {});
     else if (source.kind === 'review') navigate({ name: 'courses', code: source.postId });
     else if (source.url) window.open(source.url, '_blank', 'noreferrer');
@@ -32,7 +31,8 @@ export function SourceRow({ source, hot, id, onHover }: Props) {
       </div>
       {source.title && <div className="source-title">{source.title}</div>}
       <div className="source-text">{source.snippet || source.text}</div>
-      <div className="source-links">
+      {/* A student's answer is all there is to it: it opens nowhere. */}
+      {source.kind !== 'board' && <div className="source-links">
         <button type="button" onClick={open}>
           {source.kind === 'official' ? 'Open page' : source.kind === 'schedule' || source.kind === 'review' ? 'Open in Courses' : 'Open'}
         </button>
@@ -41,7 +41,7 @@ export function SourceRow({ source, hot, id, onHover }: Props) {
             Facebook
           </a>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

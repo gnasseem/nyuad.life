@@ -3,8 +3,6 @@ import { flushSync } from 'react-dom';
 
 export type Route =
   | { name: 'ask' }
-  | { name: 'questions' }
-  | { name: 'question'; id: string }
   | { name: 'announcements' }
   | { name: 'post'; id: string }
   | { name: 'market'; tab: MarketTab }
@@ -28,8 +26,6 @@ export function parseRoute(pathname: string): Route {
     }
   });
   switch (parts[0]) {
-    case 'questions':
-      return parts[1] ? { name: 'question', id: parts[1] } : { name: 'questions' };
     case 'events':
     case 'announcements':
     case 'notices':
@@ -67,10 +63,6 @@ export function routePath(route: Route): string {
   switch (route.name) {
     case 'ask':
       return '/';
-    case 'questions':
-      return '/questions';
-    case 'question':
-      return `/questions/${encodeURIComponent(route.id)}`;
     case 'announcements':
       return '/events';
     case 'post':
@@ -110,7 +102,7 @@ export function navigate(route: Route, options: { replace?: boolean; search?: st
 function changesPage(from: Route, to: Route): boolean {
   if (from.name !== to.name) return true;
   if (from.name === 'courses' && to.name === 'courses') return false;
-  if ((from.name === 'post' && to.name === 'post') || (from.name === 'question' && to.name === 'question')) return from.id !== to.id;
+  if ((from.name === 'post' && to.name === 'post')) return from.id !== to.id;
   return false;
 }
 

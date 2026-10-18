@@ -43,7 +43,7 @@ export default route(['GET', 'POST'], async (req, res) => {
   if (member) {
     rateLimit(req, 10, 6, 'ask-student', member.netId);
     // A daily ceiling per student across every instance, so one account cannot spend the free quota everyone shares.
-    await limitDurably(boardStore(), `ask:${member.netId}`, 150, 86_400, 'You have asked a lot today. Ask again tomorrow, or ask other students on Questions.');
+    await limitDurably(boardStore(), `ask:${member.netId}`, 150, 86_400, 'You have asked a lot today. Ask again tomorrow.');
   } else {
     rateLimit(req, 150, 150 / 1440, 'ask-day');
   }

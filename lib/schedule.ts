@@ -81,9 +81,17 @@ export interface Rules {
   /** Professors to keep out of the plan, and to look for. Matched on every word of the name. */
   avoid: string[];
   prefer: string[];
+  /** A course's component on given days: "move the lab to Tuesday" is { code, component: 'Laboratory', days: ['Tue'] }. */
+  place: Placement[];
 }
 
-export const DEFAULT_RULES: Rules = { earliest: '', latest: '', requiredStarts: [], avoidStarts: [], daysOff: [], maxPerDay: 0, noBackToBack: false, shape: 'any', waitlisted: false, bestRated: true, avoid: [], prefer: [] };
+export interface Placement {
+  code: string;
+  component: string;
+  days: string[];
+}
+
+export const DEFAULT_RULES: Rules = { earliest: '', latest: '', requiredStarts: [], avoidStarts: [], daysOff: [], maxPerDay: 0, noBackToBack: false, shape: 'any', waitlisted: false, bestRated: true, avoid: [], prefer: [], place: [] };
 
 /** Back to back at NYUAD is the 10 minutes between slots; a break is anything longer. */
 export const BREAK = 15;
@@ -107,6 +115,13 @@ export function normalizeRules(raw: unknown): Rules {
     bestRated: value.bestRated !== false,
     avoid: names(value.avoid),
     prefer: names(value.prefer),
+    place: Array.isArray(value.place)
+      ? value.place
+          .filter((entry): entry is Placement => !!entry && typeof entry.code === 'string' && typeof entry.component === 'string' && Array.isArray(entry.days))
+          .map((entry) => ({ code: entry.code, component: entry.component, days: DAYS.filter((day) => entry.days.includes(day)) }))
+          .filter((entry) => entry.days.length)
+          .slice(0, 8)
+      : [],
   };
 }
 
@@ -362,7 +377,12 @@ export function waysToTake(course: SolverCourse, want: string, rules: Rules, ses
   for (const component of components) {
     const all = byComponent.get(component)!.filter((section) => component !== components[0] || !sessions.length || sessions.some((half) => half === sessionHalf(section.session)));
     if (!all.length) return { ways: [], why: sessions.length === 2 ? 'has no seven-week section (71 or 72)' : `has no session ${sessions[0]} section` };
-    const kept = all.filter((section) => blocker(section, rules) === null);
+    let kept = all.filter((section) => blocker(section, rules) === null);
+    const placed = rules.place.find((entry) => entry.code === course.code && entry.component === component);
+    if (placed && kept.length) {
+      kept = kept.filter((section) => section.meetings.some((meeting) => meeting.days.some((day) => placed.days.includes(day))));
+      if (kept.length === 0) return { ways: [], why: `has no ${component.toLowerCase()} on ${list(placed.days.map((day) => DAY_NAMES[day]!), 'or')} that fits` };
+    }
     if (kept.length === 0) {
       const counts = new Map<Blocker, SolverSection[]>();
       for (const section of all) {
@@ -498,6 +518,7 @@ function relaxations(rules: Rules): Fix[] {
   if (rules.earliest) out.push({ label: `Allow classes before ${clock(rules.earliest)}`, rules: { earliest: '' } });
   if (rules.latest) out.push({ label: `Allow classes after ${clock(rules.latest)}`, rules: { latest: '' } });
   for (const name of rules.avoid) out.push({ label: `Allow ${name}`, rules: { avoid: rules.avoid.filter((entry) => entry !== name) } });
+  for (const placed of rules.place) out.push({ label: `Any day for the ${placed.code} ${placed.component.toLowerCase()}`, rules: { place: rules.place.filter((entry) => entry !== placed) } });
   return out;
 }
 
@@ -526,6 +547,7 @@ function both(a: Fix, b: Fix): Fix {
   if (a.rules?.avoid && b.rules?.avoid) rules.avoid = a.rules.avoid.filter((name) => b.rules!.avoid!.includes(name));
   if (a.rules?.avoidStarts && b.rules?.avoidStarts) rules.avoidStarts = a.rules.avoidStarts.filter((time) => b.rules!.avoidStarts!.includes(time));
   if (a.rules?.requiredStarts && b.rules?.requiredStarts) rules.requiredStarts = a.rules.requiredStarts.filter((time) => b.rules!.requiredStarts!.includes(time));
+  if (a.rules?.place && b.rules?.place) rules.place = a.rules.place.filter((entry) => b.rules!.place!.includes(entry));
   return { label: `${a.label} and ${b.label.charAt(0).toLowerCase()}${b.label.slice(1)}`, rules };
 }
 

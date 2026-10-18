@@ -46,8 +46,6 @@ export interface BoardStore {
   /** Questions with at least one answer, newest first, for the answer engine. */
   listAnswered(limit: number): Promise<Question[]>;
   listAnswers(questionIds: string[]): Promise<Answer[]>;
-  /** The newest answers across the board, for the leaderboard. */
-  listRecentAnswers(limit: number): Promise<Answer[]>;
   createAnswer(answer: Omit<Answer, 'id' | 'createdAt'>): Promise<Answer>;
   recordEvent(event: Omit<BoardEvent, 'createdAt'>): Promise<void>;
   listEventsByHelper(netId: string): Promise<BoardEvent[]>;
@@ -109,8 +107,6 @@ export interface BoardStore {
   /** The mentions of these courses and professors (entity keys). */
   listMentionsFor(entities: string[]): Promise<Mention[]>;
 
-  /** Questions that are not closed, newest first, older than `before` (an ISO time) when given: the Questions feed. */
-  listFeed(limit: number, before?: string): Promise<Question[]>;
   /** The profile a browser set up, by the hash of its key (Profile.ownerKey). */
   findProfileByOwner(ownerKey: string): Promise<Profile | null>;
   /** Whether an admin barred this NetID from posting. */
@@ -255,9 +251,6 @@ export class MemoryBoardStore implements BoardStore {
   async listAnswers(questionIds: string[]): Promise<Answer[]> {
     const wanted = new Set(questionIds);
     return this.answers.filter((answer) => wanted.has(answer.questionId));
-  }
-  async listRecentAnswers(limit: number): Promise<Answer[]> {
-    return [...this.answers].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
   }
   async createAnswer(answer: Omit<Answer, 'id' | 'createdAt'>): Promise<Answer> {
     const created: Answer = { ...answer, id: randomUUID(), createdAt: new Date().toISOString() };
@@ -423,11 +416,6 @@ export class MemoryBoardStore implements BoardStore {
   }
   private bans = new Map<string, Ban>();
   readonly audit: Array<{ action: string; target: string; snapshot?: unknown; ip: string; createdAt: string }> = [];
-  async listFeed(limit: number, before?: string): Promise<Question[]> {
-    return this.sorted()
-      .filter((question) => question.status !== 'closed' && (!before || question.createdAt < before))
-      .slice(0, limit);
-  }
   async findProfileByOwner(ownerKey: string): Promise<Profile | null> {
     return [...this.profiles.values()].find((profile) => profile.ownerKey === ownerKey) ?? null;
   }
@@ -694,9 +682,6 @@ export class SupabaseBoardStore implements BoardStore {
     }
     return (await Promise.all(batches)).flat().map(answerFrom).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
-  async listRecentAnswers(limit: number): Promise<Answer[]> {
-    return (await this.select('board_answers', `select=id,question_id,helper_net_id,helper_name,helper_major,helper_year,created_at&order=created_at.desc&limit=${limit}`)).map(answerFrom);
-  }
   async createAnswer(answer: Omit<Answer, 'id' | 'createdAt'>): Promise<Answer> {
     const rows = await this.write('POST', 'board_answers', {
       question_id: answer.questionId,
@@ -952,11 +937,6 @@ export class SupabaseBoardStore implements BoardStore {
     if (!entities.length) return [];
     const list = entities.map((entity) => `"${entity.replace(/["\\]/g, '')}"`).join(',');
     return (await this.selectAll('review_mentions', `select=*&entity=in.(${enc(list)})&order=post_id.asc,entity.asc`)).map(mentionFrom);
-  }
-
-  async listFeed(limit: number, before?: string): Promise<Question[]> {
-    const older = before && !Number.isNaN(Date.parse(before)) ? `&created_at=lt.${enc(new Date(before).toISOString())}` : '';
-    return (await this.select('board_questions', `${QUESTION_COLUMNS}&status=neq.closed${older}&order=created_at.desc&limit=${limit}`)).map(questionFrom);
   }
 
   /** Bans, read whole and kept for a minute: every post checks them, and there are few. */

@@ -324,7 +324,6 @@ function QuestionsScene() {
         <b>Is the Abu Dhabi bus card worth it?</b>
         <span className="sq-pill">Needs an answer</span>
       </div>
-      <span className="sq-plus">+</span>
     </div>
   );
 }

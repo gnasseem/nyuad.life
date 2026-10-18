@@ -25,8 +25,8 @@ describe('detectRedirect', () => {
     expect(detectRedirect('anyone going to Dubai tonight? can I get a ride', env)?.link.url).toBe(RIDES_PATH);
     expect(detectRedirect('I lost my airpods in the library yesterday', env)?.link.url).toBe(LOST_FOUND_PATH);
     expect(detectRedirect('does anyone have an HDMI cable I can borrow right now', env)?.domain).toBe('live');
-    expect(detectRedirect('does anyone have an HDMI cable I can borrow right now', env)?.link.url).toBe('/questions');
-    expect(detectRedirect('does anyone have an HDMI cable I can borrow right now', {})?.link.url).toBe('/questions');
+    expect(detectRedirect('does anyone have an HDMI cable I can borrow right now', env)?.link.label).toBe('Ask students');
+    expect(detectRedirect('does anyone have an HDMI cable I can borrow right now', {})?.link.label).toBe('Ask students');
   });
   it('keeps real questions on the site', () => {
     for (const question of ['Which professor is best for calculus?', 'How does summer housing work?', 'Where do students buy cheap furniture?', 'What is the shuttle schedule to Dubai on weekends?', 'How do I get to the airport at night?', 'Where is lost and found on campus?', 'I lost my ID, where to make a new one', 'I lot my ID, where to make a new one', 'Lost my key. How do I replace it?', 'I lost my Emirates ID abroad, can I travel back?']) {

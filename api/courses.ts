@@ -10,7 +10,6 @@
  *   GET /api/courses?code=CS-UH%201001&rating=1     its rating, from its digest
  *   GET /api/courses?code=CS-UH%201001&view=1       its page: the course, its rating, its professors and their scores
  *   GET /api/courses?prof=Thomas%20P%C3%B6tsch       a professor's page: their rating and the courses they teach
- *   GET /api/courses?profs=Thomas%20P%C3%B6tsch|... ratings of up to 24 professors
  *   GET /api/courses?ratings=1                     every score and one-line verdict, for the search
  */
 import { courseRating, level, profRating, type Digest } from '../lib/board.ts';
@@ -32,12 +31,7 @@ export default route(['GET'], async (req, res) => {
   const code = queryString(req, 'code').trim();
   const term = queryString(req, 'term').trim();
   const school = queryString(req, 'school').trim();
-  const profs = queryString(req, 'profs');
 
-  if (profs) {
-    sendJson(res, 200, await profRatings(profs), 300);
-    return;
-  }
   const prof = collapseWhitespace(queryString(req, 'prof'));
   if (prof) {
     sendJson(res, 200, await profView(catalog, prof), 60);
@@ -193,22 +187,6 @@ async function profView(catalog: Catalog, asked: string) {
   });
   courses.sort((a, b) => Number(b.teachingNow) - Number(a.teachingNow) || termOrder(b.lastTerm) - termOrder(a.lastTerm) || (b.here?.count ?? 0) - (a.here?.count ?? 0) || a.code.localeCompare(b.code, undefined, { numeric: true }));
   return { name, currentTerm: catalog.current, rating, courses: courses.slice(0, 24) };
-}
-
-/* ---------- Ratings, from the digests ---------- */
-
-const MAX_PROFS = 24;
-
-/** Ratings of these professors by the names the schedule gives them; null for one nobody has written about. */
-async function profRatings(param: string) {
-  const names = [...new Set(param.split('|').map((name) => collapseWhitespace(name)).filter(Boolean))].slice(0, MAX_PROFS);
-  const digests = new Map(((await boardStore()?.getDigests(names.map(profKey)).catch(() => [])) ?? []).map((digest) => [digest.entity, digest]));
-  const ratings: Record<string, ReturnType<typeof profRating> | null> = {};
-  for (const name of names) {
-    const digest = digests.get(profKey(name));
-    ratings[name] = profRating(digest);
-  }
-  return { ratings, pending: [] as string[] };
 }
 
 /* ---------- Every score at once, for the lists ---------- */
