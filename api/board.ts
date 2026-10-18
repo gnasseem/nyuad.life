@@ -24,6 +24,9 @@ import {
   validateProfile,
   validateQuestionText,
   validateReview,
+  courseRating,
+  packReviewText,
+  profRating,
   unpackReviewText,
   type Announcement,
   type Answer,
@@ -36,6 +39,8 @@ import {
 import { recordEvent } from '../lib/app-usage.ts';
 import { boardStore, type BoardStore } from '../lib/board-store.ts';
 import { displayName, loadCatalog } from '../lib/courses.ts';
+import { courseKey, profKey } from '../lib/entities.ts';
+import { refreshDigests } from '../lib/reviews.ts';
 import { detectRedirect } from '../lib/domains.ts';
 import { normalizeCode } from '../lib/html.ts';
 import { embedderForIndex } from '../lib/embeddings.ts';
@@ -95,7 +100,7 @@ export default route(['GET', 'POST'], async (req, res) => {
     sendJson(res, 200, { ok: true });
     return;
   }
-  const publicReads = ['stats', 'announcements', 'offers', 'listings', 'recent', 'feed', 'leaderboard', 'question', 'reviews'];
+  const publicReads = ['stats', 'announcements', 'offers', 'listings', 'recent', 'feed', 'leaderboard', 'question', 'reviews', 'prof_reviews'];
   if (req.method === 'POST' || !publicReads.includes(op)) {
     const session = requireEmailSession(req);
     if (body.netId && body.netId !== session.netId) throw new ApiError(403, 'Use the account you logged in with.', 'identity_mismatch');
@@ -210,24 +215,57 @@ export default route(['GET', 'POST'], async (req, res) => {
       const professor = collapseWhitespace(String(body.professor ?? '')).slice(0, 100);
       const taught = loadCatalog().byCode.get(code)?.flatMap((offering) => offering.sections.flatMap((section) => section.instructors.map(displayName))) ?? [];
       if (professor && !taught.includes(professor)) throw new ApiError(400, 'Choose a professor who taught this course.', 'bad_professor');
+      if (draft.profRating && !professor) throw new ApiError(400, 'Choose the professor you took it with.', 'bad_professor');
+      if (!draft.rating && !draft.profRating) throw new ApiError(400, 'Choose a rating from 1 to 5.', 'bad_review');
       allow('review', draft.text);
-      if (draft.text) await review('review', `Course: ${code}`, `Professor: ${professor || 'Not specified'}`, `Rating: ${draft.rating} of 5`, `Review: ${draft.text}`);
-      const text = professor ? `Professor: ${professor}\n\n${draft.text}` : draft.text;
+      if (draft.text) await review('review', `Course: ${code}`, `Professor: ${professor || 'Not specified'}`, `Course rating: ${draft.rating ? `${draft.rating} of 5` : 'not given'}`, draft.profRating ? `Professor rating: ${draft.profRating} of 5` : '', `Review: ${draft.text}`);
+      const before = (await store.listReviewsByAuthor(profile.netId).catch(() => [])).find((entry) => entry.code === code);
+      const text = packReviewText({ professor, profRating: draft.profRating, courseRated: draft.rating !== null, text: draft.text });
       const anonymous = body.anonymous === true;
-      const saved = await store.upsertReview({ ...draft, text, code, netId: profile.netId, authorName: anonymous ? 'Anonymous' : profile.name.split(' ')[0] ?? profile.name, authorMajor: anonymous ? '' : profile.major, authorYear: anonymous ? '' : standingFor(profile.classOf) }).catch((error: unknown) => {
+      // A student rating only the professor leaves the course unrated: the rating column then holds the professor's stars.
+      const saved = await store.upsertReview({ rating: draft.rating ?? draft.profRating!, difficulty: draft.difficulty, workload: draft.workload, term: draft.term, text, code, netId: profile.netId, authorName: anonymous ? 'Anonymous' : profile.name.split(' ')[0] ?? profile.name, authorMajor: anonymous ? '' : profile.major, authorYear: anonymous ? '' : standingFor(profile.classOf) }).catch((error: unknown) => {
         if (error instanceof ApiError && error.code === 'board_schema_missing') throw new ApiError(503, 'Course reviews are not open yet. Try again soon.', 'reviews_unavailable');
         throw error;
       });
       recordEvent('review');
       forgetBoardReads();
-      sendJson(res, 200, { review: publicReview(saved, profile.netId) });
+      sendJson(res, 200, { review: publicReview(saved, profile.netId), ...await recount(store, code, [professor, before ? unpackReviewText(before.text).professor : '']) });
       return;
     }
     case 'unreview': {
       rateLimit(req, 10, 4, 'board-review');
       const profile = await requireProfile(store, body.netId, body.key);
-      if (!await store.deleteReview(courseCode(body.code), profile.netId)) throw new ApiError(404, 'You have not reviewed this course.', 'not_found');
+      const code = courseCode(body.code);
+      const before = (await store.listReviewsByAuthor(profile.netId).catch(() => [])).find((entry) => entry.code === code);
+      if (!await store.deleteReview(code, profile.netId)) throw new ApiError(404, 'You have not reviewed this course.', 'not_found');
       forgetBoardReads();
+      sendJson(res, 200, { ok: true, ...await recount(store, code, [before ? unpackReviewText(before.text).professor : '']) });
+      return;
+    }
+    case 'prof_reviews': {
+      rateLimit(req, 60, 60, 'board-read');
+      const name = collapseWhitespace(queryString(req, 'name')).slice(0, 100);
+      if (!name) throw new ApiError(400, 'Name a professor.', 'bad_name');
+      const me = emailSession(req)?.netId;
+      const reviews = (await store.listReviewsByProfessor(name).catch(() => [])).filter((entry) => unpackReviewText(entry.text).professor === name);
+      sendJson(res, 200, { reviews: reviews.map((entry) => publicReview(entry, me)) });
+      return;
+    }
+    case 'my_reviews': {
+      // What the rating prompt needs: the courses this student has rated, and the ones they were asked about already.
+      rateLimit(req, 60, 60, 'board-read');
+      const netId = validateNetId(body.netId);
+      const [mine, asked] = await Promise.all([store.listReviewsByAuthor(netId).catch(() => []), store.getSummary(`${PROMPTED}${netId}`).catch(() => null)]);
+      const saved = (asked?.payload ?? {}) as { codes?: string[]; off?: boolean };
+      sendJson(res, 200, { reviews: mine.map((entry) => ({ code: entry.code, term: entry.term, professor: unpackReviewText(entry.text).professor })), prompted: saved.codes ?? [], off: saved.off === true });
+      return;
+    }
+    case 'prompted': {
+      rateLimit(req, 20, 10, 'board-prompted');
+      const netId = validateNetId(body.netId);
+      const asked = ((await store.getSummary(`${PROMPTED}${netId}`).catch(() => null))?.payload ?? {}) as { codes?: string[]; off?: boolean };
+      const code = body.code ? courseCode(body.code) : '';
+      await store.putSummary(`${PROMPTED}${netId}`, { codes: [...new Set([...(asked.codes ?? []), ...(code ? [code] : [])])].slice(-400), off: asked.off === true || body.off === true });
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -516,7 +554,30 @@ function publicAnswer(answer: Answer) {
 
 function publicReview(entry: CourseReview, me?: string) {
   const { netId, ...rest } = entry;
-  return { ...rest, ...unpackReviewText(entry.text), mine: Boolean(me) && netId === me };
+  const extras = unpackReviewText(entry.text);
+  return { ...rest, ...extras, rating: extras.courseRated ? entry.rating : null, mine: Boolean(me) && netId === me };
+}
+
+/** Where each student's record of the courses the rating prompt has asked them about is kept (guide_summaries). */
+const PROMPTED = 'review-prompted:';
+
+/**
+ * Recounts the course's digest, and those of the professors named before and after the change, so the score moves
+ * the moment a review is written, changed or removed; returns them as the course and professor pages show them.
+ */
+async function recount(store: BoardStore, code: string, professors: string[]) {
+  const catalog = loadCatalog();
+  const course = courseKey(catalog, code);
+  const names = [...new Set(professors.filter(Boolean))];
+  try {
+    const digests = await refreshDigests(store, catalog, [{ entity: course, name: course.slice('course:'.length) }, ...names.map((name) => ({ entity: profKey(name), name }))]);
+    const of = (entity: string) => digests.find((digest) => digest.entity === entity);
+    return { course: courseRating(of(course)), profs: Object.fromEntries(names.map((name) => [name, profRating(of(profKey(name)))])) };
+  } catch (error) {
+    // The review is saved either way; the next run of the review job counts it.
+    console.error(`[board] Could not recount the ratings of ${code}: ${(error as Error).message}`);
+    return { course: undefined, profs: {} };
+  }
 }
 
 /** A course code from the request, refused unless Albert lists it, so reviews cannot pile up under made-up codes. */

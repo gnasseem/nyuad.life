@@ -426,11 +426,32 @@ export interface RatingCounts {
   neutral: number;
 }
 
-/** Every score written so far, for the lists: AI ratings by course code and professor, and reviews written here. */
+/** Every course's and professor's score and one-line verdict, from the digests (which count the reviews written here). */
 export interface ScoreIndex {
-  courses: Record<string, { score: number; basis: number; difficulty: number | null; workload: number | null }>;
-  profs: Record<string, { score: number; basis: number }>;
-  students: Record<string, { n: number; avg: number }>;
+  courses: Record<string, { score: number; basis: number; difficulty: number | null; workload: number | null; verdict: string }>;
+  profs: Record<string, { score: number; basis: number; verdict: string }>;
+}
+
+/** A course's page: the course, its rating, and its professors with theirs. */
+export interface CourseView extends Omit<CourseDetail, 'professors'> {
+  rating: CourseRating | null;
+  professors: Array<{ name: string; score: number | null; basis: number; verdict: string; here: { score: number; count: number } | null; teachingNow: boolean; lastTerm: string }>;
+  /** Who taught it each term up to now, newest first. */
+  offerings: Array<{ term: string; professors: string[] }>;
+}
+
+/** A professor's page: their rating and what they teach, this term first. */
+export interface ProfView {
+  name: string;
+  currentTerm: string;
+  rating: ProfRating | null;
+  courses: Array<{ code: string; title: string; score: number | null; here: { score: number; count: number } | null; teachingNow: boolean; lastTerm: string; terms: string[] }>;
+}
+
+/** What writing or removing a review changed: the course's and its professors' ratings, recounted. */
+export interface Recount {
+  course?: CourseRating | null;
+  profs?: Record<string, ProfRating | null>;
 }
 
 /** A review a student wrote here about a course they took. */
@@ -440,11 +461,15 @@ export interface CourseReview {
   authorName: string;
   authorMajor: string;
   authorYear: Standing | '';
-  rating: number;
+  /** The course's stars; null when the student rated only the professor. */
+  rating: number | null;
+  /** The professor's stars, when given. */
+  profRating: number | null;
   difficulty: number | null;
   workload: number | null;
   text: string;
   professor: string;
+  courseRated: boolean;
   term: string;
   createdAt: string;
   updatedAt: string;
@@ -553,6 +578,55 @@ async function profRatings(names: string[]): Promise<Map<string, ProfRating | nu
   return new Map(names.map((name) => [name, profMemo.get(name) ?? null]));
 }
 
+const RATED_KEY = 'room.rated';
+
+/**
+ * A course or professor page is cached at the edge for a minute or so; one this browser has just rated is asked for
+ * past that cache for a few minutes, so a reload shows the new score.
+ */
+function freshness(key: string): string {
+  try {
+    const at = (JSON.parse(localStorage.getItem(RATED_KEY) ?? '{}') as Record<string, number>)[key] ?? 0;
+    return Date.now() - at < 600_000 ? `&v=${at}` : '';
+  } catch {
+    return '';
+  }
+}
+
+const recountListeners = new Set<(code: string, result: Recount) => void>();
+
+/** Called whenever this browser writes or removes a review, wherever on the site it happened, with what it changed. */
+export function onRecount(listener: (code: string, result: Recount) => void): () => void {
+  recountListeners.add(listener);
+  return () => recountListeners.delete(listener);
+}
+
+/** Takes a recount in: the session's list scores and cached ratings, and the pages to ask for fresh. */
+function recounted(code: string, result: Recount): void {
+  recountListeners.forEach((listener) => listener(code, result));
+  memo.delete(`rating:${code}`);
+  memo.delete('my-reviews');
+  const keys = [code, ...Object.keys(result.profs ?? {}).map((name) => `prof:${name}`)];
+  try {
+    const stamps = JSON.parse(localStorage.getItem(RATED_KEY) ?? '{}') as Record<string, number>;
+    for (const key of Object.keys(stamps)) if (Date.now() - stamps[key]! > 600_000) delete stamps[key];
+    for (const key of keys) stamps[key] = Date.now();
+    localStorage.setItem(RATED_KEY, JSON.stringify(stamps));
+  } catch {
+    // Storage may be off: the page still shows the new score from the recount.
+  }
+  const scores = memo.get('scores') as Promise<ScoreIndex> | undefined;
+  void scores?.then((index) => {
+    if (result.course === null) delete index.courses[code];
+    else if (result.course) index.courses[code] = { score: result.course.score, basis: result.course.basis, difficulty: result.course.difficulty, workload: result.course.workload, verdict: result.course.verdict };
+    for (const [name, rating] of Object.entries(result.profs ?? {})) {
+      profMemo.set(name, rating);
+      if (rating) index.profs[name] = { score: rating.score, basis: rating.basis, verdict: rating.verdict };
+      else delete index.profs[name];
+    }
+  }).catch(() => undefined);
+}
+
 function post<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 }
@@ -605,8 +679,19 @@ export const api = {
     unlisting: (body: { id: string; key: string }) => post<{ ok: true }>('/api/board', { op: 'unlisting', ...body }),
     leaderboard: (_netId?: string) => request<{ helpers: LeaderboardEntry[] }>('/api/board?op=leaderboard'),
     reviews: (code: string) => request<{ reviews: CourseReview[]; open?: boolean }>(`/api/board?op=reviews&code=${encodeURIComponent(code)}`),
-    review: (body: { code: string; rating: number; difficulty: number | null; workload: number | null; text: string; term: string; professor: string; anonymous: boolean }) => post<{ review: CourseReview }>('/api/board', { op: 'review', ...body }),
-    unreview: (code: string) => post<{ ok: true }>('/api/board', { op: 'unreview', code }),
+    profReviews: (name: string) => request<{ reviews: CourseReview[] }>(`/api/board?op=prof_reviews&name=${encodeURIComponent(name)}`),
+    review: async (body: { code: string; rating: number | null; profRating: number | null; difficulty: number | null; workload: number | null; text: string; term: string; professor: string; anonymous: boolean }) => {
+      const result = await post<{ review: CourseReview } & Recount>('/api/board', { op: 'review', ...body });
+      recounted(body.code, result);
+      return result;
+    },
+    unreview: async (code: string) => {
+      const result = await post<{ ok: true } & Recount>('/api/board', { op: 'unreview', code });
+      recounted(code, result);
+      return result;
+    },
+    myReviews: () => cached('my-reviews', () => request<{ reviews: Array<{ code: string; term: string; professor: string }>; prompted: string[]; off: boolean }>('/api/board?op=my_reviews')),
+    prompted: (body: { code?: string; off?: boolean }) => post<{ ok: true }>('/api/board', { op: 'prompted', ...body }),
     contact: (type: 'offer' | 'listing', id: string) => request<{ contactKind: ContactKind; contact: string }>(`/api/board?op=contact&type=${type}&id=${encodeURIComponent(id)}`),
   },
   admin: {
@@ -634,6 +719,8 @@ export const api = {
     detail: (code: string) => request<CourseDetail>(`/api/courses?code=${encodeURIComponent(code)}`),
     rating: (code: string) => cached(`rating:${code}`, () => request<{ rating: CourseRating | null }>(`/api/courses?code=${encodeURIComponent(code)}&rating=1`)),
     scores: () => cached('scores', () => request<ScoreIndex>('/api/courses?ratings=1')),
+    view: (code: string) => request<CourseView>(`/api/courses?code=${encodeURIComponent(code)}&view=1${freshness(code)}`),
+    prof: (name: string) => request<ProfView>(`/api/courses?prof=${encodeURIComponent(name)}${freshness(`prof:${name}`)}`),
     profs: profRatings,
   },
 };

@@ -7,7 +7,7 @@ import { Sign } from '../components/Sign';
 import { useApp } from '../context';
 import { IconArrow, IconBack, IconBolt, IconCheck, IconChevronRight, IconClose, IconCopy } from '../icons';
 import { navigate, onLinkClick, useRoute } from '../router';
-import { loadPlan, savePlan, uid, type PlanMessage, type SavedPlan } from '../store';
+import { loadPlan, rememberPlanned, savePlan, uid, type PlanMessage, type SavedPlan } from '../store';
 
 type PlanWant = Want & { label: string };
 
@@ -219,6 +219,16 @@ export function PlanPage() {
   }, [result, viewing]);
   const option = result?.options[index];
   const go = (to: number) => result?.options[to] && setViewing({ key: signature(result.options[to]), index: to });
+
+  // The plan in view is remembered for its term, with its sections' professors, so once the term is over the site can
+  // ask how each course went and who taught it.
+  useEffect(() => {
+    if (!term || !rows) return;
+    const courses: Record<string, string[]> = {};
+    if (option) for (const choice of option.choices) courses[choice.code] = [...new Set(choice.sections.filter((section) => PRIMARY.includes(section.component)).flatMap((section) => section.instructors))];
+    else for (const want of saved.wants) if (want.codes.length === 1) courses[want.codes[0]!] = [];
+    rememberPlanned(term, courses);
+  }, [option, term, rows, saved.wants]);
   const why = option ? highlights(option, saved.rules, settled).join(' · ') : '';
 
   const setRules = (patch: Partial<Rules>) => update({ rules: { ...saved.rules, ...patch } });

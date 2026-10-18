@@ -6,15 +6,16 @@
 import { timingSafeEqual } from 'node:crypto';
 import { adminConfig, adminEmails, adminSession, dashboard, dataOverview, emailAdmins, requireAdmin, usageText } from '../lib/admin.ts';
 import { appUsage } from '../lib/app-usage.ts';
-import { validateNetId } from '../lib/board.ts';
+import { unpackReviewText, validateNetId, type CourseReview } from '../lib/board.ts';
 import { boardStore, type AdminTarget, type BoardStore } from '../lib/board-store.ts';
 import { loadCatalog } from '../lib/courses.ts';
+import { courseKey, profKey } from '../lib/entities.ts';
 import { geminiConfig, geminiKeyProblem } from '../lib/gemini.ts';
 import { ApiError, clientIp, clientKey, queryString, rateLimit, readJson, route, sendJson, type ApiRequest } from '../lib/http.ts';
 import { ownerOf } from '../lib/identity.ts';
 import { lastAlert, modelUsage, saveModelUsage } from '../lib/model-usage.ts';
 import { checkModels, modelKeys, providersFromEnv, warmModels } from '../lib/providers.ts';
-import { reviewsJobToken, runReviews } from '../lib/reviews.ts';
+import { refreshDigests, reviewsJobToken, runReviews } from '../lib/reviews.ts';
 import { loadOfficial } from '../lib/official.ts';
 import { ask, validateAsk } from '../lib/rag.ts';
 import { loadArchive } from '../lib/store.ts';
@@ -145,6 +146,14 @@ export default route(['GET', 'POST'], async (req, res) => {
       const banned = body.ban === true ? await posterOf(board, type, removed) : null;
       if (banned) await board.setBan(banned, true, reason);
       await board.recordAudit({ action: `remove_${type}${banned ? '_and_ban' : ''}`, target: String(body.id), snapshot: { removed, reason, by: session.jti }, ip });
+      if (type === 'review') {
+        // The removed review stops counting in its course's and professor's scores straight away.
+        const gone = removed as unknown as CourseReview;
+        const catalog = loadCatalog();
+        const course = courseKey(catalog, gone.code);
+        const professor = unpackReviewText(gone.text).professor;
+        await refreshDigests(board, catalog, [{ entity: course, name: course.slice('course:'.length) }, ...(professor ? [{ entity: profKey(professor), name: professor }] : [])]).catch(() => undefined);
+      }
       sendJson(res, 200, { ok: true, banned });
       return;
     }

@@ -466,6 +466,23 @@ describe('api', () => {
     const body = { op: 'review', code: 'MATH-UH 1012', rating: 4, difficulty: null, workload: null, text: 'Clear lectures and fair exams.', term: 'Fall 2026', professor: 'Rana Dania', anonymous: true };
     const written = await getJson(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
     expect(written.review).toMatchObject({ authorName: 'Anonymous', authorMajor: '', professor: 'Rana Dania', text: body.text, mine: true });
+    // The course's and the professor's scores take the review in at once, with its words as their summary.
+    expect(written.course).toMatchObject({ score: 3.7, basis: 1, verdict: body.text });
+    expect(written.profs['Rana Dania']).toMatchObject({ score: 3.7, basis: 1 });
+    // Rated again, with the professor rated apart from the course: each digest moves with its own stars.
+    const again = await getJson(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify({ ...body, rating: 2, profRating: 5 }) });
+    expect(again.review).toMatchObject({ rating: 2, profRating: 5, professor: 'Rana Dania', courseRated: true });
+    expect(again.course).toMatchObject({ score: 2.3, basis: 1 });
+    expect(again.profs['Rana Dania']).toMatchObject({ score: 4.3, basis: 1 });
+    const page = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012&view=1`);
+    expect(page).toMatchObject({ code: 'MATH-UH 1012', rating: { score: 2.3 }, professors: [expect.objectContaining({ name: 'Rana Dania', score: 4.3, teachingNow: true })] });
+    const prof = await getJson(`${apiUrl}/api/courses?prof=Rana%20Dania`);
+    expect(prof).toMatchObject({ name: 'Rana Dania', rating: { score: 4.3 }, courses: [expect.objectContaining({ code: 'MATH-UH 1012', teachingNow: true, score: 2.3 })] });
+    const theirs = await getJson(`${apiUrl}/api/board?op=prof_reviews&name=Rana%20Dania`);
+    expect(theirs.reviews).toEqual([expect.objectContaining({ code: 'MATH-UH 1012', profRating: 5 })]);
+    const mine = await getJson(`${apiUrl}/api/board?op=my_reviews`, { headers });
+    expect(mine).toEqual({ reviews: [{ code: 'MATH-UH 1012', term: 'Fall 2026', professor: 'Rana Dania' }], prompted: [], off: false });
+    await getJson(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
     const publicView = await getJson(`${apiUrl}/api/board?op=reviews&code=MATH-UH%201012`);
     expect(publicView.reviews[0]).toMatchObject({ authorName: 'Anonymous', professor: 'Rana Dania', text: body.text, mine: false });
     expect(JSON.stringify(publicView)).not.toContain(MEMBER.netId);
@@ -517,8 +534,8 @@ describe('api', () => {
     expect(all.courses).toEqual([expect.objectContaining({ code: 'MATH-UH 1012', title: 'Calculus', core: false })]);
     const calls = geminiCalls.length;
     for (const suffix of ['', '&rating=1']) expect((await fetch(`${apiUrl}/api/courses?code=ZZ-UH%209999${suffix}`)).status).toBe(404);
-    // A course nobody has written about has no rating yet; opening it never writes one.
-    expect(await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012&rating=1`)).toEqual({ rating: null });
+    // The course is rated only from the review written here; opening it never writes anything.
+    expect((await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012&rating=1`)).rating).toMatchObject({ basis: 1 });
     expect(geminiCalls.length).toBe(calls);
   });
 
@@ -544,8 +561,8 @@ describe('api', () => {
     expect(ratings['Rana Dania']).toMatchObject({ score: 4.2, basis: 7, verdict: 'Students like it.', likes: ['Clear lectures'], courses: [{ code: 'MATH-UH 1012', positive: 4, negative: 0, neutral: 1, score: 4.5 }] });
     expect(ratings['Nobody Here']).toBeNull();
     const scores = await getJson(`${apiUrl}/api/courses?ratings=1`);
-    expect(scores.courses['MATH-UH 1012']).toEqual({ score: 4.2, basis: 7, difficulty: 3, workload: null });
-    expect(scores.profs['Rana Dania']).toEqual({ score: 4.2, basis: 7 });
+    expect(scores.courses['MATH-UH 1012']).toEqual({ score: 4.2, basis: 7, difficulty: 3, workload: null, verdict: 'Students like it.' });
+    expect(scores.profs['Rana Dania']).toEqual({ score: 4.2, basis: 7, verdict: 'Students like it.' });
     expect(geminiCalls.length).toBe(calls);
   });
 

@@ -89,11 +89,15 @@ export interface BoardStore {
   listReviewScores(): Promise<Array<{ code: string; rating: number }>>;
   /** Every review written here, for scripts/reviews.ts. */
   listAllReviews(): Promise<CourseReview[]>;
+  /** The reviews that name this professor (lib/board.ts packs the name at the head of the text). */
+  listReviewsByProfessor(name: string): Promise<CourseReview[]>;
+  /** One student's reviews. */
+  listReviewsByAuthor(netId: string): Promise<CourseReview[]>;
 
   /** The digests of these courses and professors (entity keys); missing ones are left out. */
   getDigests(entities: string[]): Promise<Digest[]>;
   /** Every digest without what it read, for the course and professor lists. */
-  listDigestScores(): Promise<Array<Pick<Digest, 'entity' | 'kind' | 'name' | 'positive' | 'negative' | 'neutral' | 'score' | 'difficulty' | 'workload'>>>;
+  listDigestScores(): Promise<Array<Pick<Digest, 'entity' | 'kind' | 'name' | 'positive' | 'negative' | 'neutral' | 'score' | 'difficulty' | 'workload' | 'verdict'>>>;
   /** Every digest in full, for scripts/reviews.ts. */
   listDigests(): Promise<Digest[]>;
   putDigest(digest: Digest): Promise<void>;
@@ -102,6 +106,8 @@ export interface BoardStore {
   /** Saves a thread's mentions, then marks its posts and comments read: a crash in between only means reading them again. */
   saveReviewThread(threadId: string, units: string[], mentions: Mention[]): Promise<void>;
   listMentions(): Promise<Mention[]>;
+  /** The mentions of these courses and professors (entity keys). */
+  listMentionsFor(entities: string[]): Promise<Mention[]>;
 
   /** Questions that are not closed, newest first, older than `before` (an ISO time) when given: the Questions feed. */
   listFeed(limit: number, before?: string): Promise<Question[]>;
@@ -381,14 +387,20 @@ export class MemoryBoardStore implements BoardStore {
   async listAllReviews(): Promise<CourseReview[]> {
     return [...this.reviews.values()];
   }
+  async listReviewsByProfessor(name: string): Promise<CourseReview[]> {
+    return [...this.reviews.values()].filter((review) => review.text.startsWith(`Professor: ${name}\n`)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+  async listReviewsByAuthor(netId: string): Promise<CourseReview[]> {
+    return [...this.reviews.values()].filter((review) => review.netId === netId);
+  }
   private digests = new Map<string, Digest>();
   private reviewThreads = new Map<string, string[]>();
   private mentions = new Map<string, Mention>();
   async getDigests(entities: string[]): Promise<Digest[]> {
     return entities.map((entity) => this.digests.get(entity)).filter((digest): digest is Digest => Boolean(digest));
   }
-  async listDigestScores(): Promise<Array<Pick<Digest, 'entity' | 'kind' | 'name' | 'positive' | 'negative' | 'neutral' | 'score' | 'difficulty' | 'workload'>>> {
-    return [...this.digests.values()].map(({ entity, kind, name, positive, negative, neutral, score, difficulty, workload }) => ({ entity, kind, name, positive, negative, neutral, score, difficulty, workload }));
+  async listDigestScores(): Promise<Array<Pick<Digest, 'entity' | 'kind' | 'name' | 'positive' | 'negative' | 'neutral' | 'score' | 'difficulty' | 'workload' | 'verdict'>>> {
+    return [...this.digests.values()].map(({ entity, kind, name, positive, negative, neutral, score, difficulty, workload, verdict }) => ({ entity, kind, name, positive, negative, neutral, score, difficulty, workload, verdict }));
   }
   async listDigests(): Promise<Digest[]> {
     return [...this.digests.values()];
@@ -405,6 +417,9 @@ export class MemoryBoardStore implements BoardStore {
   }
   async listMentions(): Promise<Mention[]> {
     return [...this.mentions.values()];
+  }
+  async listMentionsFor(entities: string[]): Promise<Mention[]> {
+    return [...this.mentions.values()].filter((mention) => entities.includes(mention.entity));
   }
   private bans = new Map<string, Ban>();
   readonly audit: Array<{ action: string; target: string; snapshot?: unknown; ip: string; createdAt: string }> = [];
@@ -862,15 +877,22 @@ export class SupabaseBoardStore implements BoardStore {
   async listAllReviews(): Promise<CourseReview[]> {
     return (await this.selectAll('course_reviews', 'order=id.asc')).map(reviewFrom);
   }
+  async listReviewsByProfessor(name: string): Promise<CourseReview[]> {
+    // In a LIKE pattern * is the wildcard; a name holding one would only widen the match, and the caller checks the name.
+    return (await this.select('course_reviews', `text=like.${enc(`Professor: ${name}\n*`)}&order=updated_at.desc&limit=200`)).map(reviewFrom);
+  }
+  async listReviewsByAuthor(netId: string): Promise<CourseReview[]> {
+    return (await this.select('course_reviews', `net_id=eq.${enc(netId)}&limit=500`)).map(reviewFrom);
+  }
   async getDigests(entities: string[]): Promise<Digest[]> {
     if (!entities.length) return [];
     const list = entities.map((entity) => `"${entity.replace(/["\\]/g, '')}"`).join(',');
     return (await this.select('review_digests', `select=${DIGEST_COLUMNS}&entity=in.(${enc(list)})`)).map(digestFrom);
   }
-  async listDigestScores(): Promise<Array<Pick<Digest, 'entity' | 'kind' | 'name' | 'positive' | 'negative' | 'neutral' | 'score' | 'difficulty' | 'workload'>>> {
-    return (await this.selectAll('review_digests', 'select=entity,kind,name,positive,negative,neutral,score,difficulty,workload&order=entity.asc')).map((row) => {
+  async listDigestScores(): Promise<Array<Pick<Digest, 'entity' | 'kind' | 'name' | 'positive' | 'negative' | 'neutral' | 'score' | 'difficulty' | 'workload' | 'verdict'>>> {
+    return (await this.selectAll('review_digests', 'select=entity,kind,name,positive,negative,neutral,score,difficulty,workload,verdict&order=entity.asc')).map((row) => {
       const digest = digestFrom(row);
-      return { entity: digest.entity, kind: digest.kind, name: digest.name, positive: digest.positive, negative: digest.negative, neutral: digest.neutral, score: digest.score, difficulty: digest.difficulty, workload: digest.workload };
+      return { entity: digest.entity, kind: digest.kind, name: digest.name, positive: digest.positive, negative: digest.negative, neutral: digest.neutral, score: digest.score, difficulty: digest.difficulty, workload: digest.workload, verdict: digest.verdict };
     });
   }
   async listDigests(): Promise<Digest[]> {
@@ -924,19 +946,12 @@ export class SupabaseBoardStore implements BoardStore {
     await this.write('POST', 'review_threads?on_conflict=thread_id', { thread_id: threadId, units, scanned_at: new Date().toISOString() }, 'resolution=merge-duplicates,return=minimal');
   }
   async listMentions(): Promise<Mention[]> {
-    return (await this.selectAll('review_mentions', 'select=*&order=post_id.asc,entity.asc')).map((row) => ({
-      postId: String(row.post_id),
-      entity: String(row.entity),
-      threadId: String(row.thread_id),
-      url: String(row.url ?? ''),
-      date: row.date ? String(row.date).slice(0, 10) : '',
-      term: String(row.term ?? ''),
-      sentiment: row.sentiment as Mention['sentiment'],
-      pair: String(row.pair ?? ''),
-      difficulty: row.difficulty === null || row.difficulty === undefined ? null : Number(row.difficulty),
-      workload: row.workload === null || row.workload === undefined ? null : Number(row.workload),
-      takeaway: String(row.takeaway ?? ''),
-    }));
+    return (await this.selectAll('review_mentions', 'select=*&order=post_id.asc,entity.asc')).map(mentionFrom);
+  }
+  async listMentionsFor(entities: string[]): Promise<Mention[]> {
+    if (!entities.length) return [];
+    const list = entities.map((entity) => `"${entity.replace(/["\\]/g, '')}"`).join(',');
+    return (await this.selectAll('review_mentions', `select=*&entity=in.(${enc(list)})&order=post_id.asc,entity.asc`)).map(mentionFrom);
   }
 
   async listFeed(limit: number, before?: string): Promise<Question[]> {
@@ -1178,6 +1193,22 @@ function digestFrom(row: Row): Digest {
     postIds: (row.post_ids as string[] | null) ?? [],
     reviewKeys: (row.review_keys as string[] | null) ?? [],
     updatedAt: String(row.updated_at ?? ''),
+  };
+}
+
+function mentionFrom(row: Row): Mention {
+  return {
+    postId: String(row.post_id),
+    entity: String(row.entity),
+    threadId: String(row.thread_id),
+    url: String(row.url ?? ''),
+    date: row.date ? String(row.date).slice(0, 10) : '',
+    term: String(row.term ?? ''),
+    sentiment: row.sentiment as Mention['sentiment'],
+    pair: String(row.pair ?? ''),
+    difficulty: row.difficulty === null || row.difficulty === undefined ? null : Number(row.difficulty),
+    workload: row.workload === null || row.workload === undefined ? null : Number(row.workload),
+    takeaway: String(row.takeaway ?? ''),
   };
 }
 

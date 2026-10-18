@@ -835,9 +835,6 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 
 /* ---------- Courses ---------- */
 .course-controls { display: grid; gap: 12px; margin-bottom: 16px; grid-template-columns: minmax(0, 1fr); }
-.filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.chip-select { width: auto; height: 32px; padding: 0 30px 0 12px; border-radius: 7px; border-color: var(--rule); color: var(--ink-2); font: 600 13px/1 var(--text); background-position: right 9px center; }
-.chip-select.on { border-color: transparent; background-color: var(--line-soft); color: var(--line-ink); }
 .course-list .course-item { padding: 13px 16px; }
 .course-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .course-title { font-weight: 640; font-size: 15.5px; line-height: 1.3; overflow-wrap: anywhere; }
@@ -962,8 +959,6 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .rating-score.mixed { --tone: #b07a00; }
 .rating-score.poor { --tone: var(--scarlet-fill); }
 .rating-score b { font: 800 46px/0.9 var(--sign); font-stretch: 80%; font-variant-numeric: tabular-nums; }
-.rating-stops { display: flex; gap: 4px; }
-.rating-stops i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid currentColor; background: linear-gradient(90deg, currentColor var(--fill), transparent var(--fill)); }
 .rating-verdict { font-size: 16px; line-height: 1.5; font-weight: 560; text-wrap: pretty; }
 .meters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .meter { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 10px; padding: 10px 12px; border-radius: 12px; background: var(--plate-2); }
@@ -980,20 +975,10 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .point.warn { background: var(--amber-soft); }
 .point.warn::before { content: '!'; left: 15px; color: var(--amber-ink); }
 .rating-basis { color: var(--ink-3); font-size: 12.5px; }
-.rating-basis .rating-counts { font-size: inherit; }
 /* The same course with each of its professors (or a professor in each course): name, counts, score. */
-.rating-breakdown { display: grid; border-block: 1px solid var(--rule); }
-.rating-breakdown p { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; min-height: 42px; padding: 6px 2px; border-bottom: 1px solid var(--rule); font-size: 14px; }
-.rating-breakdown p:last-child { border-bottom: 0; }
-.rating-breakdown span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rating-counts { color: var(--ink-3); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .rating-none { margin-bottom: 22px; padding: 14px 16px; border-radius: 12px; background: var(--plate-2); color: var(--ink-2); font-size: 14.5px; line-height: 1.5; }
-.rating-evidence { display: grid; gap: 8px; }
-.rating-evidence > summary { color: var(--line-ink); font-size: 13px; font-weight: 640; cursor: pointer; }
-.rating-evidence a { display: block; padding: 8px 10px; border-radius: 10px; background: var(--plate-2); color: var(--ink-2); font-size: 12.5px; line-height: 1.45; }
-.rating-evidence a b { color: var(--ink); font-weight: 650; }
 .detail-section { display: grid; gap: 10px; margin-bottom: 26px; }
-.detail-section h3, .reviews-head h3, .detail-section.about > summary { color: var(--ink); font: 720 14.5px/1.3 var(--sign); }
+.detail-section h3, .detail-section.about > summary { color: var(--ink); font: 720 14.5px/1.3 var(--sign); }
 .detail-section.about > summary { cursor: pointer; }
 .detail-section.about p { color: var(--ink-2); font-size: 14px; line-height: 1.6; white-space: pre-line; }
 .teacher-list { display: grid; border-block: 1px solid var(--rule); }
@@ -1014,34 +999,19 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .course-sub { overflow: hidden; color: var(--ink-3); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
 .course-sub::first-letter { text-transform: uppercase; }
 .course-scores { display: flex; flex: none; align-items: center; gap: 10px; }
-.own-score { display: inline-flex; align-items: center; gap: 4px; color: var(--amber-ink); font: 750 13px/1 var(--sign); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.own-score svg { color: var(--amber); }
-.own-score small { color: var(--ink-3); font-weight: 600; }
 .pane-empty-mark { width: 56px; height: 56px; border-radius: 50%; border: 8px solid var(--line); box-sizing: border-box; box-shadow: 0 0 0 10px var(--line-soft); }
 .pane-empty p { max-width: 34ch; color: var(--ink-3); font-size: 14px; line-height: 1.5; }
 .pane-empty h2 { color: var(--ink); font: 720 17px/1.3 var(--sign); }
-.reviews-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
 .review-card { display: grid; gap: 8px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 14px; background: var(--plate); }
 .review-card.mine { border-color: color-mix(in srgb, var(--line) 50%, var(--rule)); }
 .review-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .review-stars { display: inline-flex; margin-right: 4px; }
-.review-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 18px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 14px; background: var(--plate-2); }
-.review-average { display: grid; justify-items: center; gap: 5px; padding-right: 18px; border-right: 1px solid var(--rule); }
-.review-average b { font: 820 34px/0.9 var(--sign); font-stretch: 80%; font-variant-numeric: tabular-nums; }
-.review-average > span:last-child { color: var(--ink-3); font-size: 12px; }
-.review-spread { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
-.review-spread li { display: grid; grid-template-columns: 12px minmax(0, 1fr) 22px; align-items: center; gap: 8px; color: var(--ink-3); font: 650 11.5px/1 var(--sign); font-variant-numeric: tabular-nums; }
-.spread-bar { height: 6px; overflow: hidden; border-radius: 3px; background: var(--plate-3); }
-.spread-bar i { display: block; height: 100%; border-radius: 3px; background: var(--amber); }
-.spread-n { text-align: right; }
 .review-text { font-size: 14.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .review-by { color: var(--ink-3); font-size: 12.5px; }
 .review-by .link-btn { font-size: 12.5px; }
 .link-btn.danger { color: var(--scarlet-ink); }
-.review-prompt { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 12px 16px; border: 1px dashed var(--rule-2); border-radius: 14px; color: var(--ink-2); font-size: 14px; font-weight: 600; }
 .review-nudge { position: fixed; z-index: 110; right: 22px; bottom: 22px; display: grid; gap: 8px; width: min(360px, calc(100vw - 32px)); padding: 20px; border: 1px solid var(--rule-2); border-radius: 18px; background: var(--plate); box-shadow: var(--shadow-2); color: var(--ink); animation: rise-in 0.3s var(--ease); }
 .review-nudge > .icon-btn { position: absolute; top: 10px; right: 10px; }
-.review-nudge-star { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--amber-soft); color: var(--amber-ink); }
 .review-nudge b { max-width: calc(100% - 25px); font: 740 17px/1.35 var(--sign); }
 .review-nudge p { color: var(--ink-2); font-size: 13.5px; line-height: 1.45; }
 .review-nudge-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 4px; }
@@ -1049,19 +1019,34 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .star-pick { display: flex; gap: 2px; }
 .star-pick button { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--ink-3); transition: color 0.12s, transform 0.12s var(--ease); }
 .star-pick button.on, .star-pick:hover button { color: var(--amber); }
+.star-pick button.on path { fill: currentColor; }
 .star-pick:hover button path { fill: currentColor; }
 .star-pick button:hover ~ button { color: var(--ink-3); }
 .star-pick button:hover ~ button path { fill: color-mix(in srgb, currentColor 22%, transparent); }
 .star-pick button:active { transform: scale(0.88); }
-.review-form { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--rule); border-radius: 14px; background: var(--plate-2); animation: rise-in 0.3s var(--ease); }
 .review-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; color: var(--ink-2); font-size: 13.5px; font-weight: 620; }
 .review-row select.input { width: auto; min-width: 150px; height: 38px; }
 .scale-pick { display: flex; align-items: center; gap: 4px; }
 .scale-pick button { width: 34px; height: 34px; border: 1px solid var(--rule); border-radius: 8px; background: var(--plate); color: var(--ink-2); font: 700 13px/1 var(--sign); transition: background 0.15s, color 0.15s, border-color 0.15s; }
 .scale-pick button.on { border-color: transparent; background: var(--line-fill); color: var(--line-on); }
 .scale-pick small { min-width: 72px; margin-left: 6px; color: var(--ink-3); font-size: 12px; font-weight: 560; }
-.review-form textarea.input { min-height: 84px; resize: vertical; }
 .review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* One search over courses and professors: each result carries its score and the verdict in one line. */
+.results-label { margin: 0 2px 8px; color: var(--ink-3); font: 650 12.5px/1.2 var(--sign); letter-spacing: 0.02em; }
+.result-verdict { overflow: hidden; color: var(--ink-2); font-size: 13.5px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.result-verdict.none { color: var(--ink-3); }
+.course-list .course-main { grid-template-columns: minmax(0, 1fr); }
+.course-list .course-top { flex-wrap: nowrap; min-width: 0; }
+.course-top .course-sub { min-width: 0; flex: 1; }
+.prof-tag { background: var(--green-soft); color: var(--green-ink); }
+.teacher-main { display: grid; gap: 3px; min-width: 0; }
+.teacher-main > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.teacher-main .code { margin-right: 4px; }
+.teacher-list .teacher-main small { color: var(--ink-3); font-size: 12.5px; }
+.rate-first { display: grid; gap: 8px; }
+.rate-form { display: grid; gap: 14px; }
+.rate-stars { display: grid; justify-items: center; gap: 6px; padding: 6px 0 10px; border-bottom: 1px solid var(--rule); color: var(--ink); font: 700 16px/1.35 var(--sign); text-align: center; }
+.review-nudge .star-pick { margin-left: -6px; }
 @media (max-width: 640px) {
   .meters { grid-template-columns: minmax(0, 1fr); }
   .course-list .course-item { align-items: flex-start; }

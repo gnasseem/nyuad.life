@@ -8,12 +8,14 @@
  *   GET /api/courses?all=1                          every course once, for the course list
  *   GET /api/courses?code=CS-UH%201001              one course: title, credits, description
  *   GET /api/courses?code=CS-UH%201001&rating=1     its rating, from its digest
+ *   GET /api/courses?code=CS-UH%201001&view=1       its page: the course, its rating, its professors and their scores
+ *   GET /api/courses?prof=Thomas%20P%C3%B6tsch       a professor's page: their rating and the courses they teach
  *   GET /api/courses?profs=Thomas%20P%C3%B6tsch|... ratings of up to 24 professors
- *   GET /api/courses?ratings=1                     every score, and students' own review averages, for the lists
+ *   GET /api/courses?ratings=1                     every score and one-line verdict, for the search
  */
-import type { Digest } from '../lib/board.ts';
+import { courseRating, level, profRating, type Digest } from '../lib/board.ts';
 import { boardStore } from '../lib/board-store.ts';
-import { allCourses, courseHistory, courseRows, loadCatalog, type Catalog } from '../lib/courses.ts';
+import { allCourses, courseHistory, courseRows, currentCode, displayName, loadCatalog, termOrder, type Catalog } from '../lib/courses.ts';
 import { courseKey, profKey } from '../lib/entities.ts';
 import { ApiError, queryString, rateLimit, route, sendJson } from '../lib/http.ts';
 import { normalizeCode } from '../lib/html.ts';
@@ -36,6 +38,11 @@ export default route(['GET'], async (req, res) => {
     sendJson(res, 200, await profRatings(profs), 300);
     return;
   }
+  const prof = collapseWhitespace(queryString(req, 'prof'));
+  if (prof) {
+    sendJson(res, 200, await profView(catalog, prof), 60);
+    return;
+  }
   if (queryString(req, 'ratings')) {
     sendJson(res, 200, await scoreIndex(), 120);
     return;
@@ -46,7 +53,11 @@ export default route(['GET'], async (req, res) => {
     if (!catalog.byCode.has(normalized) && !bulletinEntry(official, normalized)) throw new ApiError(404, 'No course with that code.', 'not_found');
     if (queryString(req, 'rating')) {
       const [digest] = (await boardStore()?.getDigests([courseKey(catalog, normalized)]).catch(() => [])) ?? [];
-      sendJson(res, 200, { rating: digest ? courseRating(digest) : await oldCourse(courseKey(catalog, normalized).slice('course:'.length)) }, 300);
+      sendJson(res, 200, { rating: courseRating(digest) ?? await oldCourse(courseKey(catalog, normalized).slice('course:'.length)) }, 300);
+      return;
+    }
+    if (queryString(req, 'view')) {
+      sendJson(res, 200, await courseView(official, catalog, normalized), 60);
       return;
     }
     sendJson(res, 200, courseDetail(official, catalog, normalized), 600);
@@ -104,51 +115,87 @@ function courseDetail(official: OfficialCorpus | null, catalog: Catalog, code: s
   };
 }
 
+/* ---------- The course and professor pages ---------- */
+
+const PRIMARY = (component: string) => component !== 'Recitation' && component !== 'Laboratory';
+
+/** Who taught a course each term up to now, newest first: what a student rating it picks from. */
+function taughtBy(catalog: Catalog, code: string): Array<{ term: string; professors: string[] }> {
+  const now = termOrder(catalog.current);
+  return (courseHistory(catalog, code)?.offerings ?? [])
+    .filter((offering) => termOrder(offering.term) <= now)
+    .map((offering) => ({ term: offering.term, professors: [...new Set(offering.sections.filter((section) => section.status !== 'cancelled' && PRIMARY(section.component)).flatMap((section) => section.instructors))] }))
+    .filter((offering) => offering.professors.length > 0);
+}
+
+async function courseView(official: OfficialCorpus | null, catalog: Catalog, code: string) {
+  const detail = courseDetail(official, catalog, code);
+  const offerings = taughtBy(catalog, code);
+  const names = [...new Set([...detail.instructors, ...offerings.flatMap((offering) => offering.professors)])];
+  const key = courseKey(catalog, code);
+  const digests = new Map(((await boardStore()?.getDigests([key, ...names.map(profKey)]).catch(() => [])) ?? []).map((digest) => [digest.entity, digest]));
+  const rating = courseRating(digests.get(key)) ?? await oldCourse(key.slice('course:'.length));
+  const withThem = new Map((rating?.professors ?? []).map((part) => [profKey(part.name), part]));
+  const lastTerm = (name: string) => offerings.find((offering) => offering.professors.includes(name))?.term ?? '';
+  const professors = [...new Set([...names, ...(rating?.professors ?? []).map((part) => part.name)])].map((name) => {
+    const own = profRating(digests.get(profKey(name)));
+    const here = withThem.get(profKey(name));
+    return { name, score: own?.score ?? null, basis: own?.basis ?? 0, verdict: own?.verdict ?? '', here: here ? { score: here.score, count: here.positive + here.negative + here.neutral } : null, teachingNow: detail.instructors.includes(name), lastTerm: lastTerm(name) };
+  });
+  // Teaching this term first, then the most talked about with this course, then the most recent.
+  professors.sort((a, b) => Number(b.teachingNow) - Number(a.teachingNow) || (b.here?.count ?? 0) - (a.here?.count ?? 0) || termOrder(b.lastTerm) - termOrder(a.lastTerm) || a.name.localeCompare(b.name));
+  return { ...detail, rating, professors: professors.slice(0, 16), offerings: offerings.slice(0, 12) };
+}
+
+const profIndexes = new WeakMap<Catalog, Map<string, { name: string; courses: Map<string, { title: string; terms: string[] }> }>>();
+
+/** Everyone who taught a lecture or seminar, by profKey, with what they taught and when (newest first). */
+function profIndex(catalog: Catalog) {
+  let index = profIndexes.get(catalog);
+  if (index) return index;
+  index = new Map();
+  for (const [code, offerings] of catalog.byCode) {
+    const current = currentCode(catalog, code);
+    for (const offering of offerings) {
+      for (const section of offering.sections) {
+        if (!PRIMARY(section.component) || section.status.toLowerCase() === 'cancelled') continue;
+        for (const raw of section.instructors) {
+          const name = displayName(raw);
+          const entry = index.get(profKey(name)) ?? index.set(profKey(name), { name, courses: new Map() }).get(profKey(name))!;
+          const course = entry.courses.get(current) ?? entry.courses.set(current, { title: offering.title, terms: [] }).get(current)!;
+          if (!course.terms.includes(offering.term)) course.terms.push(offering.term);
+        }
+      }
+    }
+  }
+  for (const entry of index.values()) for (const course of entry.courses.values()) course.terms.sort((a, b) => termOrder(b) - termOrder(a));
+  profIndexes.set(catalog, index);
+  return index;
+}
+
+async function profView(catalog: Catalog, asked: string) {
+  const key = profKey(asked);
+  const entry = profIndex(catalog).get(key);
+  const [digest] = (await boardStore()?.getDigests([key]).catch(() => [])) ?? [];
+  if (!entry && !digest) throw new ApiError(404, 'No professor by that name.', 'not_found');
+  const name = entry?.name ?? digest!.name;
+  const rating = profRating(digest) ?? await oldProf(name);
+  const now = termOrder(catalog.current);
+  const withThem = new Map((rating?.courses ?? []).map((part) => [part.code, part]));
+  const codes = [...new Set([...(entry?.courses.keys() ?? []), ...withThem.keys()])];
+  const courseDigests = new Map(((await boardStore()?.getDigests(codes.map((code) => courseKey(catalog, code))).catch(() => [])) ?? []).map((found) => [found.entity, found]));
+  const courses = codes.map((code) => {
+    const taught = entry?.courses.get(code);
+    const here = withThem.get(code);
+    const own = courseRating(courseDigests.get(courseKey(catalog, code)));
+    const terms = (taught?.terms ?? []).filter((term) => termOrder(term) <= now);
+    return { code, title: taught?.title ?? catalog.byCode.get(code)?.[0]?.title ?? '', score: own?.score ?? null, here: here ? { score: here.score, count: here.positive + here.negative + here.neutral } : null, teachingNow: Boolean(taught?.terms.includes(catalog.current)), lastTerm: terms[0] ?? taught?.terms[0] ?? '', terms: terms.slice(0, 8) };
+  });
+  courses.sort((a, b) => Number(b.teachingNow) - Number(a.teachingNow) || termOrder(b.lastTerm) - termOrder(a.lastTerm) || (b.here?.count ?? 0) - (a.here?.count ?? 0) || a.code.localeCompare(b.code, undefined, { numeric: true }));
+  return { name, currentTerm: catalog.current, rating, courses: courses.slice(0, 24) };
+}
+
 /* ---------- Ratings, from the digests ---------- */
-
-/** How sure a digest can be: several recent ratings agreeing is high, a few is medium, one or two is low. */
-function confidenceOf(digest: Digest): 'high' | 'medium' | 'low' {
-  const total = digest.positive + digest.negative + digest.neutral;
-  if (total >= 6 && digest.recent >= 2) return 'high';
-  return total >= 3 ? 'medium' : 'low';
-}
-
-const level = (value: number | null) => (value === null ? null : Math.min(5, Math.max(1, Math.round(value))));
-
-function courseRating(digest: Digest) {
-  return {
-    score: digest.score,
-    difficulty: level(digest.difficulty),
-    workload: level(digest.workload),
-    verdict: digest.verdict,
-    pros: digest.likes,
-    cons: digest.warnings,
-    tips: [] as string[],
-    basis: digest.positive + digest.negative + digest.neutral,
-    confidence: confidenceOf(digest),
-    counts: { positive: digest.positive, negative: digest.negative, neutral: digest.neutral },
-    professors: digest.breakdown.map(({ name, positive, negative, neutral, score }) => ({ name, positive, negative, neutral, score })),
-    from: digest.firstDate,
-    to: digest.lastDate,
-    sources: digest.sources,
-  };
-}
-
-function profRating(digest: Digest) {
-  return {
-    score: digest.score,
-    basis: digest.positive + digest.negative + digest.neutral,
-    verdict: digest.verdict,
-    confidence: confidenceOf(digest),
-    likes: digest.likes,
-    warnings: digest.warnings,
-    counts: { positive: digest.positive, negative: digest.negative, neutral: digest.neutral },
-    courses: digest.breakdown.map(({ name, positive, negative, neutral, score }) => ({ code: name, positive, negative, neutral, score })),
-    from: digest.firstDate,
-    to: digest.lastDate,
-    sources: digest.sources,
-  };
-}
 
 const MAX_PROFS = 24;
 
@@ -159,7 +206,7 @@ async function profRatings(param: string) {
   const ratings: Record<string, ReturnType<typeof profRating> | null> = {};
   for (const name of names) {
     const digest = digests.get(profKey(name));
-    ratings[name] = digest ? profRating(digest) : await oldProf(name);
+    ratings[name] = profRating(digest) ?? await oldProf(name);
   }
   return { ratings, pending: [] as string[] };
 }
@@ -167,35 +214,28 @@ async function profRatings(param: string) {
 /* ---------- Every score at once, for the lists ---------- */
 
 interface ScoreIndex {
-  courses: Record<string, { score: number; basis: number; difficulty: number | null; workload: number | null }>;
-  profs: Record<string, { score: number; basis: number }>;
-  students: Record<string, { n: number; avg: number }>;
+  courses: Record<string, { score: number; basis: number; difficulty: number | null; workload: number | null; verdict: string }>;
+  profs: Record<string, { score: number; basis: number; verdict: string }>;
 }
 
 let scoreCache: { at: number; index: ScoreIndex } | null = null;
 const SCORE_TTL_MS = 60_000;
+/** The verdict as one line on a search result. */
+const oneLine = (verdict: unknown) => truncate(collapseWhitespace(String(verdict ?? '')), 150);
 
-/** Every digest's score, and students' review averages, cached a minute. */
+/** Every digest's score and verdict, cached a minute. Digests count the reviews written here, as they are written. */
 async function scoreIndex(): Promise<ScoreIndex> {
   if (scoreCache && Date.now() - scoreCache.at < SCORE_TTL_MS) return scoreCache.index;
   const store = boardStore();
-  const index: ScoreIndex = { courses: {}, profs: {}, students: {} };
+  const index: ScoreIndex = { courses: {}, profs: {} };
   if (!store) return index;
-  const [digests, reviews] = await Promise.all([store.listDigestScores().catch(() => []), store.listReviewScores().catch(() => [])]);
-  for (const digest of digests) {
+  for (const digest of await store.listDigestScores().catch(() => [])) {
     const basis = digest.positive + digest.negative + digest.neutral;
-    if (digest.kind === 'course') index.courses[digest.entity.slice('course:'.length)] = { score: digest.score, basis, difficulty: level(digest.difficulty), workload: level(digest.workload) };
-    else index.profs[digest.name] = { score: digest.score, basis };
+    if (!basis) continue;
+    if (digest.kind === 'course') index.courses[digest.entity.slice('course:'.length)] = { score: digest.score, basis, difficulty: level(digest.difficulty), workload: level(digest.workload), verdict: oneLine(digest.verdict) };
+    else index.profs[digest.name] = { score: digest.score, basis, verdict: oneLine(digest.verdict) };
   }
   await addOldScores(index);
-  const sums = new Map<string, { n: number; total: number }>();
-  for (const review of reviews) {
-    const entry = sums.get(review.code) ?? { n: 0, total: 0 };
-    entry.n++;
-    entry.total += review.rating;
-    sums.set(review.code, entry);
-  }
-  for (const [code, entry] of sums) index.students[code] = { n: entry.n, avg: Math.round((entry.total / entry.n) * 10) / 10 };
   scoreCache = { at: Date.now(), index };
   return index;
 }
@@ -227,12 +267,12 @@ async function oldRating(key: string): Promise<OldRating | null> {
 
 const none = { positive: 0, negative: 0, neutral: 0 };
 
-async function oldCourse(code: string): Promise<ReturnType<typeof courseRating> | null> {
+async function oldCourse(code: string): Promise<ReturnType<typeof courseRating>> {
   const old = await oldRating(`${OLD_COURSE}${code}`);
   return old && { score: old.score, difficulty: old.difficulty ?? null, workload: old.workload ?? null, verdict: old.verdict, pros: old.pros ?? [], cons: old.cons ?? [], tips: [], basis: old.basis, confidence: old.confidence, counts: none, professors: [], from: '', to: '', sources: old.sources };
 }
 
-async function oldProf(name: string): Promise<ReturnType<typeof profRating> | null> {
+async function oldProf(name: string): Promise<ReturnType<typeof profRating>> {
   const old = await oldRating(`${OLD_PROF}${profKey(name).slice('prof:'.length)}`);
   return old && { score: old.score, basis: old.basis, verdict: old.verdict, confidence: old.confidence, likes: [], warnings: [], counts: none, courses: [], from: '', to: '', sources: old.sources };
 }
@@ -240,17 +280,17 @@ async function oldProf(name: string): Promise<ReturnType<typeof profRating> | nu
 async function addOldScores(index: ScoreIndex): Promise<void> {
   const store = boardStore();
   if (!store) return;
-  const [courses, profs] = await Promise.all([store.listSummaryFields(OLD_COURSE, ['score', 'basis', 'difficulty', 'workload', 'none']).catch(() => []), store.listSummaryFields(OLD_PROF, ['score', 'basis', 'none']).catch(() => [])]);
+  const [courses, profs] = await Promise.all([store.listSummaryFields(OLD_COURSE, ['score', 'basis', 'difficulty', 'workload', 'verdict', 'none']).catch(() => []), store.listSummaryFields(OLD_PROF, ['score', 'basis', 'verdict', 'none']).catch(() => [])]);
   const named = new Set(Object.keys(index.profs).map((name) => profKey(name)));
   for (const row of courses) {
     const code = row.key.slice(OLD_COURSE.length);
     if (row.fields.none || typeof row.fields.score !== 'number' || index.courses[code]) continue;
-    index.courses[code] = { score: row.fields.score, basis: Number(row.fields.basis) || 0, difficulty: level(row.fields.difficulty as number | null), workload: level(row.fields.workload as number | null) };
+    index.courses[code] = { score: row.fields.score, basis: Number(row.fields.basis) || 0, difficulty: level(row.fields.difficulty as number | null), workload: level(row.fields.workload as number | null), verdict: oneLine(row.fields.verdict) };
   }
   for (const row of profs) {
     if (row.fields.none || typeof row.fields.score !== 'number' || named.has(`prof:${row.key.slice(OLD_PROF.length)}`)) continue;
     // The old keys hold the folded name; the lists look professors up by the name the schedule gives them.
     const name = loadCatalog().instructors.get(row.key.slice(OLD_PROF.length));
-    if (name) index.profs[name] = { score: row.fields.score, basis: Number(row.fields.basis) || 0 };
+    if (name) index.profs[name] = { score: row.fields.score, basis: Number(row.fields.basis) || 0, verdict: oneLine(row.fields.verdict) };
   }
 }

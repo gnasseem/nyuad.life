@@ -255,15 +255,84 @@ export interface Digest {
   updatedAt: string;
 }
 
-/** Kept in the existing review text column so older reviews and deployments remain readable. */
-export function unpackReviewText(value: string): { professor: string; text: string } {
-  const match = /^Professor: ([^\n]{1,100})\n\n/.exec(value);
-  return match ? { professor: match[1]!, text: value.slice(match[0].length) } : { professor: '', text: value };
+/**
+ * What a review says besides the course's stars, kept at the head of the existing text column so older reviews and
+ * deployments remain readable: the professor it was taken with, the stars that professor gets, and whether the course
+ * itself was rated (a student rating only the professor leaves it unrated, and the rating column then holds the
+ * professor's stars).
+ */
+export interface ReviewExtras {
+  professor: string;
+  profRating: number | null;
+  courseRated: boolean;
+  text: string;
+}
+
+export function unpackReviewText(value: string): ReviewExtras {
+  const head = /^((?:(?:Professor|Professor rating|Course rating): [^\n]{1,100}\n)+)\n/.exec(value);
+  if (!head) return { professor: '', profRating: null, courseRated: true, text: value };
+  const field = (name: string) => new RegExp(`^${name}: ([^\\n]+)$`, 'm').exec(head[1]!)?.[1] ?? '';
+  const stars = Number(field('Professor rating'));
+  return { professor: field('Professor'), profRating: Number.isInteger(stars) && stars >= 1 && stars <= 5 ? stars : null, courseRated: field('Course rating') !== 'none', text: value.slice(head[0].length) };
+}
+
+export function packReviewText(extras: ReviewExtras): string {
+  const head = [extras.professor ? `Professor: ${extras.professor}` : '', extras.professor && extras.profRating ? `Professor rating: ${extras.profRating}` : '', extras.courseRated ? '' : 'Course rating: none'].filter(Boolean);
+  return head.length ? `${head.join('\n')}\n\n${extras.text}` : extras.text;
+}
+
+/* ---------- Digests as the pages show them ---------- */
+
+/** How sure a digest can be: several recent ratings agreeing is high, a few is medium, one or two is low. */
+function confidenceOf(digest: Digest): 'high' | 'medium' | 'low' {
+  const total = digest.positive + digest.negative + digest.neutral;
+  if (total >= 6 && digest.recent >= 2) return 'high';
+  return total >= 3 ? 'medium' : 'low';
+}
+
+export const level = (value: number | null) => (value === null ? null : Math.min(5, Math.max(1, Math.round(value))));
+
+/** A course's digest as the course page shows it; a digest left with no ratings (its reviews removed) is none. */
+export function courseRating(digest: Digest | undefined) {
+  if (!digest || digest.positive + digest.negative + digest.neutral === 0) return null;
+  return {
+    score: digest.score,
+    difficulty: level(digest.difficulty),
+    workload: level(digest.workload),
+    verdict: digest.verdict,
+    pros: digest.likes,
+    cons: digest.warnings,
+    tips: [] as string[],
+    basis: digest.positive + digest.negative + digest.neutral,
+    confidence: confidenceOf(digest),
+    counts: { positive: digest.positive, negative: digest.negative, neutral: digest.neutral },
+    professors: digest.breakdown.map(({ name, positive, negative, neutral, score }) => ({ name, positive, negative, neutral, score })),
+    from: digest.firstDate,
+    to: digest.lastDate,
+    sources: digest.sources,
+  };
+}
+
+export function profRating(digest: Digest | undefined) {
+  if (!digest || digest.positive + digest.negative + digest.neutral === 0) return null;
+  return {
+    score: digest.score,
+    basis: digest.positive + digest.negative + digest.neutral,
+    verdict: digest.verdict,
+    confidence: confidenceOf(digest),
+    likes: digest.likes,
+    warnings: digest.warnings,
+    counts: { positive: digest.positive, negative: digest.negative, neutral: digest.neutral },
+    courses: digest.breakdown.map(({ name, positive, negative, neutral, score }) => ({ code: name, positive, negative, neutral, score })),
+    from: digest.firstDate,
+    to: digest.lastDate,
+    sources: digest.sources,
+  };
 }
 
 const REVIEW_MAX = 600;
 
-export function validateReview(body: Record<string, unknown>): Pick<CourseReview, 'rating' | 'difficulty' | 'workload' | 'text' | 'term'> {
+export function validateReview(body: Record<string, unknown>): Pick<CourseReview, 'difficulty' | 'workload' | 'text' | 'term'> & { rating: number | null; profRating: number | null } {
   const scale = (value: unknown, label: string, required: boolean): number | null => {
     if ((value === null || value === undefined || value === '') && !required) return null;
     const n = Number(value);
@@ -275,7 +344,7 @@ export function validateReview(body: Record<string, unknown>): Pick<CourseReview
   if (text) meaningful(text, 'review');
   const term = collapseWhitespace(String(body.term ?? '')).slice(0, 24);
   if (term && !/^(?:Fall|Spring|Summer|January) \d{4}$/.test(term)) throw new ApiError(400, 'Choose the term you took it.', 'bad_term');
-  return { rating: scale(body.rating, 'rating', true)!, difficulty: scale(body.difficulty, 'difficulty', false), workload: scale(body.workload, 'workload', false), text, term };
+  return { rating: scale(body.rating, 'rating', false), profRating: scale(body.profRating, 'professor rating', false), difficulty: scale(body.difficulty, 'difficulty', false), workload: scale(body.workload, 'workload', false), text, term };
 }
 
 export function validateKey(value: unknown): string {

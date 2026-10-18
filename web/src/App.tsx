@@ -5,6 +5,7 @@ import { HistoryPanel } from './components/HistoryPanel';
 import { Feedback } from './components/Feedback';
 import { Wordmark } from './components/Logo';
 import { ProfileModal } from './components/ProfileForm';
+import { RatePrompt } from './components/Rate';
 import { AppContext, type Prefill, type ProfileRequest } from './context';
 import { initials } from './format';
 import { IconAsk, IconBag, IconBook, IconCalendar, IconMegaphone, IconQuestions, IconShield, IconUser } from './icons';
@@ -247,9 +248,9 @@ export function App() {
       case 'market':
         return <MarketPage tab={route.tab} />;
       case 'courses':
-        return <CoursesPage view="courses" code={route.code} />;
+        return <CoursesPage code={route.code} />;
       case 'professors':
-        return <CoursesPage view="professors" professor={route.nameQuery} />;
+        return <CoursesPage professor={route.nameQuery} />;
       case 'threads':
         return <ThreadSearch />;
       case 'plan':
@@ -332,6 +333,7 @@ export function App() {
           {toastState.message}
         </div>
       )}
+      {profile && !gate && <RatePrompt />}
       <ProfileModal open={profileAsk !== null && !gate} title={profileAsk?.title ?? ''} reason={profileAsk?.reason ?? ''} onClose={() => finishProfile(false)} onDone={() => finishProfile(true)} />
       {gate && !authLoading && (
         <Suspense fallback={null}>

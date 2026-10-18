@@ -1,80 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { api, type CourseDetail, type CourseEntry, type CourseRating, type CourseReview, type ProfRating, type RatingCounts, type ScoreIndex } from '../api';
+import { api, onRecount, type CourseEntry, type CourseReview, type CourseView, type ProfView, type ScoreIndex } from '../api';
 import { AdminRemove } from '../components/AdminRemove';
-import { Segmented } from '../components/Segmented';
+import { HARDNESS, RateSheet, SCALE, StarPick, type RateTarget } from '../components/Rate';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
 import { plural, relativeDate } from '../format';
 import { IconClose, IconSearch, IconStar } from '../icons';
 import { useLatest, useMedia, usePresence } from '../motion';
 import { navigate, useRoute } from '../router';
-
-type View = 'courses' | 'professors';
-type Sort = 'match' | 'top' | 'reviewed' | 'code';
+import { loadPlanned } from '../store';
 
 const WIDE = '(min-width: 1240px)';
-const PAGE_ROWS = 60;
-const VIEWS: Array<{ id: View; label: string }> = [
-  { id: 'courses', label: 'Courses' },
-  { id: 'professors', label: 'Professors' },
-];
-const SORTS: Array<{ id: Sort; label: string }> = [
-  { id: 'match', label: 'Best match' },
-  { id: 'top', label: 'Top rated' },
-  { id: 'reviewed', label: 'Most reviewed' },
-  { id: 'code', label: 'By code' },
-];
-const SCALE = ['', 'Very light', 'Light', 'Moderate', 'Heavy', 'Very heavy'];
-const HARDNESS = ['', 'Easy', 'Manageable', 'Moderate', 'Hard', 'Very hard'];
+const PAGE_ROWS = 40;
 
-/** Every score written so far, loaded once a session and shared by both lists. */
-function useScores(): ScoreIndex | null {
-  const [scores, setScores] = useState<ScoreIndex | null>(null);
-  useEffect(() => {
-    api.courses
-      .scores()
-      .then(setScores)
-      .catch(() => setScores({ courses: {}, profs: {}, students: {} }));
-  }, []);
-  return scores;
-}
-
-/** Courses and professors as students rate them: from the group's threads, and from reviews written here. */
-export function CoursesPage({ view, code, professor }: { view: View; code?: string; professor?: string }) {
-  const scores = useScores();
-  return (
-    <div className="page reviews-page">
-      <Sign title="Reviews" ar="التقييمات" sub="Every course and professor in Albert, rated from what students said in the Room of Requirement and in reviews here.">
-        <Segmented label="Reviews" value={view} onChange={(next) => navigate(next === 'professors' ? { name: 'professors' } : { name: 'courses' }, { replace: true })} options={VIEWS} />
-      </Sign>
-      {view === 'professors' ? <ProfessorSearch name={professor} scores={scores} /> : <CourseSearch code={code} scores={scores} />}
-    </div>
-  );
-}
-
-interface Filters {
-  q: string;
-  subject: string;
-  core: boolean;
-  rated: boolean;
-  sort: Sort;
-}
-
-function readFilters(search: URLSearchParams): Filters {
-  const sort = search.get('sort') as Sort | null;
-  return { q: search.get('q') ?? '', subject: search.get('subject') ?? '', core: search.get('core') === '1', rated: search.get('rated') === '1', sort: sort && SORTS.some((entry) => entry.id === sort) ? sort : 'match' };
-}
-
-function writeFilters(filters: Filters): string {
-  const search = new URLSearchParams();
-  if (filters.q) search.set('q', filters.q);
-  if (filters.subject) search.set('subject', filters.subject);
-  if (filters.core) search.set('core', '1');
-  if (filters.rated) search.set('rated', '1');
-  if (filters.sort !== 'match') search.set('sort', filters.sort);
-  return search.toString();
-}
+/* ---------- One search over courses and professors ---------- */
 
 function fold(text: string): string {
   return text
@@ -83,167 +23,198 @@ function fold(text: string): string {
     .replace(/[̀-ͯ]/g, '');
 }
 
-interface Indexed {
-  course: CourseEntry;
-  code: string;
+const squash = (text: string) => fold(text).replace(/[^a-z0-9]/g, '');
+
+/** What students call courses besides their titles. */
+function nicknames(title: string): string {
+  return [/multivariable calculus/i.test(title) ? 'mvc multivar' : '', /^calculus/i.test(title) ? 'calc' : '', /economics/i.test(title) ? 'econ' : '', /linear algebra/i.test(title) ? 'linalg lin alg' : '', /introduction to computer science/i.test(title) ? 'ics intro cs' : '', /data structures/i.test(title) ? 'ds' : ''].join(' ');
+}
+
+interface Entry {
+  kind: 'course' | 'prof';
+  /** The course code or the professor's name: what the page is opened by. */
+  id: string;
   title: string;
-  people: string;
-  aliases: string;
+  /** Course codes a professor taught, or who taught a course lately. */
+  related: string[];
+  /** An Abu Dhabi course, or a professor who taught one: what students here mean first. */
+  local: boolean;
+  search: { code: string; words: string; aliases: string; related: string };
 }
 
-/** What a course is rated, all told: the AI score and students' own reviews, weighted by how many each rests on. */
-function blended(scores: ScoreIndex | null, code: string): { score: number; n: number } | null {
-  const ai = scores?.courses[code];
-  const own = scores?.students[code];
-  if (!ai && !own) return null;
-  const aiWeight = ai ? Math.max(1, Math.min(ai.basis, 6)) : 0;
-  const ownWeight = own?.n ?? 0;
-  return { score: ((ai?.score ?? 0) * aiWeight + (own?.avg ?? 0) * ownWeight) / (aiWeight + ownWeight), n: (ai?.basis ?? 0) + ownWeight };
+interface Hit {
+  entry: Entry;
+  rank: number;
 }
 
-/** Courses that pass the filters, in the chosen order; best match first when there is a query. */
-function filterCourses(rows: Indexed[], filters: Filters, scores: ScoreIndex | null): CourseEntry[] {
-  const tokens = fold(filters.q).split(/\s+/).filter(Boolean);
-  const scored: Array<{ course: CourseEntry; score: number }> = [];
-  for (const entry of rows) {
-    if (filters.subject && entry.course.subject !== filters.subject) continue;
-    if (filters.core && !entry.course.core) continue;
-    if (filters.rated && !blended(scores, entry.course.code)) continue;
-    let score = 0;
+/** Every course and every professor once, ready to search. */
+function useEntries(courses: CourseEntry[] | null, scores: ScoreIndex | null): Entry[] {
+  return useMemo(() => {
+    const out: Entry[] = [];
+    const taught = new Map<string, string[]>();
+    for (const course of courses ?? []) {
+      out.push({ kind: 'course', id: course.code, title: course.title, local: course.code.includes('-UH '), related: course.currentPeople.length ? course.currentPeople : course.people.slice(0, 3), search: { code: squash(course.code), words: ` ${fold(course.title)}`, aliases: fold(nicknames(course.title)), related: fold(course.people.join(' ')) } });
+      for (const person of course.people) taught.set(person, [...(taught.get(person) ?? []), course.code]);
+    }
+    for (const name of Object.keys(scores?.profs ?? {})) if (!taught.has(name)) taught.set(name, []);
+    for (const [name, codes] of taught) out.push({ kind: 'prof', id: name, title: name, local: !codes.length || codes.some((code) => code.includes('-UH ')), related: [...codes].sort((a, b) => Number(b.includes('-UH ')) - Number(a.includes('-UH '))), search: { code: '', words: ` ${fold(name)}`, aliases: '', related: squash(codes.join(' ')) } });
+    return out;
+  }, [courses, scores]);
+}
+
+function scoreOf(entry: Entry, scores: ScoreIndex | null): { score: number; basis: number; verdict: string } | undefined {
+  return entry.kind === 'course' ? scores?.courses[entry.id] : scores?.profs[entry.id];
+}
+
+/**
+ * Courses and professors ranked together: every word must match somewhere; a code, a nickname or the start of a name
+ * counts most, Abu Dhabi courses and their professors come before other campuses', and between equal matches the more
+ * rated comes first. With no words, the most rated of both.
+ */
+function rank(entries: Entry[], query: string, scores: ScoreIndex | null): Hit[] {
+  const tokens = fold(query).split(/\s+/).filter(Boolean);
+  const whole = squash(query);
+  const hits: Hit[] = [];
+  for (const entry of entries) {
+    const rated = scoreOf(entry, scores);
+    if (!tokens.length) {
+      if (rated) hits.push({ entry, rank: rated.basis });
+      continue;
+    }
+    let total = 0;
     let missed = false;
     for (const token of tokens) {
-      const squashed = token.replace(/[^a-z0-9]/g, '');
-      const hit = (squashed && entry.code.includes(squashed) ? 8 : 0) + (entry.title.includes(token) ? 4 : 0) + (entry.people.includes(token) ? 2 : 0) + (entry.aliases.includes(token) ? 3 : 0);
+      const bare = token.replace(/[^a-z0-9]/g, '');
+      const hit = Math.max(
+        bare && entry.search.code.includes(bare) ? 8 : 0,
+        entry.search.words.includes(` ${token}`) ? (entry.kind === 'prof' ? 7 : 5) : entry.search.words.includes(token) ? 3 : 0,
+        entry.search.aliases.split(' ').includes(token) ? 6 : 0,
+        bare.length > 2 && entry.search.related.includes(bare.length > 3 ? bare : ` ${bare}`) ? 1 : 0,
+        entry.kind === 'course' && entry.search.related.includes(token) ? 1 : 0,
+      );
       if (!hit) {
         missed = true;
         break;
       }
-      score += hit;
+      total += hit;
     }
-    if (!missed) scored.push({ course: entry.course, score });
+    if (missed) continue;
+    if (entry.search.code && entry.search.code === whole) total += 30;
+    if (squash(entry.title) === whole) total += entry.kind === 'prof' ? 30 : 10;
+    else if (entry.search.words.startsWith(` ${tokens.join(' ')}`)) total += 3;
+    if (entry.local) total += 6;
+    hits.push({ entry, rank: total + Math.min(0.9, Math.log2(1 + (rated?.basis ?? 0)) * 0.25) });
   }
-  const byCode = (a: { course: CourseEntry }, b: { course: CourseEntry }) => a.course.code.localeCompare(b.course.code, undefined, { numeric: true });
-  const rating = (code: string) => blended(scores, code);
-  if (filters.sort === 'top') scored.sort((a, b) => (rating(b.course.code)?.score ?? 0) - (rating(a.course.code)?.score ?? 0) || (rating(b.course.code)?.n ?? 0) - (rating(a.course.code)?.n ?? 0) || byCode(a, b));
-  else if (filters.sort === 'reviewed') scored.sort((a, b) => (rating(b.course.code)?.n ?? 0) - (rating(a.course.code)?.n ?? 0) || byCode(a, b));
-  else if (filters.sort === 'code' || !tokens.length) scored.sort(byCode);
-  else scored.sort((a, b) => b.score - a.score || byCode(a, b));
-  return scored.map((entry) => entry.course);
+  return hits.sort((a, b) => b.rank - a.rank || a.entry.id.localeCompare(b.entry.id, undefined, { numeric: true }));
 }
 
-function tone(score: number): string {
-  return score >= 4 ? 'good' : score >= 3 ? 'mixed' : 'poor';
-}
+type Open = { kind: 'course'; id: string } | { kind: 'prof'; id: string };
 
-function CourseSearch({ code, scores }: { code?: string; scores: ScoreIndex | null }) {
+/** Courses and professors as students rate them, in the Room of Requirement and in ratings written here. */
+export function CoursesPage({ code, professor }: { code?: string; professor?: string }) {
   const { search } = useRoute();
   const wide = useMedia(WIDE);
-  const filters = readFilters(search);
+  const query = search.get('q') ?? '';
   const [courses, setCourses] = useState<CourseEntry[] | null>(null);
+  const [scores, setScores] = useState<ScoreIndex | null>(null);
   const [error, setError] = useState('');
   const [limit, setLimit] = useState(PAGE_ROWS);
+  const [, setTick] = useState(0);
 
   useEffect(() => {
-    api.courses
-      .all()
-      .then((result) => setCourses(result.courses))
-      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load the courses.'));
+    api.courses.all().then((result) => setCourses(result.courses)).catch((err) => setError(err instanceof Error ? err.message : 'Could not load the courses.'));
+    api.courses.scores().then(setScores).catch(() => setScores({ courses: {}, profs: {} }));
   }, []);
+  // A rating written anywhere lands in the shared score list a moment later: show it.
+  useEffect(() => onRecount(() => window.setTimeout(() => setTick((tick) => tick + 1), 0)), []);
 
-  const set = (patch: Partial<Filters>) => {
+  const entries = useEntries(courses, scores);
+  const hits = useMemo(() => rank(entries, query, scores), [entries, query, scores]); // eslint-disable-line react-hooks/exhaustive-deps
+  const open: Open | null = code ? { kind: 'course', id: code } : professor ? { kind: 'prof', id: professor } : null;
+  const listSearch = query ? `q=${encodeURIComponent(query)}` : '';
+
+  const setQuery = (next: string) => {
     setLimit(PAGE_ROWS);
-    navigate(code ? { name: 'courses', code } : { name: 'courses' }, { replace: true, keepScroll: true, search: writeFilters({ ...filters, ...patch }) });
+    navigate(code ? { name: 'courses', code } : professor ? { name: 'professors', nameQuery: professor } : { name: 'courses' }, { replace: true, keepScroll: true, search: next ? `q=${encodeURIComponent(next)}` : '' });
   };
-
-  const indexed = useMemo(() => (courses ?? []).map((course) => ({
-    course,
-    code: fold(course.code).replace(/[^a-z0-9]/g, ''),
-    title: fold(course.title),
-    people: fold(course.people.join(' ')),
-    aliases: fold([/multivariable calculus/i.test(course.title) ? 'mvc multivar calc' : '', /economics/i.test(course.title) ? 'econ' : '', /linear algebra/i.test(course.title) ? 'linalg lin alg' : '', /introduction to computer science/i.test(course.title) ? 'ics intro cs' : ''].join(' ')),
-  })), [courses]);
-  const subjects = useMemo(() => [...new Set((courses ?? []).map((course) => course.subject))].sort(), [courses]);
-  const shown = useMemo(() => filterCourses(indexed, filters, scores), [indexed, filters.q, filters.subject, filters.core, filters.rated, filters.sort, scores]); // eslint-disable-line react-hooks/exhaustive-deps
-  const rated = useMemo(() => (courses ?? []).filter((course) => blended(scores, course.code)).length, [courses, scores]);
-  const listSearch = writeFilters(filters);
-
-  const open = (next: string) => navigate({ name: 'courses', code: next }, { search: listSearch, keepScroll: true, state: { fromList: true } });
+  const show = (next: Open) => navigate(next.kind === 'course' ? { name: 'courses', code: next.id } : { name: 'professors', nameQuery: next.id }, { search: listSearch, keepScroll: true, state: { fromList: true } });
   const close = useCallback(() => {
     if ((window.history.state as { fromList?: boolean } | null)?.fromList) window.history.back();
     else navigate({ name: 'courses' }, { replace: true, keepScroll: true, search: listSearch });
   }, [listSearch]);
 
   return (
-    <div className="md">
-      <div>
-        <div className="course-controls">
-          <div className="search-field big">
-            <IconSearch />
-            <input className="input" type="search" value={filters.q} onChange={(event) => set({ q: event.target.value })} placeholder="Course code, title or professor" aria-label="Search courses" enterKeyHint="search" />
+    <div className="page reviews-page">
+      <Sign title="Reviews" ar="التقييمات" sub="Every course and professor at NYUAD, rated by students: from the Room of Requirement and from ratings here." />
+      <div className="md">
+        <div>
+          <div className="course-controls">
+            <div className="search-field big">
+              <IconSearch />
+              <input className="input" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Course, code, nickname or professor" aria-label="Search courses and professors" enterKeyHint="search" />
+            </div>
           </div>
-          <div className="filter-row">
-            <select className={`input chip-select${filters.sort !== 'match' ? ' on' : ''}`} value={filters.sort} onChange={(event) => set({ sort: event.target.value as Sort })} aria-label="Order">
-              {SORTS.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.label}
-                </option>
-              ))}
-            </select>
-            <select className={`input chip-select${filters.subject ? ' on' : ''}`} value={filters.subject} onChange={(event) => set({ subject: event.target.value })} aria-label="Subject" disabled={!courses}>
-              <option value="">All subjects</option>
-              {subjects.map((subject) => (
-                <option key={subject} value={subject}>
-                  {subject}
-                </option>
-              ))}
-            </select>
-            <button type="button" className={`chip${filters.rated ? ' on' : ''}`} aria-pressed={filters.rated} onClick={() => set({ rated: !filters.rated })}>
-              Rated{rated ? <span className="n">{rated}</span> : null}
-            </button>
-            <button type="button" className={`chip${filters.core ? ' on' : ''}`} aria-pressed={filters.core} onClick={() => set({ core: !filters.core })}>
-              Core
-            </button>
-            {(filters.q || filters.subject || filters.core || filters.rated || filters.sort !== 'match') && (
-              <button type="button" className="chip" onClick={() => set({ q: '', subject: '', core: false, rated: false, sort: 'match' })}>
-                Clear
+          {error && <div className="alert error">{error}</div>}
+          {!courses && !error && (
+            <div className="stack" aria-busy="true">
+              <div className="skeleton" style={{ height: 72 }} />
+              <div className="skeleton" style={{ height: 72 }} />
+              <div className="skeleton" style={{ height: 72 }} />
+            </div>
+          )}
+          {courses && hits.length === 0 && <div className="empty">{query ? 'Nothing matches. Try a code like CS-UH 1001, or fewer words.' : 'No ratings yet.'}</div>}
+          {hits.length > 0 && (
+            <>
+              {!query && <p className="results-label">Most rated</p>}
+              <div className="list course-list">
+                {hits.slice(0, limit).map(({ entry }) => (
+                  <ResultRow key={`${entry.kind}:${entry.id}`} entry={entry} rated={scoreOf(entry, scores)} selected={open?.kind === entry.kind && open.id === entry.id} onOpen={() => show({ kind: entry.kind, id: entry.id })} />
+                ))}
+              </div>
+            </>
+          )}
+          {hits.length > limit && (
+            <div className="load-more">
+              <button type="button" className="btn" onClick={() => setLimit((current) => current + PAGE_ROWS * 2)}>
+                Show more
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
-        {error && <div className="alert error">{error}</div>}
-        {!courses && !error && (
-          <div className="stack" aria-busy="true">
-            <div className="skeleton" style={{ height: 64 }} />
-            <div className="skeleton" style={{ height: 64 }} />
-            <div className="skeleton" style={{ height: 64 }} />
-          </div>
-        )}
-        {courses && courses.length === 0 && <div className="empty">The course list has not been loaded on this server yet.</div>}
-        {courses && courses.length > 0 && shown.length === 0 && <div className="empty">No course matches. Try fewer words.</div>}
-        {shown.length > 0 && (
-          <div className="list course-list">
-            {shown.slice(0, limit).map((course) => (
-              <CourseItem key={course.code} course={course} scores={scores} selected={course.code === code} onOpen={open} />
-            ))}
-          </div>
-        )}
-        {shown.length > limit && (
-          <div className="load-more">
-            <button type="button" className="btn" onClick={() => setLimit((current) => current + PAGE_ROWS * 2)}>
-              Show more
-            </button>
-          </div>
-        )}
+        <DetailSlot open={open} wide={wide} onClose={close} />
       </div>
-      <DetailSlot code={code} wide={wide} onClose={close}>
-        <div className="pane-empty">
-          <span className="pane-empty-mark" aria-hidden="true" />
-          <h2>Pick a course</h2>
-          <p>See how students rate it, who teaches it this term, and what people who took it wrote here.</p>
-        </div>
-      </DetailSlot>
     </div>
   );
+}
+
+function ResultRow({ entry, rated, selected, onOpen }: { entry: Entry; rated?: { score: number; basis: number; verdict: string }; selected: boolean; onOpen(): void }) {
+  const href = entry.kind === 'course' ? `/courses/${encodeURIComponent(entry.id)}` : `/professors/${encodeURIComponent(entry.id)}`;
+  const related = entry.related.slice(0, 3).join(', ');
+  return (
+    <a
+      href={href}
+      className={`row course-item${selected ? ' on' : ''}`}
+      onClick={(event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+        event.preventDefault();
+        onOpen();
+      }}
+    >
+      <span className="course-main">
+        <span className="course-top">
+          {entry.kind === 'course' ? <span className="code">{entry.id}</span> : <span className="tag prof-tag">Professor</span>}
+          {related && <span className="course-sub">{entry.kind === 'course' ? related : `Teaches ${related}`}</span>}
+        </span>
+        <span className="course-title">{entry.title}</span>
+        <span className={`result-verdict${rated?.verdict ? '' : ' none'}`}>{rated?.verdict || 'No ratings yet'}</span>
+      </span>
+      <span className="course-scores">{rated && <ScoreBadge score={rated.score} label={`Rated ${rated.score.toFixed(1)} from ${plural(rated.basis, 'rating')}`} />}</span>
+    </a>
+  );
+}
+
+function tone(score: number): string {
+  return score >= 4 ? 'good' : score >= 3 ? 'mixed' : 'poor';
 }
 
 /** A score as a station roundel: the ring takes the colour of how good it is. */
@@ -266,59 +237,28 @@ function StarRow({ value, size = 14 }: { value: number; size?: number }) {
   );
 }
 
-function CourseItem({ course, scores, selected, onOpen }: { course: CourseEntry; scores: ScoreIndex | null; selected: boolean; onOpen(code: string): void }) {
-  const ai = scores?.courses[course.code];
-  const own = scores?.students[course.code];
-  // A rating already written is free to read: start fetching it as the pointer arrives, so the pane opens filled in.
-  const warm = () => {
-    if (ai) void api.courses.rating(course.code).catch(() => null);
-  };
-  return (
-    <a
-      href={`/courses/${encodeURIComponent(course.code)}`}
-      className={`row course-item${selected ? ' on' : ''}`}
-      onPointerEnter={warm}
-      onFocus={warm}
-      onClick={(event) => {
-        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
-        event.preventDefault();
-        onOpen(course.code);
-      }}
-    >
-      <span className="course-main">
-        <span className="course-top">
-          <span className="code">{course.code}</span>
-          {course.core && <span className="tag">Core</span>}
-        </span>
-        <span className="course-title">{course.title}</span>
-        {(ai?.difficulty || ai?.workload || course.currentPeople.length > 0) && (
-          <span className="course-sub">
-            {[ai?.difficulty ? HARDNESS[ai.difficulty] : '', ai?.workload ? `${SCALE[ai.workload]!.toLowerCase()} work` : '', course.currentPeople.join(', ')].filter(Boolean).join(' · ')}
-          </span>
-        )}
-      </span>
-      <span className="course-scores">
-        {own && (
-          <span className="own-score" title={`${own.avg.toFixed(1)} from ${plural(own.n, 'review')} here`}>
-            <IconStar width={13} height={13} /> {own.avg.toFixed(1)} <small>({own.n})</small>
-          </span>
-        )}
-        {ai && <ScoreBadge score={ai.score} label={`Rated ${ai.score.toFixed(1)} from ${plural(ai.basis, 'student')} in the group`} />}
-      </span>
-    </a>
-  );
-}
+/* ---------- The page beside the list, or over it on a phone ---------- */
 
-/** On wide screens the course sits in a pane beside the list; on narrow ones it opens as a sheet over it. */
-function DetailSlot({ code, wide, onClose, children }: { code?: string; wide: boolean; onClose(): void; children: ReactNode }) {
-  const panel = usePresence(Boolean(code) && !wide, 220);
-  const shown = useLatest(code);
+function DetailSlot({ open, wide, onClose }: { open: Open | null; wide: boolean; onClose(): void }) {
+  const panel = usePresence(Boolean(open) && !wide, 220);
+  const shown = useLatest(open ?? undefined);
+  const page = (which: Open) => (which.kind === 'course' ? <CourseDetail key={`c:${which.id}`} code={which.id} onClose={onClose} /> : <ProfDetail key={`p:${which.id}`} name={which.id} onClose={onClose} />);
   if (wide) {
-    return <aside className="md-pane">{code ? <Detail key={code} code={code} onClose={onClose} /> : children}</aside>;
+    return (
+      <aside className="md-pane">
+        {open ? page(open) : (
+          <div className="pane-empty">
+            <span className="pane-empty-mark" aria-hidden="true" />
+            <h2>Pick a course or a professor</h2>
+            <p>See how students rate it, who teaches it, and what people who took it said.</p>
+          </div>
+        )}
+      </aside>
+    );
   }
   return panel.mounted && shown ? (
-    <Sheet label={shown} closing={panel.closing} onClose={onClose}>
-      <Detail key={shown} code={shown} onClose={onClose} />
+    <Sheet label={shown.id} closing={panel.closing} onClose={onClose}>
+      {page(shown)}
     </Sheet>
   ) : null;
 }
@@ -334,7 +274,8 @@ function Sheet({ label, closing, onClose, children }: { label: string; closing: 
     const { overflow } = document.body.style;
     document.body.style.overflow = 'hidden';
     ref.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus();
-    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
+    // A rating sheet open over this one takes Escape for itself.
+    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && !document.querySelector('.modal-scrim') && onClose();
     document.addEventListener('keydown', onKey);
     return () => {
       app?.removeAttribute('inert');
@@ -354,128 +295,270 @@ function Sheet({ label, closing, onClose, children }: { label: string; closing: 
   );
 }
 
-function Detail({ code, onClose }: { code: string; onClose(): void }) {
-  const { setAskPrefill } = useApp();
-  const [detail, setDetail] = useState<CourseDetail | null>(null);
-  const [rating, setRating] = useState<{ value: CourseRating | null; done: boolean; failed: boolean }>({ value: null, done: false, failed: false });
-  const [teachers, setTeachers] = useState<Map<string, ProfRating | null>>(new Map());
-  const [teacherPending, setTeacherPending] = useState(false);
+function PaneHead({ crumbs, title, onClose }: { crumbs: ReactNode; title: ReactNode; onClose(): void }) {
+  return (
+    <div className="pane-head">
+      <div className="grow">
+        <div className="crumbs">{crumbs}</div>
+        <h2>{title}</h2>
+      </div>
+      <button type="button" className="icon-btn" onClick={onClose} aria-label="Close" data-autofocus>
+        <IconClose />
+      </button>
+    </div>
+  );
+}
+
+const loadingTitle = <span className="skeleton" style={{ display: 'block', height: 26, width: '70%' }} />;
+
+/** Reviews written here, kept fresh when this browser rates something. */
+function useReviews(load: () => Promise<{ reviews: CourseReview[] }>, key: string, matches: (code: string) => boolean) {
+  const [reviews, setReviews] = useState<CourseReview[] | null>(null);
+  const [version, setVersion] = useState(0);
+  useEffect(() => onRecount((code) => matches(code) && setVersion((value) => value + 1)), [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let live = true;
+    load().then((result) => live && setReviews(result.reviews)).catch(() => live && setReviews([]));
+    return () => {
+      live = false;
+    };
+  }, [key, version]); // eslint-disable-line react-hooks/exhaustive-deps
+  return reviews;
+}
+
+function CourseDetail({ code, onClose }: { code: string; onClose(): void }) {
+  const { setAskPrefill, toast } = useApp();
+  const [view, setView] = useState<CourseView | null>(null);
   const [error, setError] = useState('');
+  const [rating, setRating] = useState<RateTarget | null>(null);
+  const reviews = useReviews(() => api.board.reviews(code), code, (changed) => changed === code);
 
   useEffect(() => {
     let live = true;
-    api.courses
-      .detail(code)
-      .then((result) => live && setDetail(result))
-      .catch((err) => live && setError(err instanceof Error ? err.message : 'Could not load this course.'));
-    api.courses
-      .rating(code)
-      .then((result) => live && setRating({ value: result.rating, done: true, failed: false }))
-      .catch(() => live && setRating({ value: null, done: true, failed: true }));
+    api.courses.view(code).then((result) => live && setView(result)).catch((err) => live && setError(err instanceof Error ? err.message : 'Could not load this course.'));
     return () => {
       live = false;
     };
   }, [code]);
+  // A rating written here moves the score at once, from the recount the server sends back.
+  useEffect(() => onRecount((changed, result) => {
+    if (changed !== code || result.course === undefined) return;
+    setView((current) => current && {
+      ...current,
+      rating: result.course ?? null,
+      professors: current.professors.map((entry) => {
+        const recounted = result.profs?.[entry.name];
+        const part = result.course?.professors.find((item) => item.name === entry.name);
+        return {
+          ...entry,
+          ...(recounted === undefined ? {} : { score: recounted?.score ?? null, basis: recounted?.basis ?? 0 }),
+          here: part ? { score: part.score, count: part.positive + part.negative + part.neutral } : null,
+        };
+      }),
+    });
+  }), [code]);
 
-  useEffect(() => {
-    if (!detail?.instructors.length) return;
-    let live = true;
-    setTeacherPending(true);
-    api.courses
-      .profs(detail.instructors)
-      .then((ratings) => live && setTeachers(ratings))
-      .catch(() => undefined)
-      .finally(() => live && setTeacherPending(false));
-    return () => {
-      live = false;
-    };
-  }, [detail]);
-
+  const mine = reviews?.find((review) => review.mine);
+  const remove = async () => {
+    try {
+      await api.board.unreview(code);
+      toast('Rating removed');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not remove it.');
+    }
+  };
   const ask = () => {
-    if (!detail) return;
-    setAskPrefill({ question: `What do students say about ${detail.code} ${detail.title}?`, autoSend: true });
+    if (!view) return;
+    setAskPrefill({ question: `What do students say about ${view.code} ${view.title}?`, autoSend: true });
     navigate({ name: 'ask' });
   };
 
   return (
     <>
-      <div className="pane-head">
-        <div className="grow">
-          <div className="crumbs">
-            <span className="code">{code}</span>
-            {detail?.core && <span className="tag">Core</span>}
-            {detail?.credits && <span className="tag">{detail.credits} credits</span>}
-          </div>
-          <h2>{detail?.title ?? (error ? code : <span className="skeleton" style={{ display: 'block', height: 26, width: '70%' }} />)}</h2>
-        </div>
-        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close" data-autofocus>
-          <IconClose />
-        </button>
-      </div>
+      <PaneHead onClose={onClose} title={view?.title ?? (error ? code : loadingTitle)} crumbs={<>
+        <span className="code">{code}</span>
+        {view?.core && <span className="tag">Core</span>}
+        {view?.credits && <span className="tag">{view.credits} credits</span>}
+      </>} />
       <div className="pane-body">
-        {detail && (
-          <div className="detail-actions">
-            <button type="button" className="btn sm primary" onClick={() => navigate({ name: 'plan' }, { search: `add=${encodeURIComponent(detail.code)}` })}>
-              Add to a plan
-            </button>
-            <button type="button" className="btn sm" onClick={ask}>
-              Ask about it
-            </button>
-            <a className="btn sm ghost" href="#write-review" onClick={(event) => { event.preventDefault(); document.getElementById('write-review')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
-              Write a review
-            </a>
-          </div>
-        )}
-        <StudentReviews code={code} title={detail?.title ?? code} professors={detail?.professors ?? []} />
-        {error ? (
-          <div className="alert error">{error}</div>
-        ) : !rating.done ? (
-          <RatingLoading />
-        ) : rating.value ? (
-          <Rating rating={rating.value} />
-        ) : (
-          <p className="rating-none">{rating.failed ? 'The group rating is unavailable right now.' : 'No group rating is ready yet. Search the original threads or add your experience above.'} <a href={`/threads?q=${encodeURIComponent(`${code} ${detail?.title ?? ''}`)}`}>Search threads</a></p>
-        )}
-        {detail && (
-          <section className="detail-section" aria-label={`Professors this ${detail.currentTerm}`}>
-            <h3>Teaching this {detail.currentTerm}</h3>
-            {detail.instructors.length ? (
-              <div className="teacher-list">
-                {detail.instructors.map((name) => {
-                  const score = teachers.get(name);
-                  return (
-                    <a
-                      key={name}
-                      href={`/professors/${encodeURIComponent(name)}`}
-                      onClick={(event) => {
+        {error && <div className="alert error">{error}</div>}
+        {!view && !error && <SummaryLoading />}
+        {view && (
+          <>
+            <Summary
+              rating={view.rating && { score: view.rating.score, basis: view.rating.basis, verdict: view.rating.verdict, likes: view.rating.pros, warnings: view.rating.cons, difficulty: view.rating.difficulty, workload: view.rating.workload }}
+              empty="Nobody has rated this course yet."
+              onRate={(stars) => setRating({ code, stars })}
+              mine={Boolean(mine)}
+            />
+            <div className="detail-actions">
+              <button type="button" className="btn sm primary" onClick={() => setRating({ code })}>
+                {mine ? 'Change your rating' : 'Rate this course'}
+              </button>
+              <button type="button" className="btn sm" onClick={() => navigate({ name: 'plan' }, { search: `add=${encodeURIComponent(view.code)}` })}>
+                Add to a plan
+              </button>
+              <button type="button" className="btn sm ghost" onClick={ask}>
+                Ask about it
+              </button>
+            </div>
+            {view.professors.length > 0 && (
+              <section className="detail-section" aria-label="Professors">
+                <h3>Professors</h3>
+                <div className="teacher-list">
+                  {view.professors.map((entry) => {
+                    const score = entry.here?.score ?? entry.score;
+                    return (
+                      <a key={entry.name} href={`/professors/${encodeURIComponent(entry.name)}`} onClick={(event) => {
                         event.preventDefault();
-                        navigate({ name: 'professors', nameQuery: name });
-                      }}
-                    >
-                      <span>{name}</span>
-                      {score ? <ScoreBadge score={score.score} label={`${score.score.toFixed(1)} out of 5`} /> : <small>{teacherPending && !teachers.has(name) ? 'Reading…' : 'No rating yet'}</small>}
-                    </a>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="muted">Albert does not list this course in {detail.currentTerm}.</p>
+                        navigate({ name: 'professors', nameQuery: entry.name }, { search: window.location.search.slice(1), keepScroll: true, state: { fromList: true } });
+                      }}>
+                        <span className="teacher-main">
+                          <span>{entry.name}</span>
+                          <small>
+                            {[entry.teachingNow ? `Teaching ${view.currentTerm}` : entry.lastTerm ? `Last taught ${entry.lastTerm}` : '', entry.here ? `${entry.here.score.toFixed(1)} in this course from ${plural(entry.here.count, 'rating')}` : entry.score !== null ? `${entry.score.toFixed(1)} overall` : 'Not rated yet'].filter(Boolean).join(' · ')}
+                          </small>
+                        </span>
+                        {score !== null && <ScoreBadge score={score} label={`${score.toFixed(1)} out of 5`} />}
+                      </a>
+                    );
+                  })}
+                </div>
+              </section>
             )}
-          </section>
+          </>
         )}
-        {detail?.description && (
+        <ReviewList reviews={reviews} title="Ratings from students here" show="professor" onEdit={() => setRating({ code })} onRemove={() => void remove()} />
+        {view?.description && (
           <details className="detail-section about">
             <summary>About the course</summary>
-            <p>{detail.description}</p>
+            <p>{view.description}</p>
           </details>
         )}
       </div>
+      <RateSheet target={rating} onClose={() => setRating(null)} />
     </>
   );
 }
 
-/** A rating: the score, the verdict, how hard and how heavy, and what students liked and warned about. */
-function Rating({ rating }: { rating: CourseRating }) {
+function ProfDetail({ name, onClose }: { name: string; onClose(): void }) {
+  const { setAskPrefill } = useApp();
+  const [view, setView] = useState<ProfView | null>(null);
+  const [error, setError] = useState('');
+  const [rating, setRating] = useState<RateTarget | null>(null);
+  // Any rating this browser writes may name them, whichever course it is for: their list is read again.
+  const reviews = useReviews(() => api.board.profReviews(name), name, () => true);
+
+  useEffect(() => {
+    let live = true;
+    api.courses.prof(name).then((result) => live && setView(result)).catch((err) => live && setError(err instanceof Error ? err.message : 'Could not load this professor.'));
+    return () => {
+      live = false;
+    };
+  }, [name]);
+  useEffect(() => onRecount((code, result) => {
+    const recounted = result.profs?.[view?.name ?? name];
+    setView((current) => current && {
+      ...current,
+      rating: recounted === undefined ? current.rating : recounted,
+      courses: current.courses.map((course) => (course.code === code && result.course !== undefined ? { ...course, score: result.course?.score ?? null } : course)),
+    });
+  }), [name, view?.name]);
+
+  // Rating them goes through a course they taught up to now, this term's first.
+  const rateable = (view?.courses ?? []).filter((course) => course.terms.length > 0);
+  const rate = (stars?: number) => {
+    if (!rateable.length) return;
+    // The course the student planned with them, if they did; else the one they taught most recently.
+    const planned = Object.values(loadPlanned()).flatMap((courses) => Object.entries(courses)).find(([code, profs]) => profs.includes(view!.name) && rateable.some((course) => course.code === code))?.[0];
+    setRating({ code: planned ?? rateable[0]!.code, stars, prof: { name: view!.name, courses: rateable } });
+  };
+  const ask = () => {
+    setAskPrefill({ question: `What do students say about Professor ${view?.name ?? name}?`, autoSend: true });
+    navigate({ name: 'ask' });
+  };
+  const now = view?.courses.filter((course) => course.teachingNow) ?? [];
+  const before = view?.courses.filter((course) => !course.teachingNow) ?? [];
+
+  return (
+    <>
+      <PaneHead onClose={onClose} title={view?.name ?? name} crumbs={<span className="tag prof-tag">Professor</span>} />
+      <div className="pane-body">
+        {error && <div className="alert error">{error}</div>}
+        {!view && !error && <SummaryLoading />}
+        {view && (
+          <>
+            <Summary
+              rating={view.rating && { score: view.rating.score, basis: view.rating.basis, verdict: view.rating.verdict, likes: view.rating.likes, warnings: view.rating.warnings, difficulty: null, workload: null }}
+              empty={`Nobody has rated ${view.name} yet.`}
+              onRate={rateable.length ? (stars) => rate(stars) : undefined}
+              mine={Boolean(reviews?.some((review) => review.mine))}
+            />
+            <div className="detail-actions">
+              {rateable.length > 0 && (
+                <button type="button" className="btn sm primary" onClick={() => rate()}>
+                  Rate {view.name.split(' ')[0]}
+                </button>
+              )}
+              <button type="button" className="btn sm ghost" onClick={ask}>
+                Ask about them
+              </button>
+            </div>
+            {[{ label: `Teaching ${view.currentTerm}`, list: now }, { label: now.length ? 'Taught before' : 'Teaches', list: before }].filter((group) => group.list.length).map((group) => (
+              <section key={group.label} className="detail-section" aria-label={group.label}>
+                <h3>{group.label}</h3>
+                <div className="teacher-list">
+                  {group.list.map((course) => {
+                    const score = course.here?.score ?? course.score;
+                    return (
+                      <a key={course.code} href={`/courses/${encodeURIComponent(course.code)}`} onClick={(event) => {
+                        event.preventDefault();
+                        navigate({ name: 'courses', code: course.code }, { search: window.location.search.slice(1), keepScroll: true, state: { fromList: true } });
+                      }}>
+                        <span className="teacher-main">
+                          <span><b className="code">{course.code}</b> {course.title}</span>
+                          <small>
+                            {[course.teachingNow ? '' : course.lastTerm ? `Last taught ${course.lastTerm}` : '', course.here ? `${course.here.score.toFixed(1)} with ${view.name.split(' ')[0]} from ${plural(course.here.count, 'rating')}` : course.score !== null ? `${course.score.toFixed(1)} overall` : 'Not rated yet'].filter(Boolean).join(' · ')}
+                          </small>
+                        </span>
+                        {score !== null && <ScoreBadge score={score} label={`${score.toFixed(1)} out of 5`} />}
+                      </a>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+          </>
+        )}
+        <ReviewList reviews={reviews} title="Ratings from students here" show="course" profName={view?.name ?? name} onEdit={(code) => rateable.length && setRating({ code, prof: { name: view!.name, courses: rateable } })} onRemove={undefined} />
+      </div>
+      <RateSheet target={rating} onClose={() => setRating(null)} />
+    </>
+  );
+}
+
+/* ---------- The digest, and the ratings written here ---------- */
+
+interface Summed {
+  score: number;
+  basis: number;
+  verdict: string;
+  likes: string[];
+  warnings: string[];
+  difficulty: number | null;
+  workload: number | null;
+}
+
+/** The score, the verdict, how hard and how heavy, and what students liked and warned about. */
+function Summary({ rating, empty, onRate, mine }: { rating: Summed | null; empty: string; onRate?(stars: number): void; mine: boolean }) {
+  if (!rating) {
+    return (
+      <div className="rating-none rate-first">
+        <p>{empty}{onRate ? ' Took it? Be the first:' : ''}</p>
+        {onRate && <StarPick value={null} onChange={onRate} size={26} />}
+      </div>
+    );
+  }
   return (
     <div className="rating">
       <div className="rating-head">
@@ -485,6 +568,7 @@ function Rating({ rating }: { rating: CourseRating }) {
         </div>
         <div className="rating-copy">
           {rating.verdict && <p className="rating-verdict">{rating.verdict}</p>}
+          <p className="rating-basis">From {plural(rating.basis, 'student rating')}{mine ? ', yours among them' : ''}.</p>
         </div>
       </div>
       {(rating.difficulty || rating.workload) && (
@@ -493,70 +577,21 @@ function Rating({ rating }: { rating: CourseRating }) {
           {rating.workload ? <Meter label="Workload" value={rating.workload} word={SCALE[rating.workload]!} /> : null}
         </div>
       )}
-      {(rating.pros.length > 0 || rating.cons.length > 0) && (
+      {(rating.likes.length > 0 || rating.warnings.length > 0) && (
         <div className="rating-points">
-          {rating.pros.slice(0, 3).map((point) => (
+          {rating.likes.slice(0, 3).map((point) => (
             <p key={`p-${point}`} className="point good">
               {point}
             </p>
           ))}
-          {rating.cons.slice(0, 3).map((point) => (
+          {rating.warnings.slice(0, 3).map((point) => (
             <p key={`c-${point}`} className="point warn">
               {point}
             </p>
           ))}
         </div>
       )}
-      <Basis rating={rating} />
-      {rating.professors.length > 0 && (
-        <div className="rating-breakdown" aria-label="By professor">
-          {rating.professors.slice(0, 6).map((part) => (
-            <p key={part.name}>
-              <span>{part.name}</span>
-              <Counts counts={part} />
-              <ScoreBadge score={part.score} label={`${part.score.toFixed(1)} out of 5 with ${part.name}`} />
-            </p>
-          ))}
-        </div>
-      )}
-      <Evidence sources={rating.sources} />
     </div>
-  );
-}
-
-/** How many posts and comments liked it, warned about it, or just said something about it. */
-function Counts({ counts }: { counts: RatingCounts }) {
-  return (
-    <small className="rating-counts">
-      {[counts.positive ? `${counts.positive} good` : '', counts.negative ? `${counts.negative} bad` : '', counts.neutral ? `${counts.neutral} neutral` : ''].filter(Boolean).join(' · ')}
-    </small>
-  );
-}
-
-/** What a rating rests on: how many posts and comments, good and bad, and over which years. */
-function Basis({ rating }: { rating: { basis: number; confidence: string; counts: RatingCounts; from: string; to: string } }) {
-  const years = [rating.from.slice(0, 4), rating.to.slice(0, 4)].filter(Boolean);
-  const span = years.length ? (years[0] === years.at(-1) ? `, ${years[0]}` : `, ${years[0]}–${years.at(-1)}`) : '';
-  return (
-    <p className="rating-basis">
-      From {rating.basis === 1 ? 'one post or comment' : `${rating.basis} posts and comments`} in the Room of Requirement{span}
-      {rating.counts.positive + rating.counts.negative + rating.counts.neutral > 0 ? <>: <Counts counts={rating.counts} /></> : null}
-      {rating.confidence === 'low' ? '. Take it lightly.' : '.'}
-    </p>
-  );
-}
-
-function Evidence({ sources }: { sources: Array<{ url: string; date: string; excerpt: string }> }) {
-  if (!sources?.length) return null;
-  return (
-    <details className="rating-evidence">
-      <summary>Read the threads ({sources.length})</summary>
-      {sources.map((source, index) => (
-        <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer">
-          <b>{source.date || 'Undated'}</b> {source.excerpt.slice(0, 140)}
-        </a>
-      ))}
-    </details>
   );
 }
 
@@ -574,13 +609,7 @@ function Meter({ label, value, word }: { label: string; value: number; word: str
   );
 }
 
-/** While a rating is read or written: the first person to open a course waits for it to be written, once. */
-function RatingLoading() {
-  const [slow, setSlow] = useState(false);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setSlow(true), 2500);
-    return () => window.clearTimeout(timer);
-  }, []);
+function SummaryLoading() {
   return (
     <div className="rating loading" aria-busy="true">
       <div className="rating-head">
@@ -590,484 +619,65 @@ function RatingLoading() {
           <div className="skeleton" style={{ height: 14, width: '70%' }} />
         </div>
       </div>
-      <p className="rating-basis" role="status">
-        <span className="spinner" aria-hidden="true" /> {slow ? 'Still loading the rating…' : 'Loading what students wrote about it…'}
-      </p>
     </div>
   );
 }
 
-/** Reviews written here by students who took the course, and the form to write or change your own. */
-function StudentReviews({ code, title, professors }: { code: string; title: string; professors: string[] }) {
-  const { profile, toast } = useApp();
-  const [reviews, setReviews] = useState<CourseReview[] | null>(null);
-  const [open, setOpen] = useState(true);
-  const [editing, setEditing] = useState(false);
-  const [error, setError] = useState('');
-  const [prompt, setPrompt] = useState(false);
-  useEffect(() => {
-    let live = true;
-    api.board
-      .reviews(code)
-      .then((result) => {
-        if (!live) return;
-        setReviews(result.reviews);
-        setOpen(result.open !== false);
-      })
-      .catch((err) => live && setError(err instanceof Error ? err.message : 'Could not load reviews.'));
-    return () => {
-      live = false;
-    };
-  }, [code]);
-  const mine = reviews?.find((review) => review.mine);
-  const others = (reviews ?? []).filter((review) => !review.mine);
-  const average = reviews?.length ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length : 0;
-
-  useEffect(() => {
-    if (!profile || !reviews || !open || mine || editing) return;
-    try {
-      const last = Number(localStorage.getItem('review-prompt-at') ?? 0);
-      const skipped = JSON.parse(localStorage.getItem('review-prompt-skipped') ?? '[]') as string[];
-      if (Date.now() - last < 7 * 86_400_000 || skipped.includes(code)) return;
-    } catch { return; }
-    const timer = window.setTimeout(() => setPrompt(true), 18_000);
-    return () => window.clearTimeout(timer);
-  }, [code, profile, reviews, open, mine, editing]);
-
-  const dismissPrompt = (skip = false) => {
-    setPrompt(false);
-    try {
-      localStorage.setItem('review-prompt-at', String(Date.now()));
-      if (skip) {
-        const skipped = JSON.parse(localStorage.getItem('review-prompt-skipped') ?? '[]') as string[];
-        localStorage.setItem('review-prompt-skipped', JSON.stringify([...new Set([...skipped, code])].slice(-100)));
-      }
-    } catch { /* Storage may be disabled; the prompt still closes. */ }
-  };
-
-  const remove = async () => {
-    try {
-      await api.board.unreview(code);
-      setReviews((current) => current?.filter((review) => !review.mine) ?? null);
-      toast('Review removed');
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not remove it.');
-    }
-  };
-
+function ReviewList({ reviews, title, show, profName, onEdit, onRemove }: { reviews: CourseReview[] | null; title: string; show: 'professor' | 'course'; profName?: string; onEdit(code: string): void; onRemove?(): void }) {
+  if (reviews === null) return <div className="skeleton" style={{ height: 72, marginBottom: 26 }} />;
+  if (!reviews.length) return null;
+  const mine = reviews.filter((review) => review.mine);
+  const others = reviews.filter((review) => !review.mine);
   return (
-    <section className="detail-section reviews" id="write-review" aria-label="Reviews from students here">
-      <div className="reviews-head">
-        <h3>Reviews from students here</h3>
-      </div>
-      {reviews && reviews.length > 0 && (
-        <div className="review-summary">
-          <div className="review-average">
-            <b>{average.toFixed(1)}</b>
-            <StarRow value={average} size={15} />
-            <span>{plural(reviews.length, 'review')}</span>
-          </div>
-          <ul className="review-spread" aria-label="How students rated it">
-            {[5, 4, 3, 2, 1].map((stars) => {
-              const n = reviews.filter((review) => review.rating === stars).length;
-              return (
-                <li key={stars}>
-                  <span>{stars}</span>
-                  <span className="spread-bar" aria-hidden="true">
-                    <i style={{ width: `${(n / reviews.length) * 100}%` }} />
-                  </span>
-                  <span className="spread-n">{n}</span>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
-      {error && <div className="alert error">{error}</div>}
-      {prompt && createPortal(<div className="review-nudge" data-line="guide" role="dialog" aria-label="Review this course">
-        <button type="button" className="icon-btn" onClick={() => dismissPrompt()} aria-label="Dismiss review prompt"><IconClose /></button>
-        <div className="review-nudge-star" aria-hidden="true"><IconStar amount={1} width={22} height={22} /></div>
-        <b>Took {title}?</b>
-        <p>A quick rating helps the next student choose. Details are optional, and you can post anonymously.</p>
-        <div className="review-nudge-actions"><button type="button" className="btn primary sm" onClick={() => { dismissPrompt(); setEditing(true); window.setTimeout(() => document.getElementById('write-review')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60); }}>Review course</button><button type="button" className="link-btn" onClick={() => dismissPrompt(true)}>Haven’t taken it</button></div>
-      </div>, document.body)}
-      {profile && open && (editing || (reviews && !mine)) ? (
-        <ReviewForm
-          code={code}
-          professors={professors}
-          initial={mine}
-          onCancel={mine ? () => setEditing(false) : undefined}
-          onSaved={(review) => {
-            setReviews((current) => [review, ...(current ?? []).filter((entry) => !entry.mine)]);
-            setEditing(false);
-            toast(mine ? 'Review updated' : 'Thanks. Your review helps the next student choose.');
-          }}
-        />
-      ) : null}
-      {mine && !editing && <ReviewCard review={mine} onEdit={() => setEditing(true)} onRemove={() => void remove()} />}
-      {reviews === null && !error && <div className="skeleton" style={{ height: 72 }} />}
-      {others.map((review) => (
-        <ReviewCard key={review.id} review={review} />
+    <section className="detail-section reviews" aria-label={title}>
+      <h3>
+        {title} <span className="muted">({reviews.length})</span>
+      </h3>
+      {[...mine, ...others].map((review) => (
+        <ReviewCard key={review.id} review={review} show={show} stars={show === 'course' && profName ? review.profRating ?? review.rating : review.rating} onEdit={review.mine ? () => onEdit(review.code) : undefined} onRemove={review.mine ? onRemove : undefined} />
       ))}
-      {reviews && reviews.length === 0 && (!profile || !open) && <p className="muted small">No reviews here yet.</p>}
     </section>
   );
 }
 
-function ReviewCard({ review, onEdit, onRemove }: { review: CourseReview; onEdit?(): void; onRemove?(): void }) {
+function ReviewCard({ review, show, stars, onEdit, onRemove }: { review: CourseReview; show: 'professor' | 'course'; stars: number | null; onEdit?(): void; onRemove?(): void }) {
   return (
     <article className={`review-card${review.mine ? ' mine' : ''}`}>
       <div className="review-top">
-        <span className="review-stars" role="img" aria-label={`${review.rating} out of 5`}>
-          <StarRow value={review.rating} />
-        </span>
+        {stars ? (
+          <span className="review-stars" role="img" aria-label={`${stars} out of 5`}>
+            <StarRow value={stars} />
+          </span>
+        ) : null}
+        {show === 'course' && <span className="code">{review.code}</span>}
+        {show === 'professor' && review.professor && review.profRating ? <span className="tag">{review.professor.split(' ')[0]}: {review.profRating}★</span> : null}
         {review.difficulty ? <span className="tag">{HARDNESS[review.difficulty]}</span> : null}
         {review.workload ? <span className="tag">{SCALE[review.workload]} work</span> : null}
         <span className="spacer" />
-        {!review.mine && <AdminRemove type="review" id={review.id} label={review.text || `${review.rating} stars`} compact />}
+        {!review.mine && <AdminRemove type="review" id={review.id} label={review.text || `${review.rating ?? review.profRating} stars`} compact />}
       </div>
       {review.text && <p className="review-text">{review.text}</p>}
       <div className="review-by">
-        {review.mine ? 'You' : review.authorName}{review.authorMajor ? `, ${review.authorMajor}` : ''}
-        {review.professor ? ` · with ${review.professor}` : ''}
-        {review.term ? ` · took it ${review.term}` : ''} · {relativeDate(review.updatedAt)}
+        {review.mine ? 'You' : review.authorName}
+        {review.authorMajor ? `, ${review.authorMajor}` : ''}
+        {show === 'professor' && review.professor ? ` · with ${review.professor}` : ''}
+        {review.term ? ` · ${review.term}` : ''} · {relativeDate(review.updatedAt)}
         {review.mine && (
           <>
             {' '}
-            <button type="button" className="link-btn" onClick={onEdit}>
-              Edit
-            </button>{' '}
-            <button type="button" className="link-btn danger" onClick={onRemove}>
-              Remove
-            </button>
+            {onEdit && (
+              <button type="button" className="link-btn" onClick={onEdit}>
+                Edit
+              </button>
+            )}{' '}
+            {onRemove && (
+              <button type="button" className="link-btn danger" onClick={onRemove}>
+                Remove
+              </button>
+            )}
           </>
         )}
       </div>
     </article>
-  );
-}
-
-function ReviewForm({ code, professors, initial, onSaved, onCancel }: { code: string; professors: string[]; initial?: CourseReview; onSaved(review: CourseReview): void; onCancel?(): void }) {
-  const [rating, setRating] = useState(initial?.rating ?? 0);
-  const [difficulty, setDifficulty] = useState<number | null>(initial?.difficulty ?? null);
-  const [workload, setWorkload] = useState<number | null>(initial?.workload ?? null);
-  const [text, setText] = useState(initial?.text ?? '');
-  const [term, setTerm] = useState(initial?.term ?? '');
-  const [professor, setProfessor] = useState(initial?.professor ?? '');
-  const [anonymous, setAnonymous] = useState(initial ? initial.authorName === 'Anonymous' : true);
-  const [terms, setTerms] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [open, setOpen] = useState(Boolean(initial));
-  useEffect(() => {
-    api.courses
-      .terms()
-      .then((result) => setTerms(result.terms.map((entry) => entry.name).filter((name) => Date.parse(result.terms.find((entry) => entry.name === name)!.start) < Date.now())))
-      .catch(() => setTerms([]));
-  }, []);
-
-  const save = async () => {
-    if (!rating || busy) return;
-    setBusy(true);
-    setError('');
-    try {
-      const result = await api.board.review({ code, rating, difficulty, workload, text: text.trim(), term, professor, anonymous });
-      onSaved(result.review);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save your review.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!open) {
-    return (
-      <div className="review-prompt">
-        <span>Took this course?</span>
-        <div className="star-pick" role="radiogroup" aria-label="Your rating">
-          {[1, 2, 3, 4, 5].map((stop) => (
-            <button
-              key={stop}
-              type="button"
-              role="radio"
-              aria-checked={rating === stop}
-              aria-label={`${stop} out of 5`}
-              onClick={() => {
-                setRating(stop);
-                setOpen(true);
-              }}
-            >
-              <IconStar amount={0} width={24} height={24} />
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="review-form">
-      <div className="review-row">
-        <span>Your rating</span>
-        <div className="star-pick" role="radiogroup" aria-label="Your rating">
-          {[1, 2, 3, 4, 5].map((stop) => (
-            <button key={stop} type="button" role="radio" aria-checked={rating === stop} className={stop <= rating ? 'on' : undefined} aria-label={`${stop} out of 5`} onClick={() => setRating(stop)}>
-              <IconStar amount={stop <= rating ? 1 : 0} width={24} height={24} />
-            </button>
-          ))}
-        </div>
-      </div>
-      <ScalePick label="Difficulty" words={HARDNESS} value={difficulty} onChange={setDifficulty} />
-      <ScalePick label="Workload" words={SCALE} value={workload} onChange={setWorkload} />
-      {professors.length > 0 && <label className="review-row">
-        <span>Professor you took it with</span>
-        <select className="input" value={professor} onChange={(event) => setProfessor(event.target.value)}>
-          <option value="">Not saying</option>
-          {professors.map((name) => <option key={name} value={name}>{name}</option>)}
-        </select>
-      </label>}
-      <label className="review-row">
-        <span>When you took it</span>
-        <select className="input" value={term} onChange={(event) => setTerm(event.target.value)}>
-          <option value="">Not saying</option>
-          {terms.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <textarea className="input" rows={3} maxLength={600} value={text} onChange={(event) => setText(event.target.value)} placeholder="What should the next student know? The exams, the problem sets, the teaching…" aria-label="Your review" />
-      <label className="check"><input type="checkbox" checked={anonymous} onChange={(event) => setAnonymous(event.target.checked)} /> Show anonymously to other students</label>
-      {error && <div className="alert error">{error}</div>}
-      <div className="review-actions">
-        <span className="faint small">A star rating posts quickly. Details are optional. {anonymous ? 'Your name stays hidden from students.' : 'Shown with your first name and major.'}</span>
-        <span className="spacer" />
-        {onCancel && (
-          <button type="button" className="btn ghost sm" onClick={onCancel}>
-            Cancel
-          </button>
-        )}
-        <button type="button" className="btn primary sm" onClick={() => void save()} disabled={!rating || busy}>
-          {busy ? 'Saving' : initial ? 'Update review' : 'Post review'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ScalePick({ label, words, value, onChange }: { label: string; words: string[]; value: number | null; onChange(value: number | null): void }) {
-  return (
-    <div className="review-row">
-      <span>{label}</span>
-      <div className="scale-pick" role="radiogroup" aria-label={label}>
-        {[1, 2, 3, 4, 5].map((stop) => (
-          <button key={stop} type="button" role="radio" aria-checked={value === stop} className={value === stop ? 'on' : undefined} title={words[stop]} onClick={() => onChange(value === stop ? null : stop)}>
-            {stop}
-          </button>
-        ))}
-        <small>{value ? words[value] : 'Optional'}</small>
-      </div>
-    </div>
-  );
-}
-
-function ProfessorSearch({ name, scores }: { name?: string; scores: ScoreIndex | null }) {
-  const wide = useMedia(WIDE);
-  const [query, setQuery] = useState('');
-  const [top, setTop] = useState(false);
-  const [courses, setCourses] = useState<CourseEntry[] | null>(null);
-  const [error, setError] = useState('');
-  const [limit, setLimit] = useState(PAGE_ROWS);
-  useEffect(() => {
-    api.courses
-      .all()
-      .then((result) => setCourses(result.courses))
-      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load professors.'));
-  }, []);
-  const people = useMemo(() => {
-    const found = new Map<string, string[]>();
-    for (const course of courses ?? []) {
-      for (const person of course.people) found.set(person, [...(found.get(person) ?? []), course.code]);
-    }
-    return [...found].sort(([a], [b]) => a.localeCompare(b));
-  }, [courses]);
-  const words = fold(query).split(/\s+/).filter(Boolean);
-  const shown = useMemo(() => {
-    const matching = people.filter(([person, codes]) => (!top || scores?.profs[person]) && words.every((word) => fold(`${person} ${codes.join(' ')}`).includes(word)));
-    if (top) matching.sort(([a], [b]) => (scores?.profs[b]?.score ?? 0) - (scores?.profs[a]?.score ?? 0) || (scores?.profs[b]?.basis ?? 0) - (scores?.profs[a]?.basis ?? 0));
-    return matching;
-  }, [people, words.join(' '), top, scores]); // eslint-disable-line react-hooks/exhaustive-deps
-  const close = () => navigate({ name: 'professors' }, { replace: true, keepScroll: true });
-  const panel = usePresence(Boolean(name) && !wide, 220);
-  const selected = useLatest(name);
-  const detail = name ? (
-    <ProfessorDetail key={name} name={name} courses={people.find(([person]) => person === name)?.[1] ?? []} onClose={close} />
-  ) : (
-    <div className="pane-empty">
-      <span className="pane-empty-mark" aria-hidden="true" />
-      <h2>Pick a professor</h2>
-      <p>See how students describe their teaching, and what they teach.</p>
-    </div>
-  );
-  return (
-    <div className="md">
-      <div>
-        <div className="course-controls">
-          <div className="search-field big">
-            <IconSearch />
-            <input
-              className="input"
-              type="search"
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setLimit(PAGE_ROWS);
-              }}
-              placeholder="Professor name or course code"
-              aria-label="Search professors"
-            />
-          </div>
-          <div className="filter-row">
-            <button type="button" className={`chip${top ? ' on' : ''}`} aria-pressed={top} onClick={() => setTop(!top)}>
-              Rated, best first
-            </button>
-          </div>
-        </div>
-        {error && <div className="alert error">{error}</div>}
-        {!courses && !error && <div className="skeleton" style={{ height: 180 }} />}
-        {courses && shown.length === 0 && <div className="empty">No professor matches.</div>}
-        {shown.length > 0 && (
-          <div className="list course-list">
-            {shown.slice(0, limit).map(([person, codes]) => {
-              const score = scores?.profs[person];
-              return (
-                <a
-                  key={person}
-                  href={`/professors/${encodeURIComponent(person)}`}
-                  className={`row course-item${person === name ? ' on' : ''}`}
-                  onClick={(event) => {
-                    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
-                    event.preventDefault();
-                    navigate({ name: 'professors', nameQuery: person }, { keepScroll: true });
-                  }}
-                >
-                  <span className="course-main">
-                    <span className="course-title">{person}</span>
-                    <span className="muted small">{codes.slice(0, 3).join(' · ')}</span>
-                  </span>
-                  <span className="course-scores">{score && <ScoreBadge score={score.score} label={`Rated ${score.score.toFixed(1)} from ${plural(score.basis, 'student')}`} />}</span>
-                </a>
-              );
-            })}
-          </div>
-        )}
-        {shown.length > limit && (
-          <div className="load-more">
-            <button type="button" className="btn" onClick={() => setLimit((current) => current + PAGE_ROWS)}>
-              Show more
-            </button>
-          </div>
-        )}
-      </div>
-      {wide ? (
-        <aside className="md-pane">{detail}</aside>
-      ) : panel.mounted && selected ? (
-        <Sheet label={selected} closing={panel.closing} onClose={close}>
-          <ProfessorDetail key={selected} name={selected} courses={people.find(([person]) => person === selected)?.[1] ?? []} onClose={close} />
-        </Sheet>
-      ) : null}
-    </div>
-  );
-}
-
-function ProfessorDetail({ name, courses, onClose }: { name: string; courses: string[]; onClose(): void }) {
-  const [rating, setRating] = useState<ProfRating | null | undefined>();
-  const [error, setError] = useState('');
-  useEffect(() => {
-    let live = true;
-    api.courses
-      .profs([name])
-      .then((ratings) => live && setRating(ratings.get(name) ?? null))
-      .catch((err) => live && setError(err instanceof Error ? err.message : 'Could not load the rating.'));
-    return () => {
-      live = false;
-    };
-  }, [name]);
-  return (
-    <>
-      <div className="pane-head">
-        <div className="grow">
-          <h2>{name}</h2>
-        </div>
-        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close" data-autofocus>
-          <IconClose />
-        </button>
-      </div>
-      <div className="pane-body">
-        {error && <div className="alert error">{error}</div>}
-        {rating === undefined && !error && <RatingLoading />}
-        {rating === null && <p className="rating-none">Nobody in the group has described being taught by them yet.</p>}
-        {rating && (
-          <div className="rating">
-            <div className="rating-head">
-              <div className={`rating-score ${tone(rating.score)}`} aria-label={`Rated ${rating.score} out of 5`}>
-                <b>{rating.score.toFixed(1)}</b>
-                <StarRow value={rating.score} />
-              </div>
-              <div className="rating-copy">
-                <p className="rating-verdict">{rating.verdict}</p>
-              </div>
-            </div>
-            {(rating.likes.length > 0 || rating.warnings.length > 0) && (
-              <div className="rating-points">
-                {rating.likes.slice(0, 3).map((point) => (
-                  <p key={`p-${point}`} className="point good">
-                    {point}
-                  </p>
-                ))}
-                {rating.warnings.slice(0, 3).map((point) => (
-                  <p key={`c-${point}`} className="point warn">
-                    {point}
-                  </p>
-                ))}
-              </div>
-            )}
-            <Basis rating={rating} />
-            {rating.courses.length > 0 && (
-              <div className="rating-breakdown" aria-label="By course">
-                {rating.courses.slice(0, 6).map((part) => (
-                  <p key={part.code}>
-                    <span>{part.code}</span>
-                    <Counts counts={part} />
-                    <ScoreBadge score={part.score} label={`${part.score.toFixed(1)} out of 5 in ${part.code}`} />
-                  </p>
-                ))}
-              </div>
-            )}
-            <Evidence sources={rating.sources} />
-          </div>
-        )}
-        {courses.length > 0 && (
-          <section className="detail-section">
-            <h3>Teaches</h3>
-            <div className="teacher-list">
-              {courses.slice(0, 8).map((course) => (
-                <a
-                  key={course}
-                  href={`/courses/${encodeURIComponent(course)}`}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    navigate({ name: 'courses', code: course });
-                  }}
-                >
-                  <span>{course}</span>
-                </a>
-              ))}
-            </div>
-          </section>
-        )}
-      </div>
-    </>
   );
 }

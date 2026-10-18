@@ -39,6 +39,7 @@ const CONTACT_KEY = 'room.contact';
 /** In sessionStorage: one per tab, gone when the tab closes. */
 const ACTIVE_KEY = 'room.active';
 const PLAN_KEY = 'room.plan';
+const TAKEN_KEY = 'room.taken';
 const ONBOARDED_KEY = 'room.onboarded';
 const SIDEBAR_KEY = 'room.sidebar';
 const SEEN_KEY = 'room.seen';
@@ -193,7 +194,7 @@ export function saveContact(value: { contactKind: ContactKind; contact: string }
 
 /** Clears local preferences and history. Keep the browser key so this browser can reclaim its existing NetID. */
 export function forgetDevice(removeIdentity = false): void {
-  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, ...(removeIdentity ? [KEY_KEY] : []), ANNOUNCED_KEY, CONTACT_KEY, PLAN_KEY, ONBOARDED_KEY, SIDEBAR_KEY, SEEN_KEY]) {
+  for (const key of [CONVERSATIONS_KEY, THEME_KEY, PROFILE_KEY, ...(removeIdentity ? [KEY_KEY] : []), ANNOUNCED_KEY, CONTACT_KEY, PLAN_KEY, TAKEN_KEY, ONBOARDED_KEY, SIDEBAR_KEY, SEEN_KEY]) {
     try {
       localStorage.removeItem(key);
     } catch {
@@ -287,4 +288,21 @@ export function loadPlan(): SavedPlan {
 
 export function savePlan(plan: SavedPlan): void {
   write(PLAN_KEY, plan);
+}
+
+/** Courses planned each term, with the professors of the sections planned: term -> code -> professors. */
+export type Planned = Record<string, Record<string, string[]>>;
+
+/** What every plan made here held, kept per term after the planner moves on, so the site can ask how it went. */
+export function loadPlanned(): Planned {
+  const saved = read<Planned>(TAKEN_KEY, {});
+  return saved && typeof saved === 'object' ? saved : {};
+}
+
+export function rememberPlanned(term: string, courses: Record<string, string[]>): void {
+  if (!term) return;
+  const planned = loadPlanned();
+  if (Object.keys(courses).length) planned[term] = courses;
+  else delete planned[term];
+  write(TAKEN_KEY, planned);
 }

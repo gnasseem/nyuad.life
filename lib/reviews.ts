@@ -19,7 +19,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { unpackReviewText, type CourseReview, type Digest, type DigestPart, type Mention } from './board.ts';
 import type { BoardStore } from './board-store.ts';
-import { baseCode, COMMON_WORDS, currentCode, displayName, termOrder, type Catalog } from './courses.ts';
+import { baseCode, codeVariants, COMMON_WORDS, currentCode, displayName, termOrder, type Catalog } from './courses.ts';
 import { courseKey, courseNames, courseThreads, fold, mentions, person, personThreads, profKey, type Person } from './entities.ts';
 import { geminiConfig } from './gemini.ts';
 import { saveModelUsage } from './model-usage.ts';
@@ -359,6 +359,91 @@ const SUMMARY_SYSTEM = [
 
 const NOTES_PER_CALL = 40;
 
+function mentionRating(mention: Mention): Rating {
+  return { key: mention.postId, review: false, date: mention.date, sentiment: mention.sentiment, value: mention.sentiment === 'positive' ? 5 : mention.sentiment === 'negative' ? 1 : 3, pair: mention.pair, difficulty: mention.difficulty, workload: mention.workload, term: mention.term, url: mention.url, note: mention.takeaway };
+}
+
+/**
+ * A review written here, as the digests count it: for its course when the student rated the course, and for the
+ * professor it names with the stars they gave the professor (or, when they gave none, the course's).
+ */
+function reviewRatings(review: CourseReview, catalog: Catalog): Array<{ entity: string; rating: Rating }> {
+  const { professor, profRating, courseRated, text } = unpackReviewText(review.text);
+  const course = courseKey(catalog, review.code);
+  const prof = professor ? profKey(professor) : '';
+  const note = truncate(collapseWhitespace(text), 300);
+  const rating = (value: number, pair: string): Rating => ({ key: `${review.id}@${review.updatedAt}`, review: true, date: review.updatedAt.slice(0, 10), sentiment: value >= 4 ? 'positive' : value <= 2 ? 'negative' : 'neutral', value, pair, difficulty: review.difficulty, workload: review.workload, term: review.term, url: '', note });
+  const out: Array<{ entity: string; rating: Rating }> = [];
+  if (courseRated) out.push({ entity: course, rating: rating(review.rating, prof) });
+  const profValue = profRating ?? (courseRated ? review.rating : null);
+  if (prof && profValue) out.push({ entity: prof, rating: rating(profValue, course) });
+  return out;
+}
+
+/** The summary a digest gets without a model, from one or two ratings: their own words (a bare star rating has none). */
+function summaryOf(ratings: Rating[]): Pick<Digest, 'verdict' | 'likes' | 'warnings'> {
+  const newest = ratings.filter((rating) => rating.note).sort((a, b) => b.date.localeCompare(a.date));
+  return {
+    verdict: (newest.find((rating) => rating.sentiment !== 'neutral') ?? newest[0])?.note ?? '',
+    likes: newest.filter((rating) => rating.sentiment === 'positive').map((rating) => rating.note),
+    warnings: newest.filter((rating) => rating.sentiment === 'negative').map((rating) => rating.note),
+  };
+}
+
+/**
+ * Recounts the digests of these courses and professors as soon as a review here is written, changed or removed, with
+ * no model call: the score, the counts, difficulty and workload take it in at once. The verdict, likes and warnings
+ * stay as they are and the review stays unread in the digest, so the next runReviews folds its words in. A course or
+ * professor with one or two ratings in all gets their words as its summary, as a run would give it.
+ */
+export async function refreshDigests(store: BoardStore, catalog: Catalog, targets: Array<{ entity: string; name: string }>): Promise<Digest[]> {
+  const wanted = [...new Map(targets.filter((target) => target.entity && target.name).map((target) => [target.entity, target])).values()];
+  if (!wanted.length) return [];
+  const entities = wanted.map((target) => target.entity);
+  const [mentionList, priors, reviewLists] = await Promise.all([
+    store.listMentionsFor(entities),
+    store.getDigests(entities),
+    Promise.all(wanted.map(({ entity, name }) => entity.startsWith('prof:') ? store.listReviewsByProfessor(name) : Promise.all([...new Set([name, ...codeVariants(catalog, name)])].map((code) => store.listReviews(code))).then((lists) => lists.flat()))),
+  ]);
+  const byEntity = new Map(priors.map((digest) => [digest.entity, digest]));
+  const names = new Map<string, string>();
+  for (const digest of priors) for (const part of digest.breakdown) names.set(part.entity, part.name);
+  const ratings = new Map<string, Rating[]>(entities.map((entity) => [entity, []]));
+  for (const mention of mentionList) ratings.get(mention.entity)?.push(mentionRating(mention));
+  const seen = new Set<string>();
+  for (const review of reviewLists.flat()) {
+    if (seen.has(review.id)) continue;
+    seen.add(review.id);
+    const professor = unpackReviewText(review.text).professor;
+    if (professor) names.set(profKey(professor), professor);
+    for (const { entity, rating } of reviewRatings(review, catalog)) ratings.get(entity)?.push(rating);
+  }
+  const nameOf = (entity: string) => names.get(entity) ?? (entity.startsWith('course:') ? entity.slice('course:'.length) : catalog.instructors.get(entity.slice('prof:'.length)));
+  const written: Digest[] = [];
+  for (const { entity, name } of wanted) {
+    const list = ratings.get(entity)!;
+    const prior = byEntity.get(entity);
+    if (!prior && !list.length) continue;
+    const counted = stats(list, nameOf);
+    const keys = { postIds: list.filter((rating) => !rating.review).map((rating) => rating.key), reviewKeys: list.filter((rating) => rating.review).map((rating) => rating.key) };
+    const read = new Set([...(prior?.postIds ?? []), ...(prior?.reviewKeys ?? [])]);
+    // Small enough to need no model: the ratings' own words are the whole summary, and nothing is left to read.
+    const whole = list.length <= 2 && (!prior || list.every((rating) => read.has(rating.key) || rating.review));
+    const digest: Digest = {
+      ...(prior ?? { verdict: '', likes: [], warnings: [] }),
+      entity,
+      kind: entity.startsWith('prof:') ? 'prof' : 'course',
+      name: prior?.name ?? name,
+      ...counted,
+      ...(whole ? { ...summaryOf(list), ...keys } : { postIds: prior?.postIds ?? [], reviewKeys: (prior?.reviewKeys ?? []).filter((key) => list.some((rating) => rating.key === key)) }),
+      updatedAt: new Date().toISOString(),
+    };
+    await store.putDigest(digest);
+    written.push(digest);
+  }
+  return written;
+}
+
 export interface ReviewRun {
   store: BoardStore;
   archive: Archive;
@@ -562,18 +647,13 @@ export async function runReviews(options: ReviewRun): Promise<ReviewResult> {
     }
     let summary = { verdict: prior?.verdict ?? '', likes: prior?.likes ?? [], warnings: prior?.warnings ?? [] };
     if (!prior && ratings.length <= 2) {
-      const newest = [...ratings].sort((a, b) => b.date.localeCompare(a.date));
-      summary = {
-        verdict: (newest.find((rating) => rating.sentiment !== 'neutral') ?? newest[0])!.note,
-        likes: newest.filter((rating) => rating.sentiment === 'positive').map((rating) => rating.note),
-        warnings: newest.filter((rating) => rating.sentiment === 'negative').map((rating) => rating.note),
-      };
+      summary = summaryOf(ratings);
     } else {
       const total = counted.positive + counted.negative + counted.neutral;
       for (let at = 0; at < fresh.length; at += NOTES_PER_CALL) {
         const notes = fresh.slice(at, at + NOTES_PER_CALL).map((rating) => {
           const context = [rating.term, rating.pair && nameOf(rating.pair) ? `with ${nameOf(rating.pair)}` : ''].filter(Boolean).join(', ');
-          return `- ${rating.date || 'undated'}${context ? ` (${context})` : ''} ${rating.review ? `review on nyuad.life, rated ${rating.value}/5` : rating.sentiment}: ${rating.note}`;
+          return `- ${rating.date || 'undated'}${context ? ` (${context})` : ''} ${rating.review ? `review on nyuad.life, rated ${rating.value}/5` : rating.sentiment}: ${rating.note || '(stars only, no words)'}`;
         });
         const prompt = [
           `${base.kind === 'course' ? 'Course' : 'Professor'}: ${label}`,
@@ -632,19 +712,16 @@ export async function runReviews(options: ReviewRun): Promise<ReviewResult> {
   const [all, reviews, digests] = await Promise.all([store.listMentions(), store.listAllReviews(), store.listDigests()]);
   const ratings = new Map<string, Rating[]>();
   const add = (entity: string, rating: Rating) => (ratings.get(entity) ?? ratings.set(entity, []).get(entity)!).push(rating);
-  for (const mention of all) {
-    add(mention.entity, { key: mention.postId, review: false, date: mention.date, sentiment: mention.sentiment, value: mention.sentiment === 'positive' ? 5 : mention.sentiment === 'negative' ? 1 : 3, pair: mention.pair, difficulty: mention.difficulty, workload: mention.workload, term: mention.term, url: mention.url, note: mention.takeaway });
-  }
+  for (const mention of all) add(mention.entity, mentionRating(mention));
   // A review written here counts for its course, and for its professor when it names one the schedule knows.
   const known = new Map(names);
   for (const review of reviews as CourseReview[]) {
-    const { professor, text } = unpackReviewText(review.text);
     const course = courseKey(catalog, review.code);
-    const prof = professor && known.has(profKey(professor)) ? profKey(professor) : '';
-    const rating: Rating = { key: `${review.id}@${review.updatedAt}`, review: true, date: review.updatedAt.slice(0, 10), sentiment: review.rating >= 4 ? 'positive' : review.rating <= 2 ? 'negative' : 'neutral', value: review.rating, pair: '', difficulty: review.difficulty, workload: review.workload, term: review.term, url: '', note: truncate(collapseWhitespace(text), 300) || `A student here rated it ${review.rating} out of 5.` };
     if (!known.has(course)) known.set(course, course.slice('course:'.length));
-    add(course, { ...rating, pair: prof });
-    if (prof) add(prof, { ...rating, pair: course });
+    for (const { entity, rating } of reviewRatings(review, catalog)) {
+      if (!known.has(entity)) continue;
+      add(entity, rating.pair && !known.has(rating.pair) ? { ...rating, pair: '' } : rating);
+    }
   }
   const priors = new Map(digests.map((digest) => [digest.entity, digest]));
   const nameOf = (entity: string) => known.get(entity);

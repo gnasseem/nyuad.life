@@ -35,13 +35,17 @@ archive browsing, plan reading and contacts to anyone who has not.
   five days) and shared rides by day (gone three hours after they leave). Contact details are fetched one post at a
   time, on tap. Lost & found posts stay up for two weeks in their own market tab. Ask routes lost-item notices here,
   while replacement and procedural questions still get an answer. Live requests go to Questions; Ask never sends students to a group chat.
-- **Reviews.** Every course in Albert's schedule once, searchable by code, title or professor, filtered by subject, Core
-  or rated, and sortable by rating. Picking one shows what the group said about it (a score out of five, difficulty and
-  workload, what students like and what they warn about, how many posts and comments were good, bad or neutral, and the
-  same split for each professor who taught it), who teaches it this term, and reviews students wrote here: stars,
-  difficulty, workload, when they took it and a line of advice, one per student and course. Professors are a second
-  tab. Everything shown comes from review digests built offline (below), so opening a course or professor never calls
-  a model.
+- **Reviews.** One search over courses and professors together, by code, title, nickname ("mvc", "calc") or name;
+  results are mixed and ranked, Abu Dhabi courses first, each with its score and one-line verdict. A course page shows
+  the score, difficulty, workload, a short verdict, what students like and warn about, and its professors (this
+  term's first) with how each did in it, linking to their pages; a professor's page shows the same, with the courses
+  they teach. Under the digest are the ratings students wrote here. Rating takes a tap: stars first, then, optional,
+  the term and professor (filled in from the student's plan and the schedule), the professor's own stars, difficulty,
+  workload and a line. A rating counts into the course's and professor's digests the moment it is posted (scores and
+  counts at once, its words at the next review run). A small card asks how a course went after a term the student
+  planned here ends, or when they open a course they likely took (planned for a term well under way, or an
+  introductory course in their major's subject past their first year); it asks once per course, and "Don't ask
+  again" stops it. Everything shown comes from review digests (below), so nothing on these pages calls a model.
 - **Plan.** A schedule builder after [Horarium](https://github.com/Phoenix-3139/Horarium). Choose any school or study
   away site in Albert, then say what you need ("calc, intro to CS, any Arts Core, nothing before 10, Fridays off"). A
   model reads the request against that site's real course list and rules. Students compare its course options with Albert
@@ -289,7 +293,11 @@ rating. Mentions go into `review_mentions`, and the posts and comments read into
 professor with new mentions, or new reviews written here, gets its `review_digests` row brought up to date: counts,
 a score where a rating two years old weighs half as much as one from today, difficulty, workload, the per-professor
 (or per-course) split, and a verdict, likes and warnings that a model folds forward from the old ones with only the
-new mentions. Courses go under the code they carry now, so "MATH-UH 1012Q" and "MATH-UH 1012" share one.
+new mentions. Courses go under the code they carry now, so "MATH-UH 1012Q" and "MATH-UH 1012" share one. Writing,
+changing or removing a review here recounts its course's and professor's digests at once without a model
+(`refreshDigests`); the review stays unread in the digest, so the next run folds its words into the verdict. A review
+keeps the professor, the professor's own stars, and whether the course itself was rated at the head of its `text`
+column (lib/board.ts), so no schema change was needed.
 
 The model keys live on Vercel, so the work normally runs there: `npm run reviews -- --remote https://www.nyuad.life`
 starts one slice at a time (`POST /api/admin` with `op=reviews`, about three minutes of reading each, answered
