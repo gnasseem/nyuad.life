@@ -1,12 +1,13 @@
 {
   "version": 2,
-  "model": "none",
-  "dimensions": 0,
-  "builtAt": "2026-10-16T15:13:13.956Z",
-  "posts": 4984,
+  "model": "voyage-3.5",
+  "dimensions": 1024,
+  "builtAt": "2026-10-25T08:48:15.774Z",
+  "posts": 5427,
   "comments": 0,
-  "chunks": 16857,
+  "chunks": 17721,
   "quantization": "int8",
-  "newestPost": "2026-10-16T15:12:47.426Z",
-  "oldestPost": "2026-09-30T18:24:37.292Z"
+  "newestPost": "2026-10-25T08:26:25.275Z",
+  "oldestPost": "2026-09-30T18:24:37.292Z",
+  "provider": "voyage"
 }
