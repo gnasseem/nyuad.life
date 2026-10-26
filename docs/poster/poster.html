@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>nyuad.life poster (A3)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hubot+Sans:wdth,wght@75..125,500..900&family=Mona+Sans:wdth,wght@75..125,400..800&display=swap" rel="stylesheet">
+<style>
+  @page { size: 297mm 420mm; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: #0a1130; }
+  :root {
+    --navy: #0a1130; --navy-2: #121b42; --paper: #f0f2fa;
+    --amber: #ffc21a; --cobalt: #2a63ff; --sky: #8fb0ff;
+  }
+  .poster {
+    position: relative; width: 297mm; height: 420mm; overflow: hidden;
+    background: radial-gradient(120% 70% at 85% 52%, #16246a 0%, #0a1130 58%);
+    color: var(--paper);
+    font-family: "Mona Sans", sans-serif;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .pattern { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  /* The site's mark, blown up: a square, the same square turned 45°, an amber sun in the middle. */
+  .star { position: absolute; left: 92mm; top: 140mm; width: 250mm; height: 250mm; }
+
+  .head {
+    position: absolute; left: 14mm; top: 14mm; right: 10mm;
+    font-family: "Hubot Sans", sans-serif; font-weight: 900;
+    font-stretch: 75%; text-transform: uppercase;
+    font-size: 81mm; line-height: .82; letter-spacing: -1.2mm;
+  }
+  .head span { display: block; }
+  .head .amber { color: var(--amber); }
+
+  .q {
+    position: absolute; padding: 4.2mm 6mm 4.6mm; border-radius: 6mm;
+    font-family: "Hubot Sans", sans-serif; font-weight: 700; font-stretch: 90%;
+    font-size: 8.4mm; line-height: 1.05; white-space: nowrap;
+    box-shadow: 0 1.6mm 0 #050a1f;
+  }
+  .q::after {
+    content: ""; position: absolute; bottom: -3.2mm; width: 7mm; height: 7mm;
+    background: inherit; transform: rotate(45deg); border-radius: 1mm; z-index: -1;
+  }
+  .q.l::after { left: 8mm; }
+  .q.r::after { right: 8mm; }
+  .q.paper { background: var(--paper); color: var(--navy); }
+  .q.amber { background: var(--amber); color: var(--navy); }
+  .q.cobalt { background: var(--cobalt); color: #fff; }
+  .q.ghost { background: var(--navy-2); color: var(--paper); border: .6mm solid rgba(240, 242, 250, .25); }
+
+  .answer {
+    position: absolute; left: 14mm; top: 300mm; width: 130mm;
+    font-size: 7.8mm; line-height: 1.18; font-weight: 500; color: #c9cfe6;
+  }
+  .answer b { color: var(--paper); font-weight: 800; }
+
+  .foot {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 78mm;
+    background: var(--amber); color: var(--navy);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 14mm;
+  }
+  .url {
+    font-family: "Hubot Sans", sans-serif; font-weight: 900; font-stretch: 80%;
+    font-size: 46mm; line-height: .9; letter-spacing: -1mm;
+  }
+  .tags {
+    margin-top: 5mm; font-family: "Hubot Sans", sans-serif; font-weight: 800;
+    font-size: 6mm; letter-spacing: .5mm; text-transform: uppercase;
+  }
+  .tags i { font-style: normal; opacity: .45; padding: 0 2mm; }
+  .scan { display: flex; flex-direction: column; align-items: center; gap: 2.4mm; }
+  .scan .box {
+    position: relative; width: 62mm; height: 62mm; background: #fff;
+    border-radius: 4mm; padding: 1mm; transform: rotate(3deg);
+    box-shadow: 0 2.5mm 0 var(--navy);
+  }
+  .qr { display: block; width: 100%; height: 100%; }
+  .badge { position: absolute; left: 50%; top: 50%; width: 12mm; height: 12mm; transform: translate(-50%, -50%); }
+  .scan .label {
+    font-family: "Hubot Sans", sans-serif; font-weight: 900; font-size: 5.2mm;
+    letter-spacing: 1mm; text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+<div class="poster">
+
+  <svg class="pattern" viewBox="0 0 297 420" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <defs>
+      <pattern id="tile" width="27" height="27" patternUnits="userSpaceOnUse">
+        <g fill="none" stroke="#f0f2fa" stroke-opacity=".055" stroke-width=".45">
+          <rect x="7.5" y="7.5" width="12" height="12"/>
+          <rect x="7.5" y="7.5" width="12" height="12" transform="rotate(45 13.5 13.5)"/>
+        </g>
+      </pattern>
+    </defs>
+    <rect width="297" height="420" fill="url(#tile)"/>
+  </svg>
+
+  <svg class="star" viewBox="-150 -150 300 300" aria-hidden="true">
+    <defs>
+      <radialGradient id="sun">
+        <stop offset="0" stop-color="#ffc21a" stop-opacity=".55"/>
+        <stop offset="1" stop-color="#ffc21a" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <circle r="70" fill="url(#sun)"/>
+    <g fill="none" stroke-linejoin="round">
+      <g stroke="#2a63ff" stroke-opacity=".35" stroke-width="1.2">
+        <rect x="-140" y="-140" width="280" height="280" rx="6"/>
+        <rect x="-140" y="-140" width="280" height="280" rx="6" transform="rotate(45)"/>
+      </g>
+      <g stroke="#4f82ff" stroke-opacity=".6" stroke-width="2">
+        <rect x="-110" y="-110" width="220" height="220" rx="5" transform="rotate(22.5)"/>
+        <rect x="-110" y="-110" width="220" height="220" rx="5" transform="rotate(67.5)"/>
+      </g>
+      <g stroke="#f0f2fa" stroke-width="6">
+        <rect x="-78" y="-78" width="156" height="156" rx="7"/>
+        <rect x="-78" y="-78" width="156" height="156" rx="7" transform="rotate(45)"/>
+      </g>
+      <g stroke="#ffc21a" stroke-width="2.4">
+        <rect x="-48" y="-48" width="96" height="96" rx="4" transform="rotate(22.5)"/>
+        <rect x="-48" y="-48" width="96" height="96" rx="4" transform="rotate(67.5)"/>
+      </g>
+    </g>
+    <circle r="22" fill="#ffc21a"/>
+  </svg>
+
+  <h1 class="head">
+    <span>Someone</span>
+    <span>already</span>
+    <span class="amber">asked.</span>
+  </h1>
+
+  <div class="q paper l"  style="left:14mm;  top:216mm; transform:rotate(-3deg)">Who's the best prof for Calc?</div>
+  <div class="q amber r"  style="left:170mm; top:213mm; transform:rotate(3deg)">Cheapest way to Dubai?</div>
+  <div class="q cobalt l" style="left:28mm;  top:247mm; transform:rotate(2deg)">Which Arts Core has no final?</div>
+  <div class="q paper r"  style="left:178mm; top:243mm; transform:rotate(-2deg); font-size:6.6mm">Where can I print at 2am?</div>
+  <div class="q ghost r"  style="left:150mm; top:276mm; transform:rotate(-3deg)">Fridays off. Possible?</div>
+
+  <p class="answer">
+    <b>13,000+ forum threads,</b><br>
+    official pages and Albert.<br>
+    Cited answers in seconds.
+  </p>
+
+  <footer class="foot">
+    <div>
+      <div class="url">nyuad.life</div>
+      <div class="tags">Ask<i>/</i>Plan<i>/</i>Reviews<i>/</i>Market</div>
+    </div>
+    <div class="scan">
+      <div class="box">
+        <svg class="qr" xmlns="http://www.w3.org/2000/svg" viewBox="-3 -3 31 31" shape-rendering="crispEdges"><rect x="-3" y="-3" width="31" height="31" fill="#fff"/><path fill="#0a1130" d="M0 0h1v1h-1zM1 0h1v1h-1zM2 0h1v1h-1zM3 0h1v1h-1zM4 0h1v1h-1zM5 0h1v1h-1zM6 0h1v1h-1zM8 0h1v1h-1zM10 0h1v1h-1zM11 0h1v1h-1zM12 0h1v1h-1zM13 0h1v1h-1zM14 0h1v1h-1zM18 0h1v1h-1zM19 0h1v1h-1zM20 0h1v1h-1zM21 0h1v1h-1zM22 0h1v1h-1zM23 0h1v1h-1zM24 0h1v1h-1zM0 1h1v1h-1zM6 1h1v1h-1zM8 1h1v1h-1zM9 1h1v1h-1zM10 1h1v1h-1zM11 1h1v1h-1zM12 1h1v1h-1zM13 1h1v1h-1zM15 1h1v1h-1zM16 1h1v1h-1zM18 1h1v1h-1zM24 1h1v1h-1zM0 2h1v1h-1zM2 2h1v1h-1zM3 2h1v1h-1zM4 2h1v1h-1zM6 2h1v1h-1zM8 2h1v1h-1zM13 2h1v1h-1zM14 2h1v1h-1zM18 2h1v1h-1zM20 2h1v1h-1zM21 2h1v1h-1zM22 2h1v1h-1zM24 2h1v1h-1zM0 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM6 3h1v1h-1zM9 3h1v1h-1zM10 3h1v1h-1zM11 3h1v1h-1zM13 3h1v1h-1zM14 3h1v1h-1zM16 3h1v1h-1zM18 3h1v1h-1zM20 3h1v1h-1zM21 3h1v1h-1zM22 3h1v1h-1zM24 3h1v1h-1zM0 4h1v1h-1zM2 4h1v1h-1zM3 4h1v1h-1zM4 4h1v1h-1zM6 4h1v1h-1zM15 4h1v1h-1zM18 4h1v1h-1zM20 4h1v1h-1zM21 4h1v1h-1zM22 4h1v1h-1zM24 4h1v1h-1zM0 5h1v1h-1zM6 5h1v1h-1zM8 5h1v1h-1zM11 5h1v1h-1zM13 5h1v1h-1zM18 5h1v1h-1zM24 5h1v1h-1zM0 6h1v1h-1zM1 6h1v1h-1zM2 6h1v1h-1zM3 6h1v1h-1zM4 6h1v1h-1zM5 6h1v1h-1zM6 6h1v1h-1zM8 6h1v1h-1zM10 6h1v1h-1zM12 6h1v1h-1zM14 6h1v1h-1zM16 6h1v1h-1zM18 6h1v1h-1zM19 6h1v1h-1zM20 6h1v1h-1zM21 6h1v1h-1zM22 6h1v1h-1zM23 6h1v1h-1zM24 6h1v1h-1zM8 7h1v1h-1zM11 7h1v1h-1zM12 7h1v1h-1zM16 7h1v1h-1zM2 8h1v1h-1zM3 8h1v1h-1zM4 8h1v1h-1zM6 8h1v1h-1zM8 8h1v1h-1zM14 8h1v1h-1zM15 8h1v1h-1zM16 8h1v1h-1zM17 8h1v1h-1zM18 8h1v1h-1zM19 8h1v1h-1zM22 8h1v1h-1zM23 8h1v1h-1zM24 8h1v1h-1zM1 9h1v1h-1zM2 9h1v1h-1zM3 9h1v1h-1zM4 9h1v1h-1zM7 9h1v1h-1zM8 9h1v1h-1zM9 9h1v1h-1zM11 9h1v1h-1zM12 9h1v1h-1zM14 9h1v1h-1zM16 9h1v1h-1zM18 9h1v1h-1zM19 9h1v1h-1zM20 9h1v1h-1zM2 10h1v1h-1zM3 10h1v1h-1zM4 10h1v1h-1zM6 10h1v1h-1zM7 10h1v1h-1zM8 10h1v1h-1zM10 10h1v1h-1zM12 10h1v1h-1zM13 10h1v1h-1zM17 10h1v1h-1zM19 10h1v1h-1zM23 10h1v1h-1zM24 10h1v1h-1zM0 11h1v1h-1zM4 11h1v1h-1zM5 11h1v1h-1zM9 11h1v1h-1zM14 11h1v1h-1zM15 11h1v1h-1zM16 11h1v1h-1zM17 11h1v1h-1zM18 11h1v1h-1zM20 11h1v1h-1zM0 12h1v1h-1zM2 12h1v1h-1zM4 12h1v1h-1zM5 12h1v1h-1zM6 12h1v1h-1zM7 12h1v1h-1zM8 12h1v1h-1zM10 12h1v1h-1zM11 12h1v1h-1zM12 12h1v1h-1zM13 12h1v1h-1zM14 12h1v1h-1zM17 12h1v1h-1zM21 12h1v1h-1zM0 13h1v1h-1zM2 13h1v1h-1zM3 13h1v1h-1zM4 13h1v1h-1zM8 13h1v1h-1zM10 13h1v1h-1zM15 13h1v1h-1zM16 13h1v1h-1zM0 14h1v1h-1zM3 14h1v1h-1zM4 14h1v1h-1zM6 14h1v1h-1zM7 14h1v1h-1zM8 14h1v1h-1zM11 14h1v1h-1zM13 14h1v1h-1zM14 14h1v1h-1zM18 14h1v1h-1zM20 14h1v1h-1zM21 14h1v1h-1zM22 14h1v1h-1zM0 15h1v1h-1zM2 15h1v1h-1zM5 15h1v1h-1zM9 15h1v1h-1zM10 15h1v1h-1zM11 15h1v1h-1zM12 15h1v1h-1zM13 15h1v1h-1zM14 15h1v1h-1zM16 15h1v1h-1zM17 15h1v1h-1zM18 15h1v1h-1zM20 15h1v1h-1zM21 15h1v1h-1zM23 15h1v1h-1zM24 15h1v1h-1zM0 16h1v1h-1zM2 16h1v1h-1zM3 16h1v1h-1zM6 16h1v1h-1zM11 16h1v1h-1zM12 16h1v1h-1zM13 16h1v1h-1zM14 16h1v1h-1zM16 16h1v1h-1zM17 16h1v1h-1zM18 16h1v1h-1zM19 16h1v1h-1zM20 16h1v1h-1zM22 16h1v1h-1zM24 16h1v1h-1zM8 17h1v1h-1zM9 17h1v1h-1zM10 17h1v1h-1zM11 17h1v1h-1zM15 17h1v1h-1zM16 17h1v1h-1zM20 17h1v1h-1zM22 17h1v1h-1zM23 17h1v1h-1zM0 18h1v1h-1zM1 18h1v1h-1zM2 18h1v1h-1zM3 18h1v1h-1zM4 18h1v1h-1zM5 18h1v1h-1zM6 18h1v1h-1zM13 18h1v1h-1zM15 18h1v1h-1zM16 18h1v1h-1zM18 18h1v1h-1zM20 18h1v1h-1zM24 18h1v1h-1zM0 19h1v1h-1zM6 19h1v1h-1zM10 19h1v1h-1zM12 19h1v1h-1zM13 19h1v1h-1zM14 19h1v1h-1zM15 19h1v1h-1zM16 19h1v1h-1zM20 19h1v1h-1zM22 19h1v1h-1zM23 19h1v1h-1zM24 19h1v1h-1zM0 20h1v1h-1zM2 20h1v1h-1zM3 20h1v1h-1zM4 20h1v1h-1zM6 20h1v1h-1zM8 20h1v1h-1zM10 20h1v1h-1zM11 20h1v1h-1zM13 20h1v1h-1zM14 20h1v1h-1zM15 20h1v1h-1zM16 20h1v1h-1zM17 20h1v1h-1zM18 20h1v1h-1zM19 20h1v1h-1zM20 20h1v1h-1zM0 21h1v1h-1zM2 21h1v1h-1zM3 21h1v1h-1zM4 21h1v1h-1zM6 21h1v1h-1zM8 21h1v1h-1zM9 21h1v1h-1zM12 21h1v1h-1zM15 21h1v1h-1zM20 21h1v1h-1zM24 21h1v1h-1zM0 22h1v1h-1zM2 22h1v1h-1zM3 22h1v1h-1zM4 22h1v1h-1zM6 22h1v1h-1zM8 22h1v1h-1zM10 22h1v1h-1zM11 22h1v1h-1zM12 22h1v1h-1zM13 22h1v1h-1zM15 22h1v1h-1zM20 22h1v1h-1zM21 22h1v1h-1zM24 22h1v1h-1zM0 23h1v1h-1zM6 23h1v1h-1zM11 23h1v1h-1zM14 23h1v1h-1zM19 23h1v1h-1zM21 23h1v1h-1zM0 24h1v1h-1zM1 24h1v1h-1zM2 24h1v1h-1zM3 24h1v1h-1zM4 24h1v1h-1zM5 24h1v1h-1zM6 24h1v1h-1zM9 24h1v1h-1zM10 24h1v1h-1zM11 24h1v1h-1zM13 24h1v1h-1zM15 24h1v1h-1zM17 24h1v1h-1zM19 24h1v1h-1zM20 24h1v1h-1zM21 24h1v1h-1zM22 24h1v1h-1zM24 24h1v1h-1z"/></svg>
+        <svg class="badge" viewBox="0 0 64 64" aria-hidden="true">
+          <rect width="64" height="64" rx="14" fill="#0a1130"/>
+          <g fill="none" stroke="#f0f2fa" stroke-width="3.6" stroke-linejoin="round">
+            <rect x="17" y="17" width="30" height="30" rx="3"/>
+            <rect x="17" y="17" width="30" height="30" rx="3" transform="rotate(45 32 32)"/>
+          </g>
+          <circle cx="32" cy="32" r="5" fill="#ffc21a"/>
+        </svg>
+      </div>
+      <div class="label">Scan &amp; ask</div>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>
