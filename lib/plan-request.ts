@@ -1,4 +1,4 @@
-import { clock, normalizeRules, type Placement, type Rules, type SolverCourse } from './schedule.ts';
+import { clock, DEFAULT_RULES, normalizeRules, type Placement, type Rules, type SolverCourse } from './schedule.ts';
 
 const ALIASES: Record<string, string> = {
   cso: 'computer systems organization', cs: 'computer science', compsci: 'computer science',
@@ -29,16 +29,21 @@ export function matchingCourses<T extends SolverCourse>(courses: T[], text: stri
   }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.course.code.localeCompare(b.course.code)).map((entry) => entry.course);
 }
 
-/** A named list is unambiguous without a model; complex requests still use the assistant. */
-export function namedCourseList(courses: SolverCourse[], text: string): { wants: Array<{ label: string; codes: string[]; sessions: Array<'71' | '72'> }>; missing: string[] } | null {
+/**
+ * A plain list of named courses, read without a model. A name several different courses answer to ("Multivariable
+ * Calculus": for Economics, or for Science and Engineering) offers all of them and marks the list ambiguous, for the
+ * model to choose by the rest of the request; complex requests use the assistant.
+ */
+export function namedCourseList(courses: SolverCourse[], text: string): { wants: Array<{ label: string; codes: string[]; sessions: Array<'71' | '72'> }>; missing: string[]; ambiguous: boolean } | null {
   const list = text.replace(/^\s*(?:please\s+)?(?:(?:i\s+(?:want|need|would like)(?:\s+to take)?)|(?:add|take))\s+/i, '')
-    .replace(/\b(prob(?:s|ability)?)(?:\s+and\s+|\s*&\s*)(stats?|statistics)\b/gi, '$1 $2');
+    .replace(/\b(prob(?:s|ability)?)(?:\s+and\s+|\s*&\s*)(stats?|statistics)\b/gi, '$1 & $2');
   // Anything about times, days, seats or professors is for the model; this only takes a plain list of courses.
   if (/[?]|\b(?:no|not|before|after|off|only|instead|remove|drop|replace|swap|move|put|prefer|avoid|core|elective|weeks?|semester|recommend|why|how|best|good|fine|ok(?:ay)?|waitlists?|waitlisted|full|closed|mornings?|afternoons?|evenings?|gaps?|breaks?|back[ -]to[ -]back|a day|per day|prof(?:essor)?s?|am|pm|mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?)\b/i.test(list)) return null;
   const pieces = matchingCourses(courses, list).length ? [list] : list.split(/[,;\n]+|\s+and\s+/i).map((piece) => piece.trim().replace(/[.!]+$/, '')).filter(Boolean);
   if (!pieces.length || pieces.length > 8) return null;
   const wants: Array<{ label: string; codes: string[]; sessions: Array<'71' | '72'> }> = [];
   const missing: string[] = [];
+  let ambiguous = false;
   for (const piece of pieces) {
     const matches = matchingCourses(courses, piece);
     if (!matches.length) {
@@ -46,12 +51,33 @@ export function namedCourseList(courses: SolverCourse[], text: string): { wants:
       missing.push(piece);
       continue;
     }
-    const title = courseWords(matches[0]!.title).join(' ');
-    const codes = matches.filter((course) => courseWords(course.title).join(' ') === title).map((course) => course.code);
+    const titles = new Set(matches.map((course) => courseWords(course.title).join(' ')));
+    const said = courseWords(piece).join(' ');
+    const title = titles.size === 1 ? [...titles][0] : titles.has(said) ? said : '';
+    const codes = matches.filter((course) => !title || courseWords(course.title).join(' ') === title).map((course) => course.code).slice(0, 8);
+    if (!title) ambiguous = true;
     if (!wants.some((want) => want.codes.some((code) => codes.includes(code)))) wants.push({ label: codes.length > 1 ? piece : '', codes, sessions: [] });
   }
-  return wants.length ? { wants, missing } : null;
+  return wants.length ? { wants, missing, ambiguous } : null;
 }
+
+/** "CSO, Algo, no early classes": a plain list with plain rules in clauses of their own, both read without a model. */
+export function namedListWithRules(courses: SolverCourse[], text: string, current: Rules): { named: NonNullable<ReturnType<typeof namedCourseList>>; rules: Rules } | null {
+  const clauses = text.split(/[,;\n]+|\.\s+/).map((clause) => clause.trim()).filter(Boolean);
+  const said = clauses.filter((clause) => simpleRuleRequest(clause, DEFAULT_RULES));
+  const list = clauses.filter((clause) => !said.includes(clause));
+  if (!said.length || !list.length) return null;
+  const named = namedCourseList(courses, list.join(', '));
+  const rules = simpleRuleRequest(said.join(', '), current);
+  return named && rules ? { named, rules } : null;
+}
+
+/**
+ * "No early classes", "no morning classes", "I like to sleep in": a bound on the day without a clock time. Early is
+ * before 10, morning before noon; a day named in the phrase ("no Friday mornings") makes it the model's to read.
+ */
+const NOT_EARLY = /\b(?:no|nothing|not|avoid|without|hate|skip|don'?t (?:want|like|do|have))\s+(?:[a-z]+\s+){0,3}?(early|mornings?)\b(?:\s+(?:class(?:es)?|starts?|ones))?|\b(?:sleep in|late starts?)\b/gi;
+const DAY_NAMES = /\b(?:mon|tues?|wed|thur?s?|fri|sat|sun)(?:day)?s?\b/i;
 
 /** Explicit times survive model omissions and distinguish a start time from a bound on the day. */
 export function requestedTimes(text: string, current: Rules): Partial<Rules> {
@@ -61,6 +87,7 @@ export function requestedTimes(text: string, current: Rules): Partial<Rules> {
   let previous = 0;
   let mode: 'want' | 'avoid' | 'range' = 'want';
   let negative = false;
+  for (const match of text.matchAll(NOT_EARLY)) if (!DAY_NAMES.test(match[0])) patch.earliest = /^morning/i.test(match[1] ?? '') ? '12:00' : '10:00';
   const matches = [...text.matchAll(/\b(\d{1,2})(?:[:.](\d{2}))?\s*([ap]\.?m\.?)?s?\b/gi)];
   for (const match of matches) {
     const prefix = text.slice(previous, match.index).toLowerCase();
@@ -92,8 +119,10 @@ export function requestedTimes(text: string, current: Rules): Partial<Rules> {
   return patch;
 }
 
+const WEEKDAY_NAMES: Record<string, string> = { Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday', Sat: 'Saturday', Sun: 'Sunday' };
+
 export function timeReply(rules: Rules): string {
-  return [rules.earliest ? `Nothing before ${clock(rules.earliest)}.` : '', rules.latest ? `Done by ${clock(rules.latest)}.` : '', rules.requiredStarts.length ? `Include classes starting at ${rules.requiredStarts.map(clock).join(' and ')}.` : '', rules.avoidStarts.length ? `No classes starting at ${rules.avoidStarts.map(clock).join(' or ')}.` : '', rules.daysOff.length ? `${rules.daysOff.join(', ')} off.` : '', rules.maxPerDay ? `At most ${rules.maxPerDay} classes a day.` : '', rules.noBackToBack ? 'Breaks between classes.' : ''].filter(Boolean).join(' ');
+  return [rules.earliest ? `Nothing before ${clock(rules.earliest)}.` : '', rules.latest ? `Done by ${clock(rules.latest)}.` : '', rules.requiredStarts.length ? `Include classes starting at ${rules.requiredStarts.map(clock).join(' and ')}.` : '', rules.avoidStarts.length ? `No classes starting at ${rules.avoidStarts.map(clock).join(' or ')}.` : '', rules.daysOff.length ? `${rules.daysOff.map((day) => `${WEEKDAY_NAMES[day] ?? day}s`).join(', ')} off.` : '', rules.maxPerDay ? `At most ${rules.maxPerDay} classes a day.` : '', rules.noBackToBack ? 'Breaks between classes.' : ''].filter(Boolean).join(' ');
 }
 
 export function simpleRuleRequest(text: string, current: Rules): Rules | null {
@@ -113,6 +142,7 @@ export function simpleRuleRequest(text: string, current: Rules): Rules | null {
     patch.maxPerDay = counts[count] ?? Number(count);
     return '';
   });
+  rest = rest.replace(NOT_EARLY, (phrase) => (DAY_NAMES.test(phrase) ? phrase : ''));
   rest = rest.replace(/\bno back[ -]to[ -]back(?: classes)?\b/g, () => { patch.noBackToBack = true; return ''; });
   if (!Object.keys(patch).length) return null;
   const remaining = rest.replace(/\b\d{1,2}(?:[:.]\d{2})?\s*(?:[ap]\.?m\.?)?s?\b/g, '').replace(/\b(?:i|a|an|on|at|am|pm|want|need|prefer|please|class|classes|course|courses|and|or|no|not|don't|do|avoid|without|have|include|starting|start|nothing|before|after|earlier|later|than|done|finish|end|by|until|between|to|my|be)\b/g, '').replace(/[^a-z]/g, '');

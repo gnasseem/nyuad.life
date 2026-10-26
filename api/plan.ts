@@ -19,7 +19,7 @@ import { screenAsk } from '../lib/moderation.ts';
 import { providersFromEnv, siteJson } from '../lib/providers.ts';
 import { schoolRows } from '../lib/plan-school.ts';
 import { isPlanSchool, planSchools } from '../lib/plan-schools.ts';
-import { courseWords, matchingCourses, namedCourseList, namedProfessors, requestedPlacement, requestedTimes, simpleRuleRequest, timeReply } from '../lib/plan-request.ts';
+import { courseWords, matchingCourses, namedCourseList, namedListWithRules, namedProfessors, requestedPlacement, requestedTimes, simpleRuleRequest, timeReply } from '../lib/plan-request.ts';
 import { clock, DAYS, DEFAULT_RULES, namesPerson, normalizeRules, PRIMARY, sessionHalf, solve, type Placement, type Rules } from '../lib/schedule.ts';
 import { collapseWhitespace, extractCourseCodes, truncate } from '../lib/text.ts';
 
@@ -113,7 +113,7 @@ const SYSTEM = [
   'Match the way students talk: CSO = Computer Systems Organization; Algo = Algorithms; French1 = Elementary French I (including Elem French I); Probs and Stats = Probability and Statistics. Also match calc, intro to CS, data structures, lin alg, a number without its subject, a professor\'s name for the course they teach. Never use a code that is not in the list. A list of named courses is enough: select them directly, without asking the student to restate it.',
   'sessions: for each want, [] for any length, ["71", "72"] for any seven-week course, ["71"] for the first seven weeks, or ["72"] for the second seven weeks. 71/A71 and 72/A72 are both seven-week sessions. Only choose courses offered in the requested session; do not mistake these session numbers for course codes. Preserve session choices in the current plan unless asked to change them.',
   'missing: anything the student asked for that you could not identify in the relevant course list, in a few words each. The supplied list may omit less relevant courses, so do not claim that a missing course is unavailable in Albert.',
-  'earliest: "HH:MM" when they want no class starting before a time ("nothing before 10" = "10:00"), else null. latest: "HH:MM" when they want to be done by a time, else null.',
+  'earliest: "HH:MM" when they want no class starting before a time ("nothing before 10" = "10:00", "no early classes" = "10:00", "no morning classes" = "12:00"), else null. latest: "HH:MM" when they want to be done by a time, else null.',
   'requiredStarts: exact class start times requested, HH:MM ("I want an 8.30 am class and a 5.00pm class" = ["08:30", "17:00"]). This requires both starts somewhere in the week, not every class at those times. avoidStarts: exact starts excluded ("no 8:30 or 5pm classes" = ["08:30", "17:00"]). Do not replace exact starts with earliest/latest. Preserve existing time choices unless asked to change them.',
   'daysOff: weekdays they want free. maxPerDay: the most classes they want on one day ("no more than two classes a day" = 2), else 0.',
   'noBackToBack: true when they want a break between classes ("no back-to-back classes", "time to eat between classes"), else false. shape: "compact" for fewer days on campus or classes packed together, "spread" for lighter days, else "any". waitlisted: true when waitlisted or closed sections are fine.',
@@ -143,8 +143,10 @@ export default route(['POST'], async (req, res) => {
   const rows = schoolRows(catalog, term, school).filter((row) => row.sections.some((section) => section.status !== 'cancelled'));
   if (!rows.length) throw new ApiError(404, `No ${planSchools(catalog).find((entry) => entry.id === school)?.label} classes are in the catalog for ${term}.`, 'no_school_courses');
   const existing = cleanPlan({ wants: body.current?.wants as Read['wants'], ...(body.current?.rules ?? {}) as Read }, rows);
-  const named = namedCourseList(rows, text);
-  const times = simpleRuleRequest(text, existing.rules);
+  const both = namedListWithRules(rows, text, existing.rules);
+  const list = both?.named ?? namedCourseList(rows, text);
+  const named = list && !list.ambiguous ? list : null;
+  const times = list?.ambiguous ? null : both?.rules ?? simpleRuleRequest(text, existing.rules);
   if (named || times) {
     if (named) for (const want of named.wants) {
       const previous = existing.wants.find((entry) => entry.codes.some((code) => want.codes.includes(code)));
@@ -153,12 +155,16 @@ export default route(['POST'], async (req, res) => {
     const wants = named ? [...existing.wants.filter((want) => !named.wants.some((entry) => entry.codes.some((code) => want.codes.includes(code)))), ...named.wants] : existing.wants;
     if (wants.length > MAX_WANTS) throw new ApiError(400, 'A plan can have up to eight courses. Remove a course before adding more.', 'too_many_courses');
     const rules = times ?? existing.rules;
+    const today = new Date().toISOString().slice(0, 10);
     const missing = (named?.missing ?? []).map((label) => {
-      const elsewhere = catalog.terms.filter((entry) => entry.name !== term && matchingCourses(schoolRows(catalog, entry.name, school), label).length).map((entry) => entry.name);
-      return `${label} is not listed at this site for ${term}.${elsewhere.length ? ` Try ${elsewhere.slice(0, 2).join(' or ')}.` : ' Try another name or course code.'}`;
+      // Newest first; a term already under way is only worth naming as when the course last ran.
+      const elsewhere = catalog.terms.filter((entry) => entry.name !== term && matchingCourses(schoolRows(catalog, entry.name, school), label).length);
+      const coming = elsewhere.filter((entry) => entry.start > today).map((entry) => entry.name);
+      const past = elsewhere.find((entry) => entry.start <= today)?.name;
+      return `${label} is not listed at this site for ${term}.${coming.length ? ` Try ${coming.slice(0, 2).join(' or ')}.` : past ? ` It last ran in ${past}.` : ' Try another name or course code.'}`;
     });
     recordEvent('plan');
-    sendJson(res, 200, { wants, rules, missing, reply: named ? `Added ${named.wants.map((want) => rows.find((row) => row.code === want.codes[0])!.title).join(', ')}.` : timeReply(rules) });
+    sendJson(res, 200, { wants, rules, missing, reply: [named ? `Added ${named.wants.map((want) => rows.find((row) => row.code === want.codes[0])!.title).join(', ')}.` : '', times ? timeReply(rules) : ''].filter(Boolean).join(' ') });
     return;
   }
   if (!gemini && backups.length === 0) throw new ApiError(503, 'The assistant is unavailable. Search and add courses below, or set your times directly.', 'no_model');
@@ -187,9 +193,13 @@ export default route(['POST'], async (req, res) => {
     read = await siteJson<Read>(gemini, backups, { system: SYSTEM, prompt, schema: SCHEMA, maxOutputTokens: 4096, timeoutMs: 20_000 });
   } catch (error) {
     console.warn('[plan] could not read the request:', (error as Error).message);
-    if (!moved.length && !people.avoid.length && !people.prefer.length) throw new ApiError(503, 'Could not read that right now. Try again in a moment.', 'busy');
-    const done = [...moved.map((entry) => `${entry.code} ${entry.component.toLowerCase()} on ${entry.days.join('/')}`), ...people.avoid.map((name) => `not ${name}`), ...people.prefer.map((name) => `with ${name}`)];
-    read = { ...existing.rules, wants: existing.wants, reply: `Done: ${done.join(', ')}.` };
+    // A list naming a course several courses answer to: all of them, for the planner to take whichever fits.
+    if (list) read = { ...(both?.rules ?? existing.rules), wants: [...existing.wants, ...list.wants], missing: list.missing, reply: `Added ${list.wants.map((want) => want.label || rows.find((row) => row.code === want.codes[0])!.title).join(', ')}. Name the exact course if it matters which.` };
+    else {
+      if (!moved.length && !people.avoid.length && !people.prefer.length) throw new ApiError(503, 'Could not read that right now. Try again in a moment.', 'busy');
+      const done = [...moved.map((entry) => `${entry.code} ${entry.component.toLowerCase()} on ${entry.days.join('/')}`), ...people.avoid.map((name) => `not ${name}`), ...people.prefer.map((name) => `with ${name}`)];
+      read = { ...existing.rules, wants: existing.wants, reply: `Done: ${done.join(', ')}.` };
+    }
   }
   recordEvent('plan');
   const result = cleanPlan({ ...existing.rules, ...read }, rows);

@@ -180,8 +180,9 @@ async function profView(catalog: Catalog, asked: string) {
   const courseDigests = new Map(((await boardStore()?.getDigests(codes.map((code) => courseKey(catalog, code))).catch(() => [])) ?? []).map((found) => [found.entity, found]));
   const courses = codes.map((code) => {
     const taught = entry?.courses.get(code);
-    const here = withThem.get(code);
     const own = courseRating(courseDigests.get(courseKey(catalog, code)));
+    // The course page's split by professor, when it has one, so both pages show the same score for them in it.
+    const here = own?.professors.find((part) => profKey(part.name) === key) ?? withThem.get(code);
     const terms = (taught?.terms ?? []).filter((term) => termOrder(term) <= now);
     return { code, title: taught?.title ?? catalog.byCode.get(code)?.[0]?.title ?? '', score: own?.score ?? null, here: here ? { score: here.score, count: here.positive + here.negative + here.neutral } : null, teachingNow: Boolean(taught?.terms.includes(catalog.current)), lastTerm: terms[0] ?? taught?.terms[0] ?? '', terms: terms.slice(0, 8) };
   });

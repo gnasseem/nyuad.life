@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { courseWords } from '../../../lib/plan-request.ts';
 import { api, onRecount, type CourseEntry, type CourseReview, type CourseView, type ProfView, type ScoreIndex } from '../api';
 import { AdminRemove } from '../components/AdminRemove';
 import { HARDNESS, RateSheet, SCALE, StarPick, type RateTarget } from '../components/Rate';
@@ -39,7 +40,8 @@ interface Entry {
   related: string[];
   /** An Abu Dhabi course, or a professor who taught one: what students here mean first. */
   local: boolean;
-  search: { code: string; words: string; aliases: string; related: string };
+  /** titleWords: the title as the Plan reads it, so "cso", "probs and stats" and "French 1" find their courses here too. */
+  search: { code: string; words: string; titleWords: string[]; aliases: string; related: string };
 }
 
 interface Hit {
@@ -53,11 +55,11 @@ function useEntries(courses: CourseEntry[] | null, scores: ScoreIndex | null): E
     const out: Entry[] = [];
     const taught = new Map<string, string[]>();
     for (const course of courses ?? []) {
-      out.push({ kind: 'course', id: course.code, title: course.title, local: course.code.includes('-UH '), related: course.currentPeople.length ? course.currentPeople : course.people.slice(0, 3), search: { code: squash(course.code), words: ` ${fold(course.title)}`, aliases: fold(nicknames(course.title)), related: fold(course.people.join(' ')) } });
+      out.push({ kind: 'course', id: course.code, title: course.title, local: course.code.includes('-UH '), related: course.currentPeople.length ? course.currentPeople : course.people.slice(0, 3), search: { code: squash(course.code), words: ` ${fold(course.title)}`, titleWords: courseWords(course.title), aliases: fold(nicknames(course.title)), related: fold(course.people.join(' ')) } });
       for (const person of course.people) taught.set(person, [...(taught.get(person) ?? []), course.code]);
     }
     for (const name of Object.keys(scores?.profs ?? {})) if (!taught.has(name)) taught.set(name, []);
-    for (const [name, codes] of taught) out.push({ kind: 'prof', id: name, title: name, local: !codes.length || codes.some((code) => code.includes('-UH ')), related: [...codes].sort((a, b) => Number(b.includes('-UH ')) - Number(a.includes('-UH '))), search: { code: '', words: ` ${fold(name)}`, aliases: '', related: squash(codes.join(' ')) } });
+    for (const [name, codes] of taught) out.push({ kind: 'prof', id: name, title: name, local: !codes.length || codes.some((code) => code.includes('-UH ')), related: [...codes].sort((a, b) => Number(b.includes('-UH ')) - Number(a.includes('-UH '))), search: { code: '', words: ` ${fold(name)}`, titleWords: [], aliases: '', related: squash(codes.join(' ')) } });
     return out;
   }, [courses, scores]);
 }
@@ -85,10 +87,12 @@ function rank(entries: Entry[], query: string, scores: ScoreIndex | null): Hit[]
     let missed = false;
     for (const token of tokens) {
       const bare = token.replace(/[^a-z0-9]/g, '');
+      const said = courseWords(token);
       const hit = Math.max(
         bare && entry.search.code.includes(bare) ? 8 : 0,
         entry.search.words.includes(` ${token}`) ? (entry.kind === 'prof' ? 7 : 5) : entry.search.words.includes(token) ? 3 : 0,
         entry.search.aliases.split(' ').includes(token) ? 6 : 0,
+        entry.kind === 'course' && said.length && said.every((word) => entry.search.titleWords.includes(word)) ? 5 : 0,
         bare.length > 2 && entry.search.related.includes(bare.length > 3 ? bare : ` ${bare}`) ? 1 : 0,
         entry.kind === 'course' && entry.search.related.includes(token) ? 1 : 0,
       );

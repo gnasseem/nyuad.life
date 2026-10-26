@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildCatalog, courseRows, type Offering } from './courses.ts';
-import { namedCourseList, namedProfessors, requestedPlacement, requestedTimes, simpleRuleRequest } from './plan-request.ts';
+import { namedCourseList, namedListWithRules, namedProfessors, requestedPlacement, requestedTimes, simpleRuleRequest } from './plan-request.ts';
 import { DEFAULT_RULES, highlights, lanes, minutes, normalizeRules, solve, waysToTake, type Quality, type Rules, type SolverCourse, type SolverSection } from './schedule.ts';
 
 const TERM = { startDate: '2026-08-31', endDate: '2026-12-14' };
@@ -349,6 +349,15 @@ describe('requests in students’ own words', () => {
     expect(read?.missing).toEqual([]);
     expect(namedCourseList(courses.slice(1), 'CSO, Algo, French1, Probs and Stats')?.missing).toEqual(['CSO']);
     expect(namedCourseList(courses, 'Algo, no 8:30am classes')).toBeNull();
+    const both = namedListWithRules(courses, 'CSO, Algo, Probs and Stats, Elementary French 1, no early classes', DEFAULT_RULES);
+    expect(both?.named.wants.map((want) => want.codes)).toEqual([['CS-UH 0'], ['CS-UH 1'], ['CS-UH 3'], ['CS-UH 2']]);
+    expect(both?.rules.earliest).toBe('10:00');
+    expect(namedCourseList(courses.slice(0, 2), 'CSO, Probs and Stats')?.missing).toEqual(['Probs & Stats']);
+    const mvc = ['Multivariable Calculus with Applications to Science and Engineering', 'Multivariable Calculus with Applications to Economics'].map((title, i) => ({ code: `MATH-UH 102${i}`, title, credits: '4', sections: [] }));
+    const either = namedCourseList([...courses, ...mvc], 'CSO, Multivariable Calculus');
+    expect(either?.ambiguous).toBe(true);
+    expect(either?.wants[1]?.codes.sort()).toEqual(['MATH-UH 1020', 'MATH-UH 1021']);
+    expect(namedCourseList([...courses, ...mvc], 'CSO, Algo')?.ambiguous).toBe(false);
   });
 
   it('reads a course part moved to other days', () => {
@@ -382,6 +391,10 @@ describe('requests in students’ own words', () => {
     expect(simpleRuleRequest('Nothing before 10, Fridays off', DEFAULT_RULES)).toMatchObject({ earliest: '10:00', daysOff: ['Fri'] });
     expect(simpleRuleRequest('At most two classes a day', DEFAULT_RULES)).toMatchObject({ maxPerDay: 2 });
     expect(simpleRuleRequest('No back-to-back classes', DEFAULT_RULES)).toMatchObject({ noBackToBack: true });
+    expect(simpleRuleRequest('no early classes', DEFAULT_RULES)?.earliest).toBe('10:00');
+    expect(simpleRuleRequest("I don't want morning classes", DEFAULT_RULES)?.earliest).toBe('12:00');
+    expect(requestedTimes('no Friday mornings', DEFAULT_RULES)).toEqual({});
+    expect(requestedTimes('nothing too early, but nothing before 11 on any day', DEFAULT_RULES)).toEqual({ earliest: '11:00' });
     expect(requestedTimes('no 8:30am', rules({ requiredStarts: ['08:30', '17:00'] }))).toEqual({ requiredStarts: ['17:00'], avoidStarts: ['08:30'] });
     expect(requestedTimes("I don't want an 8:30am class or a 5pm class", DEFAULT_RULES)).toEqual({ requiredStarts: [], avoidStarts: ['08:30', '17:00'] });
     expect(requestedTimes('No more than two classes a day, I want an 8:30am class', DEFAULT_RULES)).toEqual({ requiredStarts: ['08:30'], avoidStarts: [] });

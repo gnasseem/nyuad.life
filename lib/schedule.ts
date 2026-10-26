@@ -454,7 +454,9 @@ export function score(choices: Choice[], rules: Rules, quality?: Quality): numbe
         const gap = block.start - sorted[i - 1]!.end;
         if (gap > BREAK) total += gap / (rules.shape === 'compact' ? 4 : 10);
       }
+      // Between equal weeks, the later start: few students want a 9am they could have had at 11.
       if (!rules.earliest && block.start < 9 * 60) total += 8;
+      else if (!rules.earliest && block.start < 10 * 60) total += 2;
       if (!rules.latest && block.end > 18 * 60 + 30) total += 5;
     }
     loads.push(load);
