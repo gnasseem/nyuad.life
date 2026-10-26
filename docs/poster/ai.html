@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>nyuad.life poster: An AI that read every thread (A3)</title>
+<link rel="stylesheet" href="poster.css">
+<script src="fit.js" defer></script>
+<style>
+  .poster {
+    --bg: radial-gradient(110% 75% at 15% 20%, #3d74ff 0%, #1e5bff 38%, #0c2690 100%);
+    --soft: #dfe6ff;
+  }
+
+  .spark { position: absolute; left: 196mm; top: 94mm; width: 100mm; height: 100mm; }
+
+  .chat { position: absolute; left: 14mm; right: 14mm; top: 184mm; }
+  .ask {
+    margin-left: auto; width: max-content; max-width: 200mm;
+    background: var(--navy); color: var(--paper); border-radius: 6mm 6mm 1.5mm 6mm;
+    padding: 4.4mm 6.4mm; font-family: "Hubot Sans", sans-serif; font-weight: 700; font-stretch: 90%;
+    font-size: 8.4mm; box-shadow: 0 1.6mm 0 #050a1f; transform: rotate(-1.5deg);
+  }
+  .answer {
+    margin-top: 7mm; width: 250mm; background: var(--paper); color: var(--navy);
+    border-radius: 6mm 6mm 6mm 1.5mm; padding: 7mm 8mm 8mm; box-shadow: 0 2mm 0 #050a1f;
+    transform: rotate(1deg);
+  }
+  .answer header { display: flex; align-items: center; gap: 3mm; font-family: "Hubot Sans", sans-serif; font-weight: 800; font-size: 6.4mm; }
+  .answer header img { width: 9mm; height: 9mm; }
+  .conf {
+    margin-left: auto; display: flex; align-items: center; gap: 2mm; padding: 1.4mm 3.4mm; border-radius: 9mm;
+    background: #dcf2e5; color: #087a3b; font-size: 4.4mm; font-weight: 800;
+  }
+  .conf::before { content: ""; width: 2.6mm; height: 2.6mm; border-radius: 50%; background: #0f9a4c; }
+  .line { display: flex; align-items: center; gap: 2.4mm; margin-top: 4.4mm; }
+  .line i { display: block; height: 4.2mm; border-radius: 2.1mm; background: rgba(10, 17, 48, .2); }
+  .cite {
+    display: inline-grid; place-items: center; width: 6.4mm; height: 6.4mm; border-radius: 1.6mm;
+    background: var(--cobalt); color: #fff; font-family: "Hubot Sans", sans-serif; font-weight: 800; font-size: 4.2mm;
+  }
+  .sources { margin-top: 5mm; padding-top: 4mm; border-top: .4mm solid rgba(10, 17, 48, .12); display: grid; gap: 2.2mm; }
+  .sources div { display: flex; align-items: center; gap: 3mm; font-size: 5.2mm; font-weight: 600; color: #434d75; }
+</style>
+</head>
+<body>
+<div class="poster">
+
+  <svg class="pattern" viewBox="0 0 297 420" aria-hidden="true">
+    <defs>
+      <pattern id="tile" width="27" height="27" patternUnits="userSpaceOnUse">
+        <g fill="none" stroke-opacity=".09" stroke-width=".45">
+          <rect x="7.5" y="7.5" width="12" height="12"/>
+          <rect x="7.5" y="7.5" width="12" height="12" transform="rotate(45 13.5 13.5)"/>
+        </g>
+      </pattern>
+    </defs>
+    <rect width="297" height="420" fill="url(#tile)"/>
+  </svg>
+
+  <svg class="spark" viewBox="-100 -100 200 200" aria-hidden="true">
+    <defs>
+      <radialGradient id="glow">
+        <stop offset="0" stop-color="#ffc21a" stop-opacity=".7"/>
+        <stop offset="1" stop-color="#ffc21a" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <circle r="95" fill="url(#glow)"/>
+    <g fill="none" stroke="#ffc21a" stroke-width="5" stroke-linejoin="round">
+      <rect x="-48" y="-48" width="96" height="96" rx="5"/>
+      <rect x="-48" y="-48" width="96" height="96" rx="5" transform="rotate(45)"/>
+    </g>
+    <circle r="16" fill="#ffc21a"/>
+  </svg>
+
+  <h1 class="head">
+    <span class="fit">An AI that</span>
+    <span class="fit">read every</span>
+    <span class="match accent">thread.</span>
+  </h1>
+
+  <div class="chat">
+    <div class="ask">Is it hard to switch majors after first year?</div>
+    <div class="answer">
+      <header><img src="../../web/public/favicon.svg" alt="">nyuad.life<span class="conf">High confidence</span></header>
+      <div class="line"><i style="width:150mm"></i><span class="cite">1</span><i style="width:66mm"></i></div>
+      <div class="line"><i style="width:96mm"></i><span class="cite">2</span><i style="width:112mm"></i><span class="cite">3</span></div>
+      <div class="line"><i style="width:170mm"></i></div>
+      <div class="sources">
+        <div><span class="cite">1</span>Room of Requirement · 41 comments</div>
+        <div><span class="cite">2</span>nyuad.edu · official page</div>
+        <div><span class="cite">3</span>Answered by a student on nyuad.life</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="sub" style="top:318mm; right:14mm">
+    <b>13,000+ forum threads,</b> official pages and Albert, read for you.<br>
+    Every answer shows its sources.
+  </p>
+
+  <footer class="foot">
+    <div>
+      <div class="url">nyuad.life</div>
+      <div class="tags">Ask anything<i>/</i>Cited<i>/</i>Free</div>
+    </div>
+    <div class="scan">
+      <div class="box"><img class="qr" src="qr.svg" alt=""><img class="badge" src="../../web/public/favicon.svg" alt=""></div>
+      <div class="label">Scan &amp; ask</div>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>

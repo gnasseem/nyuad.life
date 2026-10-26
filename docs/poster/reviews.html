@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>nyuad.life poster: Know the prof before you register (A3)</title>
+<link rel="stylesheet" href="poster.css">
+<script src="fit.js" defer></script>
+<style>
+  .poster {
+    --bg: var(--paper); --ink: var(--navy); --soft: #434d75; --accent: #1e5bff; --tile: #0a1130;
+  }
+
+  .kicker {
+    position: absolute; left: 14mm; top: 14mm; padding: 2.4mm 5mm; border-radius: 9mm;
+    background: var(--navy); color: var(--paper);
+    font-family: "Hubot Sans", sans-serif; font-weight: 900; font-size: 6mm; letter-spacing: .8mm; text-transform: uppercase;
+  }
+  .poster .head { top: 32mm; }
+
+  .stack { position: absolute; left: 26mm; top: 194mm; width: 240mm; height: 108mm; }
+  .back { position: absolute; inset: 0; border-radius: 7mm; }
+  .card {
+    position: absolute; inset: 0; background: #fff; border-radius: 7mm; padding: 8mm 9mm;
+    box-shadow: 0 2mm 0 var(--navy); border: .5mm solid rgba(10, 17, 48, .1); transform: rotate(-2deg);
+    display: grid; grid-template-columns: 1fr 66mm; gap: 8mm; color: var(--navy);
+  }
+  .who { display: flex; align-items: center; gap: 4mm; }
+  .face { width: 17mm; height: 17mm; border-radius: 50%; background: linear-gradient(135deg, #c9d5ff, #8fb0ff); }
+  .name i { display: block; height: 4.6mm; width: 58mm; border-radius: 2.3mm; background: rgba(10, 17, 48, .8); }
+  .name i + i { margin-top: 2.4mm; width: 36mm; height: 3.4mm; background: rgba(10, 17, 48, .2); }
+  .course { margin-top: 5mm; font-family: "Hubot Sans", sans-serif; font-weight: 800; font-size: 5mm; color: #1849d1; letter-spacing: .3mm; text-transform: uppercase; }
+  .verdict { margin-top: 2.4mm; font-size: 7.4mm; font-weight: 700; line-height: 1.2; }
+  .chips { margin-top: 5mm; display: flex; flex-wrap: wrap; gap: 2.2mm; }
+  .chips span { padding: 1.6mm 3.4mm; border-radius: 9mm; font-size: 4.2mm; font-weight: 700; }
+  .like { background: #dcf2e5; color: #087a3b; }
+  .warn { background: #fff3cc; color: #8a5e00; }
+
+  .score { border-left: .4mm solid rgba(10, 17, 48, .1); padding-left: 8mm; display: flex; flex-direction: column; }
+  .num { font-family: "Hubot Sans", sans-serif; font-weight: 900; font-size: 30mm; line-height: .9; letter-spacing: -.5mm; }
+  .stars { color: var(--amber); font-size: 7mm; letter-spacing: .6mm; margin-top: 1mm; }
+  .basis { font-size: 3.8mm; font-weight: 600; color: #5f688e; margin-top: 1.6mm; }
+  .meter { margin-top: 5mm; font-size: 4mm; font-weight: 700; }
+  .meter div { display: flex; gap: 1.2mm; margin-top: 1.4mm; }
+  .meter i { flex: 1; height: 3mm; border-radius: 1.5mm; background: rgba(10, 17, 48, .12); }
+  .meter i.on { background: #1e5bff; }
+</style>
+</head>
+<body>
+<div class="poster">
+
+  <svg class="pattern" viewBox="0 0 297 420" aria-hidden="true">
+    <defs>
+      <pattern id="tile" width="27" height="27" patternUnits="userSpaceOnUse">
+        <g fill="none" stroke-opacity=".07" stroke-width=".45">
+          <rect x="7.5" y="7.5" width="12" height="12"/>
+          <rect x="7.5" y="7.5" width="12" height="12" transform="rotate(45 13.5 13.5)"/>
+        </g>
+      </pattern>
+    </defs>
+    <rect width="297" height="420" fill="url(#tile)"/>
+  </svg>
+
+  <div class="kicker">Before Spring 2027 registration</div>
+
+  <h1 class="head">
+    <span class="fit">Know the prof</span>
+    <span class="fit">before you</span>
+    <span class="fit accent">register.</span>
+  </h1>
+
+  <div class="stack">
+    <div class="back" style="background:var(--navy); transform:rotate(5deg) translate(4mm, 2mm)"></div>
+    <div class="back" style="background:var(--amber); transform:rotate(2deg) translate(2mm, 1mm)"></div>
+    <div class="card">
+      <div>
+        <div class="who"><span class="face"></span><span class="name"><i></i><i></i></span></div>
+        <div class="course">Intro to CS</div>
+        <p class="verdict">Hard, but you’ll actually learn to code.</p>
+        <div class="chips">
+          <span class="like">Clear lectures</span><span class="like">Fair grading</span><span class="like">Always in office hours</span>
+          <span class="warn">Weekly problem sets</span>
+        </div>
+      </div>
+      <div class="score">
+        <div class="num">4.7</div>
+        <div class="stars">★★★★★</div>
+        <div class="basis">from 38 forum posts and reviews</div>
+        <div class="meter">Difficulty<div><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div></div>
+        <div class="meter">Workload<div><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="sub" style="top:316mm; right:14mm">
+    <b>Every course and professor in Albert,</b> rated from<br>
+    everything students ever posted about them.
+  </p>
+
+  <footer class="foot">
+    <div>
+      <div class="url">nyuad.life</div>
+      <div class="tags">Reviews<i>/</i>Plan<i>/</i>Ask</div>
+    </div>
+    <div class="scan">
+      <div class="box"><img class="qr" src="qr-courses.svg" alt=""><img class="badge" src="../../web/public/favicon.svg" alt=""></div>
+      <div class="label">Scan &amp; check</div>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>

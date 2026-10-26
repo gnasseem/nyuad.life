@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>nyuad.life poster: Spring 2027, no 9AMs (A3)</title>
+<link rel="stylesheet" href="poster.css">
+<script src="fit.js" defer></script>
+<style>
+  .poster {
+    --bg: var(--amber); --ink: var(--navy); --soft: #3a3418; --accent: #1e5bff; --tile: #0a1130;
+    --foot-bg: var(--navy); --foot-ink: var(--amber);
+  }
+  .poster .scan .box { box-shadow: 0 2.5mm 0 #000; }
+
+  .kicker {
+    position: absolute; left: 14mm; top: 14mm; padding: 2.4mm 5mm; border-radius: 9mm;
+    background: var(--navy); color: var(--amber);
+    font-family: "Hubot Sans", sans-serif; font-weight: 900; font-size: 6mm; letter-spacing: .8mm; text-transform: uppercase;
+  }
+  .poster .head { top: 32mm; }
+
+  .prompt {
+    position: absolute; left: 14mm; right: 14mm; top: 160mm; height: 19mm;
+    display: flex; align-items: center; gap: 4mm; padding: 0 3mm 0 6mm;
+    background: #fff; border-radius: 9.5mm; box-shadow: 0 1.6mm 0 var(--navy);
+    font-size: 6.2mm; font-weight: 600; color: var(--navy); white-space: nowrap;
+  }
+  .prompt .caret { display: inline-block; width: .7mm; height: 7mm; background: #1e5bff; vertical-align: middle; margin-left: .6mm; }
+  .prompt .go {
+    margin-left: auto; padding: 3.4mm 6mm; border-radius: 7mm; background: var(--navy); color: var(--amber);
+    font-family: "Hubot Sans", sans-serif; font-weight: 900; font-size: 5.6mm; text-transform: uppercase; letter-spacing: .4mm;
+  }
+
+  .week {
+    position: absolute; left: 14mm; right: 14mm; top: 188mm; height: 124mm;
+    background: var(--navy); border-radius: 6mm; padding: 4mm 5mm 5mm 17mm; color: var(--paper);
+    transform: rotate(-1deg); box-shadow: 0 2mm 0 #000;
+  }
+  .days { display: grid; grid-template-columns: repeat(5, 1fr); height: 9mm; align-items: center;
+    font-family: "Hubot Sans", sans-serif; font-weight: 800; font-size: 4.6mm; letter-spacing: .5mm; text-transform: uppercase; color: #8790b9; }
+  .days span { padding-left: 1mm; }
+  .grid { position: relative; height: 104mm; --hour: 13mm; --col: 20%; }
+  .hour { position: absolute; left: -13mm; font-size: 3.4mm; font-weight: 600; color: #5f688e; transform: translateY(-50%); }
+  .rule { position: absolute; left: 0; right: 0; border-top: .3mm solid rgba(240, 242, 250, .08); }
+  .blk {
+    position: absolute; width: calc(var(--col) - 2mm); padding: 2.2mm 2.6mm; border-radius: 2.4mm; color: var(--navy);
+    top: calc((var(--s) - 9) * var(--hour)); height: calc((var(--e) - var(--s)) * var(--hour) - 1mm);
+    left: calc(var(--d) * var(--col));
+  }
+  .blk b { display: block; font-family: "Hubot Sans", sans-serif; font-weight: 800; font-size: 4.6mm; line-height: 1.05; }
+  .blk small { font-size: 3.3mm; font-weight: 600; opacity: .75; }
+  .blk em { position: absolute; right: 2mm; bottom: 1.8mm; font-style: normal; font-size: 3.2mm; font-weight: 800;
+    padding: .5mm 1.6mm; border-radius: 2mm; background: rgba(10, 17, 48, .14); }
+  .c1 { background: #4f82ff; color: #fff; } .c1 em { background: rgba(255, 255, 255, .22); }
+  .c2 { background: var(--amber); }
+  .c3 { background: #25b862; }
+  .c4 { background: #f0f2fa; }
+  .nope {
+    position: absolute; border-radius: 2.4mm; display: grid; place-items: center;
+    background: repeating-linear-gradient(-45deg, rgba(240, 242, 250, .1) 0 1.4mm, transparent 1.4mm 3.6mm);
+    border: .4mm dashed rgba(240, 242, 250, .3);
+    font-family: "Hubot Sans", sans-serif; font-weight: 900; text-transform: uppercase; color: rgba(240, 242, 250, .7);
+  }
+</style>
+</head>
+<body>
+<div class="poster">
+
+  <svg class="pattern" viewBox="0 0 297 420" aria-hidden="true">
+    <defs>
+      <pattern id="tile" width="27" height="27" patternUnits="userSpaceOnUse">
+        <g fill="none" stroke-opacity=".08" stroke-width=".45">
+          <rect x="7.5" y="7.5" width="12" height="12"/>
+          <rect x="7.5" y="7.5" width="12" height="12" transform="rotate(45 13.5 13.5)"/>
+        </g>
+      </pattern>
+    </defs>
+    <rect width="297" height="420" fill="url(#tile)"/>
+  </svg>
+
+  <div class="kicker">Spring 2027 registration</div>
+
+  <h1 class="head">
+    <span class="fit">No 9AMs.</span>
+    <span class="fit accent">Fridays off.</span>
+  </h1>
+
+  <div class="prompt">
+    <span>calc, intro to CS, any Arts Core, nothing before 10, Fridays off<span class="caret"></span></span>
+    <span class="go">Plan</span>
+  </div>
+
+  <div class="week">
+    <div class="days"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span></div>
+    <div class="grid">
+      <span class="hour" style="top:0">9am</span><span class="hour" style="top:26mm">11am</span><span class="hour" style="top:52mm">1pm</span><span class="hour" style="top:78mm">3pm</span><span class="hour" style="top:104mm">5pm</span>
+      <i class="rule" style="top:26mm"></i><i class="rule" style="top:52mm"></i><i class="rule" style="top:78mm"></i>
+
+      <div class="nope" style="left:0; width:calc(80% - 2mm); top:0; height:12mm; font-size:5mm; letter-spacing:1.5mm">No 9AMs</div>
+      <div class="nope" style="left:80%; width:calc(20% - 2mm); top:0; height:103mm; font-size:13mm; color:var(--amber); border-color:rgba(255,194,26,.6)">
+        <span style="transform:rotate(-90deg); letter-spacing:2mm">Off</span>
+      </div>
+
+      <div class="blk c1" style="--d:0; --s:10; --e:11.25"><b>Calculus</b><small>10:00–11:15</small><em>★ 4.8</em></div>
+      <div class="blk c1" style="--d:2; --s:10; --e:11.25"><b>Calculus</b><small>10:00–11:15</small><em>★ 4.8</em></div>
+      <div class="blk c2" style="--d:1; --s:11.83; --e:13.08"><b>Intro to CS</b><small>11:50–13:05</small><em>★ 4.6</em></div>
+      <div class="blk c2" style="--d:3; --s:11.83; --e:13.08"><b>Intro to CS</b><small>11:50–13:05</small><em>★ 4.6</em></div>
+      <div class="blk c3" style="--d:0; --s:14.17; --e:15.42"><b>Arts Core</b><small>14:10–15:25</small><em>★ 4.9</em></div>
+      <div class="blk c3" style="--d:2; --s:14.17; --e:15.42"><b>Arts Core</b><small>14:10–15:25</small><em>★ 4.9</em></div>
+      <div class="blk c4" style="--d:3; --s:14.17; --e:16.83"><b>CS Lab</b><small>14:10–16:50</small></div>
+    </div>
+  </div>
+
+  <p class="sub" style="top:320mm; right:14mm">
+    <b>Type what you want. Swipe clash-free weeks,</b><br>
+    ranked by what students say about the profs.
+  </p>
+
+  <footer class="foot">
+    <div>
+      <div class="url">nyuad.life</div>
+      <div class="tags">Plan<i>/</i>Prof reviews<i>/</i>Ask</div>
+    </div>
+    <div class="scan">
+      <div class="box"><img class="qr" src="qr-plan.svg" alt=""><img class="badge" src="../../web/public/favicon.svg" alt=""></div>
+      <div class="label">Scan &amp; plan</div>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>

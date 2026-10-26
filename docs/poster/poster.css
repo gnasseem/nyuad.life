@@ -1,0 +1,81 @@
+/* Shared by every A3 poster in this folder. Each poster sets its own colours on .poster. */
+@import url("https://fonts.googleapis.com/css2?family=Hubot+Sans:wdth,wght@75..125,500..900&family=Mona+Sans:wdth,wght@75..125,400..800&display=swap");
+
+@page { size: 297mm 420mm; margin: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: #0a1130; }
+
+.poster {
+  --navy: #0a1130; --navy-2: #121b42; --paper: #f0f2fa;
+  --amber: #ffc21a; --cobalt: #2a63ff; --sky: #8fb0ff; --green: #25b862;
+  --bg: radial-gradient(120% 70% at 85% 52%, #16246a 0%, #0a1130 58%);
+  --ink: var(--paper); --soft: #c9cfe6; --accent: var(--amber);
+  --foot-bg: var(--amber); --foot-ink: var(--navy); --tile: #f0f2fa;
+
+  position: relative; width: 297mm; height: 420mm; overflow: hidden;
+  background: var(--bg); color: var(--ink);
+  font-family: "Mona Sans", sans-serif;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+.pattern { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pattern g { stroke: var(--tile); }
+
+.head {
+  position: absolute; left: 14mm; top: 14mm; right: 14mm;
+  font-family: "Hubot Sans", sans-serif; font-weight: 900;
+  font-stretch: 75%; text-transform: uppercase; line-height: .82;
+}
+.head span { display: block; }
+.head .accent { color: var(--accent); }
+/* fit.js sizes each .fit line to the headline's full width. */
+.head .fit { width: max-content; letter-spacing: -.015em; white-space: nowrap; }
+
+.sub { position: absolute; left: 14mm; font-size: 7.8mm; line-height: 1.18; font-weight: 500; color: var(--soft); }
+.sub b { color: var(--ink); font-weight: 800; }
+
+/* Speech bubbles. Shadows stay flat: Chrome's PDF output turns blurred shadows into dark boxes. */
+.q {
+  position: absolute; padding: 4.2mm 6mm 4.6mm; border-radius: 6mm;
+  font-family: "Hubot Sans", sans-serif; font-weight: 700; font-stretch: 90%;
+  font-size: 8.4mm; line-height: 1.05; white-space: nowrap;
+  box-shadow: 0 1.6mm 0 #050a1f;
+}
+.q::after {
+  content: ""; position: absolute; bottom: -3.2mm; width: 7mm; height: 7mm;
+  background: inherit; transform: rotate(45deg); border-radius: 1mm; z-index: -1;
+}
+.q.l::after { left: 8mm; }
+.q.r::after { right: 8mm; }
+.q.paper { background: var(--paper); color: var(--navy); }
+.q.amber { background: var(--amber); color: var(--navy); }
+.q.cobalt { background: var(--cobalt); color: #fff; }
+.q.ghost { background: var(--navy-2); color: var(--paper); border: .6mm solid rgba(240, 242, 250, .25); }
+
+.foot {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 78mm;
+  background: var(--foot-bg); color: var(--foot-ink);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 14mm;
+}
+.url {
+  font-family: "Hubot Sans", sans-serif; font-weight: 900; font-stretch: 80%;
+  font-size: 46mm; line-height: .9; letter-spacing: -1mm;
+}
+.url small { font-size: .42em; letter-spacing: 0; opacity: .55; }
+.tags {
+  margin-top: 5mm; font-family: "Hubot Sans", sans-serif; font-weight: 800;
+  font-size: 6mm; letter-spacing: .5mm; text-transform: uppercase;
+}
+.tags i { font-style: normal; opacity: .45; padding: 0 2mm; }
+.scan { display: flex; flex-direction: column; align-items: center; gap: 2.4mm; }
+.scan .box {
+  position: relative; width: 62mm; height: 62mm; background: #fff;
+  border-radius: 4mm; padding: 1mm; transform: rotate(3deg);
+  box-shadow: 0 2.5mm 0 var(--foot-ink);
+}
+.qr { display: block; width: 100%; height: 100%; }
+.badge { position: absolute; left: 50%; top: 50%; width: 12mm; height: 12mm; transform: translate(-50%, -50%); }
+.scan .label {
+  font-family: "Hubot Sans", sans-serif; font-weight: 900; font-size: 5.2mm;
+  letter-spacing: 1mm; text-transform: uppercase;
+}
