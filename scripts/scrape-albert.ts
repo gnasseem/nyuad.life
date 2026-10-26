@@ -222,11 +222,17 @@ function readCourses(): Course[] {
     .map((line) => JSON.parse(line) as Course);
 }
 
-/** Replaces the rows of each subject and term in `courses` and keeps every other row in the file. */
-function save(courses: Course[]): void {
-  const key = (course: Course) => `${course.school ?? 'NYU Abu Dhabi'}|${course.term}|${course.code.split(' ')[0]}`;
-  const replaced = new Set(courses.map(key));
-  const all = [...readCourses().filter((course) => !replaced.has(key(course))), ...courses];
+/**
+ * Replaces the rows of the searched subject for each term in `courses` and keeps every other row in the file. A
+ * cross-listed course from another subject (PHIL-UA's results list "MATH-UA 236 Metalogic") replaces only its own row:
+ * keying it by its subject would wipe that subject's other courses for the term.
+ */
+function save(courses: Course[], subject: string): void {
+  const school = (course: Course) => course.school ?? 'NYU Abu Dhabi';
+  const own = new Set(courses.filter((course) => course.code.split(' ')[0] === subject).map((course) => `${school(course)}|${course.term}`));
+  const exact = new Set(courses.map((course) => `${school(course)}|${course.term}|${course.code}`));
+  const replaced = (course: Course) => (course.code.split(' ')[0] === subject && own.has(`${school(course)}|${course.term}`)) || exact.has(`${school(course)}|${course.term}|${course.code}`);
+  const all = [...readCourses().filter((course) => !replaced(course)), ...courses];
   all.sort((a, b) => termOrder(a.term) - termOrder(b.term) || a.code.localeCompare(b.code));
   writeFileSync(`${OUT_FILE}.tmp`, all.map((course) => JSON.stringify(course)).join('\n') + '\n');
   renameSync(`${OUT_FILE}.tmp`, OUT_FILE);
@@ -314,7 +320,7 @@ async function main(): Promise<void> {
         const classes = courses.reduce((sum, course) => sum + course.sections.length, 0);
         const total = Number(/Total Class Count: (\d+)/.exec(header)?.[1] ?? classes);
         if (classes !== total) throw new Error(`${code}: read ${classes} classes but Albert counts ${total}; keeping the previous catalog instead of saving an incomplete subject.`);
-        save(courses);
+        save(courses, code);
         read.push(...courses);
         log(`${code}: ${courses.length} courses, ${classes} classes (${index + 1}/${subjects.length})`);
       } else {
