@@ -361,7 +361,7 @@ describe('backup providers', () => {
   });
 
   it('uses separate orders for small tasks and answers, while honoring explicit overrides', () => {
-    expect(modelOrder({}).slice(0, 3)).toEqual(['gemini', 'groq', 'cloudflare']);
+    expect(modelOrder({}).slice(0, 3)).toEqual(['groq', 'gemini', 'cloudflare']);
     expect(modelOrder({}, 'lite').slice(0, 3)).toEqual(['groq', 'gemini', 'cloudflare']);
     expect(modelOrder({ ROR_MODEL_ORDER: 'zai,gemini' }, 'lite').slice(0, 2)).toEqual(['zai', 'gemini']);
     expect(modelOrder({ ROR_MODEL_ORDER: 'zai', ROR_LITE_MODEL_ORDER: 'cloudflare' }, 'lite')[0]).toBe('cloudflare');

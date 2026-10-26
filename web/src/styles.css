@@ -1228,7 +1228,7 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
   .page-head h1 { font-size: 26px; }
   .ph-ar { font-size: 15px; }
   .ph-sub { font-size: 14px; }
-  .conv-main { min-height: calc(100dvh - var(--bar) - var(--tab) - 16px); }
+  .conv-main { min-height: calc(100dvh - var(--bar) - var(--tab) - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
   .composer-wrap { bottom: calc(var(--tab) + env(safe-area-inset-bottom)); }
   .toast { bottom: calc(var(--tab) + 16px + env(safe-area-inset-bottom)); }
   .admin-badge span { display: none; }
@@ -1483,7 +1483,14 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
   .tabbar a[aria-current='page'] > svg { background: var(--line-soft); color: var(--line-ink); }
   .tabbar a[data-line='ask'][aria-current='page'] > svg { color: var(--ink); }
   .tabbar a::before { display: none; }
-  .tabbar a { gap: 2px; }
+  .tabbar a { gap: 3px; font-size: 11px; }
+  /* One equal column per section, however many there are, so the bar spans the screen with no gap at the end. */
+  .tabbar { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); padding-top: 6px; }
+  /* The header keeps to the brand and two quiet controls; a boxed button there outweighs the page under it. */
+  .feedback-btn { min-height: 44px; padding: 0 10px; border: 0; background: transparent; font-size: 14px; }
+  .conv-head .new-chat { border-color: transparent; background: transparent; }
+  /* The follow-up box docks across the whole width, so its backdrop has no edges floating over the page. */
+  .composer-wrap { margin: 0 -16px; padding: 14px 16px 12px; background: linear-gradient(to top, var(--ground) 72%, transparent); }
 }
 @media (max-width: 640px) {
   .page-head { gap: 10px 16px; margin-bottom: 14px; }

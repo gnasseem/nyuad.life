@@ -90,8 +90,9 @@ const PRESETS: Preset[] = [
   { id: 'gateway', label: 'Vercel AI Gateway', key: 'AI_GATEWAY_API_KEY', baseUrl: 'https://ai-gateway.vercel.sh/v1', models: ['openai/gpt-oss-120b'], liteModels: ['openai/gpt-oss-20b'], maxPromptChars: 80_000, maxOutputTokens: 2_000, freeTier: '$5 of credit every 30 days', listsModels: false, extra: (model) => (/gpt-oss/.test(model) ? { reasoning_effort: 'low' } : {}) },
 ];
 
-// Flash-Lite answered the production probe; GLM's free tier repeatedly waited past the answer hedge.
-export const DEFAULT_ORDER = ['gemini', 'groq', 'cloudflare', 'zai', 'openrouter', 'mistral', 'gateway'];
+// Groq's gpt-oss starts writing in about a second; Flash-Lite takes 4-7 s and over 15 s when Gemini is overloaded.
+// GLM's free tier repeatedly waited past the answer hedge.
+export const DEFAULT_ORDER = ['groq', 'gemini','cloudflare', 'zai', 'openrouter', 'mistral', 'gateway'];
 // Small tasks use Groq's 20B model before spending an answer request or OpenRouter's small account-wide allowance.
 const LITE_ORDER = ['groq', 'gemini', 'cloudflare', 'zai', 'mistral', 'openrouter', 'gateway'];
 const ALL_IDS = ['gemini', ...PRESETS.map((preset) => preset.id)];
