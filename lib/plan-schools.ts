@@ -1,5 +1,6 @@
-import type { Catalog } from './courses.ts';
-import { isNewYorkLocation } from './plan-school.ts';
+import { liveTerms, type Catalog } from './courses.ts';
+import { courseWords } from './plan-request.ts';
+import { isNewYorkLocation, schoolRows } from './plan-school.ts';
 
 export interface PlanSchool { id: string; label: string; group: 'Campus' | 'School' | 'Study away' }
 const cache = new WeakMap<Catalog, PlanSchool[]>();
@@ -31,4 +32,20 @@ export function planSchools(catalog: Catalog): PlanSchool[] {
 
 export function isPlanSchool(catalog: Catalog, value: string): boolean {
   return planSchools(catalog).some((school) => school.id === value);
+}
+
+/**
+ * The courses a question names at the study away site it names ("Is Elementary French 1 in Paris in the morning?"),
+ * titles read the way Plan reads them ("Elem French I (in French)"), longest title first. None without a site.
+ */
+export function siteCourses(catalog: Catalog, question: string): string[] {
+  const site = planSchools(catalog).find((entry) => entry.group === 'Study away' && new RegExp(`\\b${entry.label}\\b`, 'i').test(question));
+  if (!site) return [];
+  const words = new Set(courseWords(question));
+  const hits = new Map<string, number>();
+  for (const row of liveTerms(catalog).flatMap((term) => schoolRows(catalog, term, site.id))) {
+    const head = courseWords(row.title.replace(/\([^)]*\)/g, ' '));
+    if (head.length && (head.length > 1 || head[0]!.length >= 6) && head.every((word) => words.has(word))) hits.set(row.code, head.length);
+  }
+  return [...hits].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([code]) => code);
 }

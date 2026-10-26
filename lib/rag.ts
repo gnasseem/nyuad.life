@@ -15,6 +15,7 @@ import { generateStream, geminiKeys, isDailyQuota, isModelUnavailable, keyTag, l
 import { ApiError } from './http.ts';
 import { officialCards, officialSourceBlock, retrieveOfficial, type OfficialCorpus } from './official.ts';
 import { screenAsk } from './moderation.ts';
+import { siteCourses } from './plan-schools.ts';
 import { atCapacity, markFailed, modelOrder, ProviderError, providersFromEnv, siteJson, siteText, streamChat, usable, type Provider } from './providers.ts';
 import { rerankerFromEnv, type Reranker } from './rerank.ts';
 import { bm25Query, denseQuery, fuse, type Hit } from './search.ts';
@@ -484,7 +485,7 @@ function scheduleSources(catalog: Catalog | null, question: string, rewrite: str
   if (!isCourseQuestion(question) && !match.instructors.length && !/\b[A-Z]{2,7}[- ]?(?:UH[- ]?)?\d{4}\b/i.test(question)) match.courses = [];
   // Only a question about classes on a subject searches the catalog; "how does the waitlist work" names no subject.
   const topic = ASKS_FOR_CLASSES.test(question) && /\b(?:about|related to|on|in)\b/i.test(question);
-  const codes = [...new Set([...match.courses, ...(topic || (!match.courses.length && !match.instructors.length && ASKS_FOR_CLASSES.test(question)) ? searchCatalog(catalog, rewrite) : [])])].slice(0, 3);
+  const codes = [...new Set([...siteCourses(catalog, question), ...match.courses, ...(topic || (!match.courses.length && !match.instructors.length && ASKS_FOR_CLASSES.test(question)) ? searchCatalog(catalog, rewrite) : [])])].slice(0, 3);
   const out: LiveSource[] = [];
   const base = { kind: 'schedule' as const, n: 0, url: '', author: 'Albert', date: catalog.scraped.slice(0, 10), commentCount: 0, reactions: 0, topics: ['courses'], snippet: '', score: 1 };
   for (const code of codes) {
