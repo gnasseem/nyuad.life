@@ -191,6 +191,8 @@ export interface SectionRow {
   meetings: Array<{ days: string[]; start: string; end: string; room: string }>;
   instructors: string[];
   notes: string;
+  /** Where it is taught, for a section away from Abu Dhabi ("NYU Paris (Global)"): its room alone may not say. */
+  location?: string;
 }
 
 export interface CourseRow {
@@ -217,6 +219,7 @@ function sectionRow(section: Section, withNotes: boolean): SectionRow {
     meetings: section.meetings.map((meeting) => ({ days: meeting.days, start: meeting.startTime, end: meeting.endTime, room: meeting.room })),
     instructors: section.instructors.map(displayName),
     notes: withNotes ? collapseWhitespace(section.notes) : '',
+    ...(section.location && !section.location.startsWith('Abu Dhabi') ? { location: section.location } : {}),
   };
 }
 
@@ -637,7 +640,7 @@ function statusText(row: SectionRow): string {
 function sectionLine(row: SectionRow): string {
   const when = row.meetings.length ? row.meetings.map(meetingText).join('; ') : 'no meeting times listed';
   const who = row.instructors.length ? row.instructors.join(', ') : 'instructor not listed';
-  return `${row.component} ${row.section}${row.topic ? ` "${row.topic}"` : ''}${row.session ? ` (${row.session})` : ''}: ${when} · ${who} · ${statusText(row)} · class #${row.classNumber}`;
+  return `${row.component} ${row.section}${row.topic ? ` "${row.topic}"` : ''}${row.session ? ` (${row.session})` : ''}: ${when} · ${who} · ${statusText(row)}${row.location ? ` · taught at ${row.location}` : ''} · class #${row.classNumber}`;
 }
 
 /** A course's schedule for the answer model: the terms students can still take in full, earlier terms as who taught it. */
