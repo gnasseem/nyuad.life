@@ -1325,21 +1325,58 @@ interface Check {
  * Mistakes in a draft that need no model to find: a placeholder or invented citation, a link or a year no source
  * carries, a referral to a group chat. Any of them means the checked answer replaces the draft.
  */
+const SENTENCE_END = /(?<=[.!?])(?<!\b(?:Prof|Dr|Mr|Mrs|Ms|St|vs)\.)\s+/;
+
 /**
- * The answer without its sentences that judge a professor: one using a judging word about a teacher, by role or by
- * pronoun, or any such sentence when the question is about a teacher. Whatever the models wrote, an answer never says
- * a professor is bad; what is left keeps grading and workload.
+ * Whether a sentence judges a professor: a judging word about a teacher, by role or by pronoun, or any judging word
+ * when the question is about a teacher.
  */
-export function withoutJudgments(text: string, question: string): string {
+function judgesFor(question: string): (sentence: string) => boolean {
   const aboutTeacher = TEACHER.test(question) || /\b(?:who|whom) (?:to|should i) (?:take|avoid)\b/i.test(question);
-  const judges = (sentence: string) => JUDGMENT.test(sentence) && (aboutTeacher || TEACHER.test(sentence) || /\b(?:he|she|him|his|her)\b/i.test(sentence));
-  const kept = text.split('\n').map((line) => {
+  return (sentence) => JUDGMENT.test(sentence) && (aboutTeacher || TEACHER.test(sentence) || /\b(?:he|she|him|his|her)\b/i.test(sentence));
+}
+
+/** The text without its judging sentences, line by line; a line left with none goes too. */
+function scrubbed(text: string, judges: (sentence: string) => boolean): string {
+  return text.split('\n').map((line) => {
     if (!JUDGMENT.test(line)) return line;
-    const sentences = line.split(/(?<=[.!?])(?<!\b(?:Prof|Dr|Mr|Mrs|Ms|St|vs)\.)\s+/);
+    const sentences = line.split(SENTENCE_END);
     const left = sentences.filter((sentence) => !judges(sentence));
     return left.length === sentences.length ? line : left.length ? left.join(' ') : null;
-  }).filter((line): line is string => line !== null).join('\n').trim();
-  return kept || 'Students\' comments here are about the professor rather than their grading or workload, which this site does not repeat. Ask about the workload, exams or grading instead.';
+  }).filter((line): line is string => line !== null).join('\n');
+}
+
+/**
+ * The answer without its sentences that judge a professor. Whatever the models wrote, an answer never says a
+ * professor is bad; what is left keeps grading and workload.
+ */
+export function withoutJudgments(text: string, question: string): string {
+  return scrubbed(text, judgesFor(question)).trim() || 'Students\' comments here are about the professor rather than their grading or workload, which this site does not repeat. Ask about the workload, exams or grading instead.';
+}
+
+/** The streamed answer let through a whole sentence at a time, without the sentences that judge a professor. */
+export function streamWithoutJudgments(deliver: ((text: string) => void) | undefined, question: string): { push(text: string): void; flush(): void } {
+  const judges = judgesFor(question);
+  let held = '';
+  const release = (text: string) => {
+    const tail = /\s*$/.exec(text)![0];
+    const kept = JUDGMENT.test(text) ? scrubbed(text.slice(0, text.length - tail.length), judges) : text.slice(0, text.length - tail.length);
+    if (kept) deliver?.(kept + tail);
+  };
+  return {
+    push(text) {
+      held += text;
+      let cut = 0;
+      for (const match of held.matchAll(new RegExp(`${SENTENCE_END.source}|\\n`, 'g'))) cut = match.index! + match[0].length;
+      if (!cut) return;
+      release(held.slice(0, cut));
+      held = held.slice(cut);
+    },
+    flush() {
+      if (held) release(held);
+      held = '';
+    },
+  };
 }
 
 export function draftProblems(draft: string, evidence: ReadonlyMap<number, string>, term = ''): string[] {
@@ -1464,11 +1501,13 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
   // stays and is marked unchecked.
   const reviewEvidence = cards.some((card) => ['archive', 'review', 'board', 'digest'].includes(card.kind));
   const draftDeadline = Math.max(Date.now() + 1000, deadline - 8500);
-  const visible = withoutConfidence(events.delta);
+  const fair = streamWithoutJudgments(events.delta, request.question);
+  const visible = withoutConfidence(fair.push);
   const streaming = { ...events, delta: visible.push };
   const writing = writers.chatgpt ? writeWithChatGPT(writers.chatgpt, prompt(), streaming, signal, draftDeadline, term) : writeAnswer(writers, system, prompt, streaming, signal, draftDeadline);
   const { answer, model, truncated } = await timed(timings, 'write', writing);
   visible.flush();
+  fair.flush();
   if (!answer.trim()) throw new ApiError(502, 'The model returned an empty answer.', 'empty_answer');
   const parsed = parseConfidence(answer);
   const draft = parsed.text;

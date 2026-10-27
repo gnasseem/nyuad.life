@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkedAnswer, draftProblems, gatherSources, withoutConfidence, matchesPerson, personName, safeRewrite, parseConfidence, searchQueries, sourcesBlock, systemPrompt, withoutJudgments } from './rag.ts';
+import { checkedAnswer, draftProblems, gatherSources, withoutConfidence, matchesPerson, personName, safeRewrite, parseConfidence, searchQueries, sourcesBlock, streamWithoutJudgments, systemPrompt, withoutJudgments } from './rag.ts';
 import type { OfficialCorpus } from './official.ts';
 import type { Archive } from './store.ts';
 import { buildBm25 } from './search.ts';
@@ -298,6 +298,13 @@ it('drops the sentences of an answer that judge a professor, keeping grading and
   expect(withoutJudgments('Students say Prof. X is boring [1]. The curve is strict [2].', 'Is CS-UH 1001 hard?')).toBe('The curve is strict [2].');
   // About a course, not its teacher, the same words stay.
   expect(withoutJudgments('The material is confusing at first [1].', 'Is MATH-UH 1012 hard?')).toBe('The material is confusing at first [1].');
+  // Streamed, nothing judging reaches the student even for a moment, and nothing else is lost.
+  let shown = '';
+  const stream = streamWithoutJudgments((text) => (shown += text), 'Is Prof. Kalantzakos good?');
+  for (const piece of ['Students call her a gen', 'ius [1]. A comment says she is unfo', 'cused [2]. Grading is', ' harsh [3].\nWorkload is heavy']) stream.push(piece);
+  expect(shown).toBe('Students call her a genius [1]. Grading is harsh [3].\n');
+  stream.flush();
+  expect(shown).toBe('Students call her a genius [1]. Grading is harsh [3].\nWorkload is heavy');
 });
 
 it('treats near-duplicate questions as one for the answer cache, and different ones as different', () => {

@@ -14,7 +14,8 @@
  *   npm run reviews -- --models all    call every model the site has, GLM first, not only the ones Ask leans on
  *                                      least (or name them: --models zai,groq,gemini)
  *   npm run reviews -- --rewrite       rewrite every digest from scratch under the current summary rules, instead of
- *                                      folding new ratings into what it says (with --remote or here)
+ *                                      folding new ratings into what it says (with --remote or here); a run cut
+ *                                      short carries on with --rewrite <the time it printed>
  */
 import { boardStore } from '../lib/board-store.ts';
 import { loadCatalog } from '../lib/courses.ts';
@@ -35,8 +36,10 @@ const workers = Math.max(1, Number(value('workers')) || 3);
 const models = value('models');
 const limit = Number(value('limit')) || undefined;
 const remote = value('remote');
-// Every digest written before this run started is rewritten; a slice's own rewrites are newer, so the run finishes.
-const rewriteBefore = args.includes('--rewrite') ? new Date(started).toISOString() : undefined;
+// Every digest written before this run started (or the time given) is rewritten; a slice's own rewrites are newer, so
+// the run finishes.
+const rewriteBefore = args.includes('--rewrite') ? new Date(Date.parse(value('rewrite') ?? '') || started).toISOString() : undefined;
+if (rewriteBefore) console.log(`[reviews] Rewriting every digest written before ${rewriteBefore}.`);
 const log = (message: string) => console.log(`[reviews] ${message}`);
 
 function report(result: ReviewResult): void {
