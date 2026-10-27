@@ -558,6 +558,12 @@ export interface ReviewRun {
   models?: string;
   /** Read only this many of the newest unread threads (a trial). */
   limit?: number;
+  /**
+   * Rewrites from scratch every digest last written before this ISO time, from all its ratings, instead of folding
+   * forward: after the summary rules change, so no earlier point outlives them. A fixed time lets a run in slices
+   * finish: a digest rewritten in one slice is newer than it in the next.
+   */
+  rewriteBefore?: string;
   log(message: string): void;
 }
 
@@ -669,7 +675,8 @@ export async function runReviews(options: ReviewRun): Promise<ReviewResult> {
    * Brings a digest up to date: the counts from every rating, and the verdict, likes and warnings folded forward from the
    * digest's own with only the ratings it has not read yet, forty at a time, oldest first.
    */
-  async function updateDigest(entity: string, ratings: Rating[], prior: Digest | undefined, label: string, nameOf: (entity: string) => string | undefined): Promise<'written' | 'unchanged' | 'stopped'> {
+  async function updateDigest(entity: string, ratings: Rating[], found: Digest | undefined, label: string, nameOf: (entity: string) => string | undefined): Promise<'written' | 'unchanged' | 'stopped'> {
+    const prior = found && options.rewriteBefore && found.updatedAt < options.rewriteBefore ? undefined : found;
     const counted = stats(ratings, nameOf);
     const known = new Set([...(prior?.postIds ?? []), ...(prior?.reviewKeys ?? [])]);
     const fresh = ratings.filter((rating) => !known.has(rating.key)).sort((a, b) => a.date.localeCompare(b.date));
