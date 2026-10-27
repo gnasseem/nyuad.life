@@ -714,8 +714,9 @@ function reviewPage(digest: Pick<Digest, 'kind' | 'name'>): string {
 
 /**
  * One course or professor as the answer model reads it: the counts, score and dates first, then the summary written
- * from every rating, then how the ratings split by professor (or by course). Every line is a passage the checker can
- * select, and the header carries the years so a dated claim is supported.
+ * from every rating, then how many ratings each professor (or course) got. Every line is a passage the checker can
+ * select, and the header carries the years so a dated claim is supported. A professor gets no score or tally of
+ * negative ratings, and no professor is scored within a course: an answer never says how good a professor is.
  */
 export function digestBlock(digest: Digest, catalog: Catalog | null): string {
   const total = ratingsOf(digest);
@@ -723,15 +724,15 @@ export function digestBlock(digest: Digest, catalog: Catalog | null): string {
   const subject = digest.kind === 'course' ? `${digest.name}${title ? ` ${title}` : ''}` : `Professor ${digest.name}`;
   const split = (part: Digest['breakdown'][number]) => {
     const course = digest.kind === 'prof' ? catalog?.byCode.get(part.name)?.[0]?.title : '';
-    return `${digest.kind === 'course' ? 'Taught by' : 'In'} ${part.name}${course ? ` ${course}` : ''}: ${outOf(part.score)} from ${plural(ratingsOf(part), 'rating')} (${part.positive} positive, ${part.negative} negative, ${part.neutral} neutral).`;
+    return `${digest.kind === 'course' ? 'Taught by' : 'In'} ${part.name}${course ? ` ${course}` : ''}: ${plural(ratingsOf(part), 'rating')}.`;
   };
   return [
     `What NYUAD students say about ${subject}, from ${plural(total, 'student rating')} in the group and on this site, ${MONTH(digest.firstDate)} to ${MONTH(digest.lastDate)} (${digest.recent} in the last two years).`,
-    `Overall ${outOf(digest.score)}, newer ratings weighing more: ${digest.positive} positive, ${digest.negative} negative, ${digest.neutral} neutral.`,
+    digest.kind === 'course' ? `Overall ${outOf(digest.score)}, newer ratings weighing more: ${digest.positive} positive, ${digest.negative} negative, ${digest.neutral} neutral.` : '',
     digest.difficulty !== null || digest.workload !== null ? [digest.difficulty !== null ? `Difficulty ${outOf(digest.difficulty)}` : '', digest.workload !== null ? `workload ${outOf(digest.workload)}` : ''].filter(Boolean).join(', ') + ' (5 is hardest or heaviest), from the ratings that say.' : '',
     digest.verdict ? `In short: ${digest.verdict}` : '',
     ...digest.likes.map((point) => `Students like: ${point}`),
-    ...digest.warnings.map((point) => `Students warn: ${point}`),
+    ...digest.warnings.map((point) => (digest.kind === 'course' ? `Students warn: ${point}` : `Students note: ${point}`)),
     ...digest.breakdown.slice(0, 6).map(split),
   ].filter(Boolean).join('\n');
 }
@@ -774,9 +775,10 @@ function subjectTeachers(catalog: Catalog): Map<string, Set<string>> {
 }
 
 /**
- * "Easiest Arts Core", "best CS professors": the digests of the subject's courses (or of the professors who teach it)
+ * "Easiest Arts Core", "hardest CS professors": the digests of the subject's courses (or of the professors who teach it)
  * ranked the way the question asks, as one source. Easy and hard rank by difficulty, then workload; best and worst by
- * score. One or two ratings say little, so a course needs three to be ranked best or worst, two by difficulty.
+ * score, for courses only: professors are never ranked by how good they are. One or two ratings say little, so a course
+ * needs three to be ranked best or worst, two by difficulty.
  */
 export async function rankingSource(store: BoardStore | null, catalog: Catalog | null, question: string): Promise<LiveSource | null> {
   if (!store || !catalog) return null;
@@ -785,6 +787,7 @@ export async function rankingSource(store: BoardStore | null, catalog: Catalog |
   const easy = /\b(?:easiest|easy|chill(?:est)?|lightest|light|least work|gpa booster)\b/i.test(question);
   const hard = !easy && /\b(?:hardest|hard|heaviest|most work|toughest|difficult)\b/i.test(question);
   const worst = /\b(?:worst|avoid)\b/i.test(question);
+  if (profs && !easy && !hard) return null;
   const byEntity = await allDigests(store);
   const scores = [...byEntity.values()];
   const teachers = subjectTeachers(catalog);
@@ -803,9 +806,9 @@ export async function rankingSource(store: BoardStore | null, catalog: Catalog |
   const lines = ranked.map((entry, i) => {
     const digest = byEntity.get(entry.entity);
     const title = profs ? '' : catalog.byCode.get(currentCode(catalog, entry.name))?.[0]?.title ?? '';
-    const measures = [entry.difficulty !== null ? `difficulty ${outOf(entry.difficulty)}` : '', entry.workload !== null ? `workload ${outOf(entry.workload)}` : '', `overall ${outOf(entry.score)}`].filter(Boolean).join(', ');
+    const measures = [entry.difficulty !== null ? `difficulty ${outOf(entry.difficulty)}` : '', entry.workload !== null ? `workload ${outOf(entry.workload)}` : '', profs ? '' : `overall ${outOf(entry.score)}`].filter(Boolean).join(', ');
     const span = digest ? `, ${MONTH(digest.firstDate)} to ${MONTH(digest.lastDate)}` : '';
-    return `${i + 1}. ${entry.name}${title ? ` ${title}` : ''}: ${measures}, from ${plural(ratingsOf(entry), 'rating')} (${entry.positive} positive, ${entry.negative} negative)${span}.${digest?.verdict ? ` ${digest.verdict}` : ''}`;
+    return `${i + 1}. ${entry.name}${title ? ` ${title}` : ''}: ${measures}, from ${plural(ratingsOf(entry), 'rating')}${profs ? '' : ` (${entry.positive} positive, ${entry.negative} negative)`}${span}.${digest?.verdict ? ` ${digest.verdict}` : ''}`;
   });
   const text = [`${profs ? 'Professors teaching' : 'Courses in'} ${scope}, ranked ${order}, from every student rating in the group and on this site (5 is hardest, heaviest or best):`, ...lines].join('\n');
   const subject = subjects.length === 1 ? subjects[0]! : '';
@@ -874,7 +877,7 @@ export function sourcesBlock(archive: Archive, cards: SourceCard[], live: LiveSo
       const captured = post.scrapedCommentCount ?? post.comments.length;
       const missing = card.commentCount > captured ? ` · ${captured} captured` : '';
       const filtered = captured > post.comments.length ? ` · ${post.comments.length} left after filtering short replies` : '';
-      const criticism = post.comments.some((comment) => CRITICISM.test(comment.text)) ? ' · Contains critical replies: include relevant criticism in the opening verdict and date it' : '';
+      const criticism = post.comments.some((comment) => CRITICISM.test(comment.text)) ? ' · Contains critical replies: put criticism of grading, exams or workload in the opening verdict and date it; leave out judgments of a professor or their teaching' : '';
       const scope = entry?.generalReview ? ' · Review scope: professor generally, other or unspecified courses; not a review of the requested course' : '';
       const header = `[${card.n}] Post by ${post.author || 'Unknown'} on ${formatDate(post.date)} (${age(post.date, today)}) · ${card.commentCount} comments on Facebook${missing}${filtered} · ${card.reactions} reactions${criticism}${scope}`;
       const total = Math.min(THREAD_CHARS, perSource);
@@ -926,8 +929,9 @@ export function systemPrompt(today = new Date(), term = ''): string {
 
 Answer the actual question first. If a student lost an ID and asks where to make a new one, give the supported replacement office or procedure, not instructions for finding the old card. Handle typos naturally. Give the location, form or office contact immediately when the evidence contains it. Never invent fees, rooms, opening hours, links or procedures. If the procedure is missing, state that specific gap; do not pretend unrelated evidence answers it. For access questions, include stated membership requirements and restricted sessions; opening hours do not establish unrestricted access.
 
-For courses and professors, lead with the verdict supported by student experience. Negative or mixed evidence must change the opening recommendation: do not call someone good and bury harsh grading, poor teaching or excessive workload afterward. Explain the relevant criticism directly and attribute it. Count independent reviewers, not posts, citations or likes; a question asking for opinions is not an endorsement. Read replies even when they do not repeat the professor's name. Do not infer praise from a syllabus, faculty biography, course description, absence of complaints or a review question with no captured replies. If evidence is mixed, say mixed and give the specific disagreement. If there is only one review, say one student and date it. Keep criticism to teaching, grading and workload; omit rumours and personal insults. Do not manufacture consensus or make isolated praise cancel repeated concrete criticism.
-A source headed "What NYUAD students say about" is the tally of every student rating of that course or professor: lead with it for the verdict, how many ratings were positive or negative, difficulty, workload and how professors compare, and give the date range. A ranked list keeps its order; name at most three. State these as what students report, never as a summary, tally or source. Use individual threads only for specifics they add.
+For courses, lead with the verdict supported by student experience. Negative or mixed evidence must change the opening recommendation: do not call a course good and bury harsh grading or excessive workload afterward. Explain the relevant criticism directly and attribute it.
+For professors, say what their classes are like, never how good they are: never call one bad, unclear, rude or worth avoiding, or repeat judgments of their teaching or character, even when asked whom to avoid. Praise may be said; criticism only as facts on grading, exams, workload and policies (a hard A, a strict curve, heavy problem sets). Count independent reviewers, not posts, citations or likes; a question asking for opinions is not an endorsement. Read replies even when they do not repeat the professor's name. Do not infer praise from a syllabus, faculty biography, course description, absence of complaints or a review question with no captured replies. If evidence is mixed, say mixed and give the specific disagreement. If there is only one review, say one student and date it. Keep criticism to grading, exams and workload; omit rumours and personal insults. Do not manufacture consensus or make isolated praise cancel repeated concrete criticism.
+A source headed "What NYUAD students say about" is the tally of every student rating of that course or professor: lead with it for the verdict, difficulty and workload (and, for a course, how many ratings were positive or negative), and give the date range. A ranked list keeps its order; name at most three. State these as what students report, never as a summary, tally or source. Use individual threads only for specifics they add.
 
 Use official pages for procedures, requirements, deadlines and policies; Albert for actual offerings, instructors, seats and times; students for lived experience. A schedule establishes who teaches, not how well. Prioritize direct evidence, matching identities and campus, then recency. Old procedures and reviews must be dated. A page's saved date is not its policy date. Never infer open-swim access from rental hours. Current deadlines need dated evidence for the requested term; a past deadline cannot answer "next" even if the page was fetched today. When sources conflict, say what conflicts, without blending them. If a direct current timetable is supplied, use it ahead of an undated venue description or a temporary notice outside the requested dates.
 
@@ -1228,7 +1232,7 @@ const CHECK_SYSTEM = `Check and correct a draft against numbered source passages
 In unsupported, quote every statement of the draft that the passages do not entail: a wrong or invented fact, number, time, date, name, link or citation, a dropped condition or restriction, or a verdict the evidence contradicts. Leave it empty only when the whole draft is supported; a missing optional detail is not unsupported.
 Each source has numbered body passages {source:passage}. Return 1-5 short claims totaling at most 110 words. Answer only the requested details; omit unrelated policies and combine contact alternatives without repeating sentence stems. For EACH claim select the exact existing observations that entail it; do not invent passage numbers, copy quotations, or add citations to text. Read discussion questions for context but do not select them as supporting observations. Each claim must have supports. A claim can state a specific evidence gap and give the supported office contact. Match the office service to the requested procedure; do not add another desk that handles unrelated payments or services. Questions and headings are not evidence that something happened; hearsay is not firsthand experience. Never turn a question about strict grading into a report of strict grading.
 Preserve each requested detail, negation, condition, direction and date. For access or eligibility questions, lead with membership requirements and all restricted sessions in the supplied sources before regular hours. Rental hours do not establish community access. For first/last bus questions, including “last bus back”, give the boarding departure time and stop, not just the destination arrival. Use Albert for actual offerings ahead of bulletin typical terms; policy effective dates take precedence over saved dates. State source conflicts instead of blending them. Reviews of other classes can describe the professor generally only with that scope explicit. A student comparison is evidence of that comparison, even without a full firsthand account: do not say there are no reviews or no comparison when one is supplied.
-Lead with the requested fact, or a mixed/negative verdict when relevant criticism exists. Date historical reviews and distinguish them from current policies. A policy missing from these passages is not proof it does not exist. Use only supplied links or relevant internal /plan, /courses, /questions and /market paths. Never send users to a group or use “the catch”. Omit personal insults and private student contacts. Never mention a summary, tally or ratings data as such; state what students report. Correct the draft rather than approving it by default.`;
+Lead with the requested fact, or a mixed/negative verdict when relevant criticism exists. Drop any judgment of a professor's teaching or character; facts on their grading, exams and workload stay. Date historical reviews and distinguish them from current policies. A policy missing from these passages is not proof it does not exist. Use only supplied links or relevant internal /plan, /courses, /questions and /market paths. Never send users to a group or use “the catch”. Omit personal insults and private student contacts. Never mention a summary, tally or ratings data as such; state what students report. Correct the draft rather than approving it by default.`;
 
 function evidencePassages(block: string): string[] {
   return block.split('\n').slice(1).filter((line) => line.trim());

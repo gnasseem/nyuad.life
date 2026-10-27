@@ -216,7 +216,7 @@ const REVIEW_MESSAGES: Record<Exclude<ReviewReason, 'unreviewed'>, string> = {
   fake: "This doesn't look real: check the details (what it is, when, and a place that exists on campus or in the UAE) and try again.",
   impersonation: 'Posts here come from students and student groups. Announcements from a university office belong on its own channels, and posts may not pretend to be someone else.',
   offtopic: "This doesn't fit here. The event board is for real scheduled NYUAD events; the market is for students' things and rides.",
-  harassment: 'This targets or mocks a person. Rephrase it without that to post.',
+  harassment: 'This targets a person. About a professor, stick to grading, exams and workload (a hard A, heavy problem sets) to post.',
 };
 const UNREVIEWED = "We couldn't check this post right now, so it hasn't gone up. Try again in a minute.";
 
@@ -229,8 +229,8 @@ const BELONGS: Record<ReviewedKind, string> = {
     'a market post: a student selling, wanting or giving away their own things, or sharing a ride. A student offering a small service of their own (tutoring, haircuts, photography) is fine.',
   offer: 'the note on an offer to trade Falcon Dirhams or Campus Dirhams for cash between students.',
   question: 'a question one student asks other students about life, courses or anything at NYUAD.',
-  answer: "a student answering another student's question. Blunt opinions about a course, an office or how a class is taught are fine.",
-  review: "a student's review of a course they took: what it was like, the workload, the exams, how it was taught. Blunt and negative opinions about the course or the teaching are fine; comments on a professor's looks or private life, and rumours, are not.",
+  answer: "a student answering another student's question. Blunt opinions about a course or an office are fine. About a professor, praise and concrete facts on grading, exams, workload and class policies are fine (a hard A, a strict curve, heavy problem sets); calling a professor bad, judging their teaching, attitude or character, or telling others to avoid them is not.",
+  review: "a student's review of a course they took: what it was like, the workload, the exams, the grading. Blunt and negative opinions about the course are fine. About a professor, praise and concrete facts on grading, exams, workload and class policies are fine (a hard A, a strict curve, heavy problem sets); calling a professor bad, judging their teaching, attitude or character, telling others to avoid them, comments on their looks or private life, and rumours are not.",
 };
 
 const REVIEW_SCHEMA = {
@@ -255,7 +255,7 @@ function reviewSystem(kind: ReviewedKind, today: Date): string {
     'fake: clearly impossible from the supplied text alone: an absurd claim, fictional location, or item or ride that is plainly a joke. An unfamiliar building code or venue is not evidence that it is fake.',
     'impersonation: written as if from a university office, staff member or official body (Housing, the Registrar, Student Affairs, Public Safety, the Provost, NYU itself) or as another named person, rather than by a student or student group. A student sharing an office\'s deadline in their own words is fine.',
     'offtopic: plainly does not belong in this place (a rant or a meme as a notice, a question posted as a listing), or has nothing to do with student life.',
-    'harassment: insults, mockery, rumours or accusations about a named or identifiable person.',
+    'harassment: insults, mockery, rumours or accusations about a named or identifiable person; or, about a professor, calling them bad, judging their teaching, attitude or character, or telling others to avoid them. Praise and concrete facts on a professor\'s grading, exams, workload and class policies are fine.',
     'sexual: sexual content or services.',
     'scam: money schemes, too-good-to-be-true offers, paying a stranger upfront, asking for account details.',
     'prohibited: selling or arranging drugs, alcohol, vapes, prescription medicine, weapons or fake documents, or paid academic work.',

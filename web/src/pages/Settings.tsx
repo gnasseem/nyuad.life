@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { GROUP_URL, MAKER_URL } from '../brand';
+import { GROUP_URL, INDEPENDENT, MAKER_URL } from '../brand';
 import { ChatGPTSignIn } from '../components/ChatGPT';
 import { Sign } from '../components/Sign';
 import { useApp } from '../context';
@@ -162,6 +162,12 @@ export function SettingsPage() {
       <section className="settings-section">
         <h2>About</h2>
         <div className="list">
+          <div className="settings-row">
+            <div className="text">
+              <b>Independent student project</b>
+              <span>{INDEPENDENT}</span>
+            </div>
+          </div>
           <div className="settings-row">
             <div className="text">
               <b>Room of Requirement</b>

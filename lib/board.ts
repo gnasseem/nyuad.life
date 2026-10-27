@@ -306,27 +306,30 @@ export function courseRating(digest: Digest | undefined) {
     basis: digest.positive + digest.negative + digest.neutral,
     confidence: confidenceOf(digest),
     counts: { positive: digest.positive, negative: digest.negative, neutral: digest.neutral },
-    professors: digest.breakdown.map(({ name, positive, negative, neutral, score }) => ({ name, positive, negative, neutral, score })),
+    // How many ratings it got with each professor, never how well: professors are not scored.
+    professors: digest.breakdown.map(({ name, positive, negative, neutral }) => ({ name, count: positive + negative + neutral })),
     from: digest.firstDate,
     to: digest.lastDate,
-    sources: digest.sources,
   };
 }
 
+/**
+ * A professor's digest as their page shows it: how hard and how heavy, the summary and what students liked or flagged
+ * about grading and workload. No score: a professor's page never says how good they are, only what their classes are like.
+ */
 export function profRating(digest: Digest | undefined) {
   if (!digest || digest.positive + digest.negative + digest.neutral === 0) return null;
   return {
-    score: digest.score,
     basis: digest.positive + digest.negative + digest.neutral,
     verdict: digest.verdict,
     confidence: confidenceOf(digest),
+    difficulty: level(digest.difficulty),
+    workload: level(digest.workload),
     likes: digest.likes,
     warnings: digest.warnings,
-    counts: { positive: digest.positive, negative: digest.negative, neutral: digest.neutral },
-    courses: digest.breakdown.map(({ name, positive, negative, neutral, score }) => ({ code: name, positive, negative, neutral, score })),
+    courses: digest.breakdown.map(({ name, positive, negative, neutral }) => ({ code: name, count: positive + negative + neutral })),
     from: digest.firstDate,
     to: digest.lastDate,
-    sources: digest.sources,
   };
 }
 

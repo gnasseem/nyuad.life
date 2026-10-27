@@ -134,7 +134,7 @@ async function courseView(official: OfficialCorpus | null, catalog: Catalog, cod
   const professors = [...new Set([...names, ...(rating?.professors ?? []).map((part) => part.name)])].map((name) => {
     const own = profRating(digests.get(profKey(name)));
     const here = withThem.get(profKey(name));
-    return { name, score: own?.score ?? null, basis: own?.basis ?? 0, verdict: own?.verdict ?? '', here: here ? { score: here.score, count: here.positive + here.negative + here.neutral } : null, teachingNow: detail.instructors.includes(name), lastTerm: lastTerm(name) };
+    return { name, basis: own?.basis ?? 0, verdict: own?.verdict ?? '', here: here ? { count: here.count } : null, teachingNow: detail.instructors.includes(name), lastTerm: lastTerm(name) };
   });
   // Teaching this term first, then the most talked about with this course, then the most recent.
   professors.sort((a, b) => Number(b.teachingNow) - Number(a.teachingNow) || (b.here?.count ?? 0) - (a.here?.count ?? 0) || termOrder(b.lastTerm) - termOrder(a.lastTerm) || a.name.localeCompare(b.name));
@@ -181,10 +181,10 @@ async function profView(catalog: Catalog, asked: string) {
   const courses = codes.map((code) => {
     const taught = entry?.courses.get(code);
     const own = courseRating(courseDigests.get(courseKey(catalog, code)));
-    // The course page's split by professor, when it has one, so both pages show the same score for them in it.
+    // The course page's split by professor, when it has one, so both pages show the same count for them in it.
     const here = own?.professors.find((part) => profKey(part.name) === key) ?? withThem.get(code);
     const terms = (taught?.terms ?? []).filter((term) => termOrder(term) <= now);
-    return { code, title: taught?.title ?? catalog.byCode.get(code)?.[0]?.title ?? '', score: own?.score ?? null, here: here ? { score: here.score, count: here.positive + here.negative + here.neutral } : null, teachingNow: Boolean(taught?.terms.includes(catalog.current)), lastTerm: terms[0] ?? taught?.terms[0] ?? '', terms: terms.slice(0, 8) };
+    return { code, title: taught?.title ?? catalog.byCode.get(code)?.[0]?.title ?? '', score: own?.score ?? null, here: here ? { count: here.count } : null, teachingNow: Boolean(taught?.terms.includes(catalog.current)), lastTerm: terms[0] ?? taught?.terms[0] ?? '', terms: terms.slice(0, 8) };
   });
   courses.sort((a, b) => Number(b.teachingNow) - Number(a.teachingNow) || termOrder(b.lastTerm) - termOrder(a.lastTerm) || (b.here?.count ?? 0) - (a.here?.count ?? 0) || a.code.localeCompare(b.code, undefined, { numeric: true }));
   return { name, currentTerm: catalog.current, rating, courses: courses.slice(0, 24) };
@@ -194,7 +194,8 @@ async function profView(catalog: Catalog, asked: string) {
 
 interface ScoreIndex {
   courses: Record<string, { score: number; basis: number; difficulty: number | null; workload: number | null; verdict: string }>;
-  profs: Record<string, { score: number; basis: number; verdict: string }>;
+  /** Professors are never shown a score; rank (3 to 5) only orders plans. */
+  profs: Record<string, { rank: number; basis: number; verdict: string }>;
 }
 
 let scoreCache: { at: number; index: ScoreIndex } | null = null;
@@ -212,7 +213,8 @@ async function scoreIndex(): Promise<ScoreIndex> {
     const basis = digest.positive + digest.negative + digest.neutral;
     if (!basis) continue;
     if (digest.kind === 'course') index.courses[digest.entity.slice('course:'.length)] = { score: digest.score, basis, difficulty: level(digest.difficulty), workload: level(digest.workload), verdict: oneLine(digest.verdict) };
-    else index.profs[digest.name] = { score: digest.score, basis, verdict: oneLine(digest.verdict) };
+    // Plans rank by it, and only upward: below average reads as average, so nothing here marks a professor as bad.
+    else index.profs[digest.name] = { rank: Math.max(3, digest.score), basis, verdict: oneLine(digest.verdict) };
   }
   scoreCache = { at: Date.now(), index };
   return index;

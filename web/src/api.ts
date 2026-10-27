@@ -398,12 +398,11 @@ export interface CourseRating {
   basis: number;
   confidence: 'high' | 'medium' | 'low';
   counts: RatingCounts;
-  /** The course's professors, most discussed first, with what students said of the course under each. */
-  professors: Array<RatingCounts & { name: string; score: number }>;
+  /** The course's professors, most discussed first, with how many ratings it got under each (professors are not scored). */
+  professors: Array<{ name: string; count: number }>;
   /** The oldest and newest rating, YYYY-MM-DD. */
   from: string;
   to: string;
-  sources: Array<{ url: string; date: string; excerpt: string }>;
 }
 
 export interface RatingCounts {
@@ -415,13 +414,14 @@ export interface RatingCounts {
 /** Every course's and professor's score and one-line verdict, from the digests (which count the reviews written here). */
 export interface ScoreIndex {
   courses: Record<string, { score: number; basis: number; difficulty: number | null; workload: number | null; verdict: string }>;
-  profs: Record<string, { score: number; basis: number; verdict: string }>;
+  /** Professors are never shown a score; rank (3 to 5, below average raised to average) only orders plans. */
+  profs: Record<string, { rank: number; basis: number; verdict: string }>;
 }
 
 /** A course's page: the course, its rating, and its professors with theirs. */
 export interface CourseView extends Omit<CourseDetail, 'professors'> {
   rating: CourseRating | null;
-  professors: Array<{ name: string; score: number | null; basis: number; verdict: string; here: { score: number; count: number } | null; teachingNow: boolean; lastTerm: string }>;
+  professors: Array<{ name: string; basis: number; verdict: string; here: { count: number } | null; teachingNow: boolean; lastTerm: string }>;
   /** Who taught it each term up to now, newest first. */
   offerings: Array<{ term: string; professors: string[] }>;
 }
@@ -431,7 +431,7 @@ export interface ProfView {
   name: string;
   currentTerm: string;
   rating: ProfRating | null;
-  courses: Array<{ code: string; title: string; score: number | null; here: { score: number; count: number } | null; teachingNow: boolean; lastTerm: string; terms: string[] }>;
+  courses: Array<{ code: string; title: string; score: number | null; here: { count: number } | null; teachingNow: boolean; lastTerm: string; terms: string[] }>;
 }
 
 /** What writing or removing a review changed: the course's and its professors' ratings, recounted. */
@@ -462,21 +462,20 @@ export interface CourseReview {
   mine: boolean;
 }
 
-/** How students in the group rate being taught by a professor. */
+/** What students say a professor's classes are like: how hard, how heavy, the grading. Professors are not scored. */
 export interface ProfRating {
-  score: number;
   verdict: string;
   /** How many posts and comments it rests on: each is one student rating. */
   basis: number;
   confidence: 'high' | 'medium' | 'low';
+  difficulty: number | null;
+  workload: number | null;
   likes: string[];
   warnings: string[];
-  counts: RatingCounts;
-  /** Their courses, most discussed first, with what students said of them in each. */
-  courses: Array<RatingCounts & { code: string; score: number }>;
+  /** Their courses, most discussed first, with how many ratings each got. */
+  courses: Array<{ code: string; count: number }>;
   from: string;
   to: string;
-  sources: Array<{ url: string; date: string; excerpt: string }>;
 }
 
 export class ApiError extends Error {
@@ -591,7 +590,7 @@ function recounted(code: string, result: Recount): void {
     if (result.course === null) delete index.courses[code];
     else if (result.course) index.courses[code] = { score: result.course.score, basis: result.course.basis, difficulty: result.course.difficulty, workload: result.course.workload, verdict: result.course.verdict };
     for (const [name, rating] of Object.entries(result.profs ?? {})) {
-      if (rating) index.profs[name] = { score: rating.score, basis: rating.basis, verdict: rating.verdict };
+      if (rating) index.profs[name] = { rank: index.profs[name]?.rank ?? 3, basis: rating.basis, verdict: rating.verdict };
       else delete index.profs[name];
     }
   }).catch(() => undefined);

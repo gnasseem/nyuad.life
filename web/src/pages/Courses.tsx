@@ -64,7 +64,7 @@ function useEntries(courses: CourseEntry[] | null, scores: ScoreIndex | null): E
   }, [courses, scores]);
 }
 
-function scoreOf(entry: Entry, scores: ScoreIndex | null): { score: number; basis: number; verdict: string } | undefined {
+function scoreOf(entry: Entry, scores: ScoreIndex | null): { score?: number; basis: number; verdict: string } | undefined {
   return entry.kind === 'course' ? scores?.courses[entry.id] : scores?.profs[entry.id];
 }
 
@@ -191,7 +191,7 @@ export function CoursesPage({ code, professor }: { code?: string; professor?: st
   );
 }
 
-function ResultRow({ entry, rated, selected, onOpen }: { entry: Entry; rated?: { score: number; basis: number; verdict: string }; selected: boolean; onOpen(): void }) {
+function ResultRow({ entry, rated, selected, onOpen }: { entry: Entry; rated?: { score?: number; basis: number; verdict: string }; selected: boolean; onOpen(): void }) {
   const href = entry.kind === 'course' ? `/courses/${encodeURIComponent(entry.id)}` : `/professors/${encodeURIComponent(entry.id)}`;
   const related = entry.related.slice(0, 3).join(', ');
   return (
@@ -212,7 +212,7 @@ function ResultRow({ entry, rated, selected, onOpen }: { entry: Entry; rated?: {
         <span className="course-title">{entry.title}</span>
         <span className={`result-verdict${rated?.verdict ? '' : ' none'}`}>{rated?.verdict || 'No ratings yet'}</span>
       </span>
-      <span className="course-scores">{rated && <ScoreBadge score={rated.score} label={`Rated ${rated.score.toFixed(1)} from ${plural(rated.basis, 'rating')}`} />}</span>
+      <span className="course-scores">{rated?.score !== undefined && <ScoreBadge score={rated.score} label={`Rated ${rated.score.toFixed(1)} from ${plural(rated.basis, 'rating')}`} />}</span>
     </a>
   );
 }
@@ -355,8 +355,8 @@ function CourseDetail({ code, onClose }: { code: string; onClose(): void }) {
         const part = result.course?.professors.find((item) => item.name === entry.name);
         return {
           ...entry,
-          ...(recounted === undefined ? {} : { score: recounted?.score ?? null, basis: recounted?.basis ?? 0 }),
-          here: part ? { score: part.score, count: part.positive + part.negative + part.neutral } : null,
+          ...(recounted === undefined ? {} : { basis: recounted?.basis ?? 0 }),
+          here: part ? { count: part.count } : null,
         };
       }),
     });
@@ -411,7 +411,6 @@ function CourseDetail({ code, onClose }: { code: string; onClose(): void }) {
                 <h3>Professors</h3>
                 <div className="teacher-list">
                   {view.professors.map((entry) => {
-                    const score = entry.here?.score ?? entry.score;
                     return (
                       <a key={entry.name} href={`/professors/${encodeURIComponent(entry.name)}`} onClick={(event) => {
                         event.preventDefault();
@@ -420,10 +419,9 @@ function CourseDetail({ code, onClose }: { code: string; onClose(): void }) {
                         <span className="teacher-main">
                           <span>{entry.name}</span>
                           <small>
-                            {[entry.teachingNow ? `Teaching ${view.currentTerm}` : entry.lastTerm ? `Last taught ${entry.lastTerm}` : '', entry.here ? `${entry.here.score.toFixed(1)} in this course from ${plural(entry.here.count, 'rating')}` : entry.score !== null ? `${entry.score.toFixed(1)} overall` : 'Not rated yet'].filter(Boolean).join(' · ')}
+                            {[entry.teachingNow ? `Teaching ${view.currentTerm}` : entry.lastTerm ? `Last taught ${entry.lastTerm}` : '', entry.here ? `${plural(entry.here.count, 'rating')} in this course` : entry.basis ? plural(entry.basis, 'rating') : 'Not rated yet'].filter(Boolean).join(' · ')}
                           </small>
                         </span>
-                        {score !== null && <ScoreBadge score={score} label={`${score.toFixed(1)} out of 5`} />}
                       </a>
                     );
                   })}
@@ -493,7 +491,7 @@ function ProfDetail({ name, onClose }: { name: string; onClose(): void }) {
         {view && (
           <>
             <Summary
-              rating={view.rating && { score: view.rating.score, basis: view.rating.basis, verdict: view.rating.verdict, likes: view.rating.likes, warnings: view.rating.warnings, difficulty: null, workload: null }}
+              rating={view.rating && { basis: view.rating.basis, verdict: view.rating.verdict, likes: view.rating.likes, warnings: view.rating.warnings, difficulty: view.rating.difficulty, workload: view.rating.workload }}
               empty={`Nobody has rated ${view.name} yet.`}
               onRate={rateable.length ? (stars) => rate(stars) : undefined}
               mine={Boolean(reviews?.some((review) => review.mine))}
@@ -513,7 +511,7 @@ function ProfDetail({ name, onClose }: { name: string; onClose(): void }) {
                 <h3>{group.label}</h3>
                 <div className="teacher-list">
                   {group.list.map((course) => {
-                    const score = course.here?.score ?? course.score;
+                    const score = course.score;
                     return (
                       <a key={course.code} href={`/courses/${encodeURIComponent(course.code)}`} onClick={(event) => {
                         event.preventDefault();
@@ -522,7 +520,7 @@ function ProfDetail({ name, onClose }: { name: string; onClose(): void }) {
                         <span className="teacher-main">
                           <span><b className="code">{course.code}</b> {course.title}</span>
                           <small>
-                            {[course.teachingNow ? '' : course.lastTerm ? `Last taught ${course.lastTerm}` : '', course.here ? `${course.here.score.toFixed(1)} with ${view.name.split(' ')[0]} from ${plural(course.here.count, 'rating')}` : course.score !== null ? `${course.score.toFixed(1)} overall` : 'Not rated yet'].filter(Boolean).join(' · ')}
+                            {[course.teachingNow ? '' : course.lastTerm ? `Last taught ${course.lastTerm}` : '', course.here ? `${plural(course.here.count, 'rating')} with ${view.name.split(' ')[0]}` : '', course.score !== null ? `course ${course.score.toFixed(1)} overall` : 'Not rated yet'].filter(Boolean).join(' · ')}
                           </small>
                         </span>
                         {score !== null && <ScoreBadge score={score} label={`${score.toFixed(1)} out of 5`} />}
@@ -534,7 +532,7 @@ function ProfDetail({ name, onClose }: { name: string; onClose(): void }) {
             ))}
           </>
         )}
-        <ReviewList reviews={reviews} title="Ratings from students here" show="course" profName={view?.name ?? name} onEdit={(code) => rateable.length && setRating({ code, prof: { name: view!.name, courses: rateable } })} onRemove={undefined} />
+        <ReviewList reviews={reviews} title="Ratings from students here" show="course" onEdit={(code) => rateable.length && setRating({ code, prof: { name: view!.name, courses: rateable } })} onRemove={undefined} />
       </div>
       <RateSheet target={rating} onClose={() => setRating(null)} />
     </>
@@ -544,7 +542,8 @@ function ProfDetail({ name, onClose }: { name: string; onClose(): void }) {
 /* ---------- The digest, and the ratings written here ---------- */
 
 interface Summed {
-  score: number;
+  /** None for a professor: they are not scored. */
+  score?: number;
   basis: number;
   verdict: string;
   likes: string[];
@@ -566,10 +565,12 @@ function Summary({ rating, empty, onRate, mine }: { rating: Summed | null; empty
   return (
     <div className="rating">
       <div className="rating-head">
-        <div className={`rating-score ${tone(rating.score)}`} aria-label={`Rated ${rating.score} out of 5`}>
-          <b>{rating.score.toFixed(1)}</b>
-          <StarRow value={rating.score} />
-        </div>
+        {rating.score !== undefined && (
+          <div className={`rating-score ${tone(rating.score)}`} aria-label={`Rated ${rating.score} out of 5`}>
+            <b>{rating.score.toFixed(1)}</b>
+            <StarRow value={rating.score} />
+          </div>
+        )}
         <div className="rating-copy">
           {rating.verdict && <p className="rating-verdict">{rating.verdict}</p>}
           <p className="rating-basis">From {plural(rating.basis, 'student rating')}{mine ? ', yours among them' : ''}.</p>
@@ -627,7 +628,7 @@ function SummaryLoading() {
   );
 }
 
-function ReviewList({ reviews, title, show, profName, onEdit, onRemove }: { reviews: CourseReview[] | null; title: string; show: 'professor' | 'course'; profName?: string; onEdit(code: string): void; onRemove?(): void }) {
+function ReviewList({ reviews, title, show, onEdit, onRemove }: { reviews: CourseReview[] | null; title: string; show: 'professor' | 'course'; onEdit(code: string): void; onRemove?(): void }) {
   if (reviews === null) return <div className="skeleton" style={{ height: 72, marginBottom: 26 }} />;
   if (!reviews.length) return null;
   const mine = reviews.filter((review) => review.mine);
@@ -638,7 +639,7 @@ function ReviewList({ reviews, title, show, profName, onEdit, onRemove }: { revi
         {title} <span className="muted">({reviews.length})</span>
       </h3>
       {[...mine, ...others].map((review) => (
-        <ReviewCard key={review.id} review={review} show={show} stars={show === 'course' && profName ? review.profRating ?? review.rating : review.rating} onEdit={review.mine ? () => onEdit(review.code) : undefined} onRemove={review.mine ? onRemove : undefined} />
+        <ReviewCard key={review.id} review={review} show={show} stars={review.courseRated ? review.rating : null} onEdit={review.mine ? () => onEdit(review.code) : undefined} onRemove={review.mine ? onRemove : undefined} />
       ))}
     </section>
   );
@@ -654,7 +655,6 @@ function ReviewCard({ review, show, stars, onEdit, onRemove }: { review: CourseR
           </span>
         ) : null}
         {show === 'course' && <span className="code">{review.code}</span>}
-        {show === 'professor' && review.professor && review.profRating ? <span className="tag">{review.professor.split(' ')[0]}: {review.profRating}★</span> : null}
         {review.difficulty ? <span className="tag">{HARDNESS[review.difficulty]}</span> : null}
         {review.workload ? <span className="tag">{SCALE[review.workload]} work</span> : null}
         <span className="spacer" />

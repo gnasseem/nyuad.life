@@ -132,8 +132,8 @@ function RateForm({ target, onClose }: { target: RateTarget; onClose(): void }) 
     setError('');
     try {
       const result = await api.board.review({ code, rating, profRating: professor ? profRating : null, difficulty, workload, text: text.trim(), term, professor, anonymous });
-      const score = prof ? result.profs?.[prof.name]?.score : result.course?.score;
-      toast(score ? `Thanks. ${prof ? prof.name : code} is now ${score.toFixed(1)}.` : 'Thanks. Your rating helps the next student choose.');
+      const score = prof ? undefined : result.course?.score;
+      toast(score ? `Thanks. ${code} is now ${score.toFixed(1)}.` : 'Thanks. Your rating helps the next student choose.');
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save your rating.');

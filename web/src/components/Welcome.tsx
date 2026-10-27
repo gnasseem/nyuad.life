@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { Profile } from '../api';
+import { INDEPENDENT } from '../brand';
 import { IconArrow, IconBack } from '../icons';
 import { ProfileForm } from './ProfileForm';
 import { Wordmark } from './Logo';
@@ -140,6 +141,7 @@ export function Welcome({ tour, reason, onToured, onDone }: { tour: boolean; rea
             <h2 id="welcome-title" tabIndex={-1}>Log in to nyuad.life</h2>
             <p>{reason || 'Use your NYU email to log in or create an account. It works on every device.'}</p>
             <ProfileForm onDone={onDone} submitLabel="Get started" steps />
+            <p className="welcome-note">{INDEPENDENT}</p>
           </div>
         </div>
       )}

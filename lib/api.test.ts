@@ -466,18 +466,21 @@ describe('api', () => {
     const body = { op: 'review', code: 'MATH-UH 1012', rating: 4, difficulty: null, workload: null, text: 'Clear lectures and fair exams.', term: 'Fall 2026', professor: 'Rana Dania', anonymous: true };
     const written = await getJson(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
     expect(written.review).toMatchObject({ authorName: 'Anonymous', authorMajor: '', professor: 'Rana Dania', text: body.text, mine: true });
-    // The course's and the professor's scores take the review in at once, with its words as their summary.
-    expect(written.course).toMatchObject({ score: 3.7, basis: 1, verdict: body.text });
-    expect(written.profs['Rana Dania']).toMatchObject({ score: 3.7, basis: 1 });
+    // The course's score takes the review in at once; its words wait for the review job, and a professor gets no score.
+    expect(written.course).toMatchObject({ score: 3.7, basis: 1, verdict: '' });
+    expect(written.profs['Rana Dania']).toMatchObject({ basis: 1, verdict: '' });
+    expect(written.profs['Rana Dania']).not.toHaveProperty('score');
     // Rated again, with the professor rated apart from the course: each digest moves with its own stars.
     const again = await getJson(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify({ ...body, rating: 2, profRating: 5 }) });
     expect(again.review).toMatchObject({ rating: 2, profRating: 5, professor: 'Rana Dania', courseRated: true });
     expect(again.course).toMatchObject({ score: 2.3, basis: 1 });
-    expect(again.profs['Rana Dania']).toMatchObject({ score: 4.3, basis: 1 });
+    expect(again.profs['Rana Dania']).toMatchObject({ basis: 1 });
     const page = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012&view=1`);
-    expect(page).toMatchObject({ code: 'MATH-UH 1012', rating: { score: 2.3 }, professors: [expect.objectContaining({ name: 'Rana Dania', score: 4.3, teachingNow: true })] });
+    expect(page).toMatchObject({ code: 'MATH-UH 1012', rating: { score: 2.3, professors: [{ name: 'Rana Dania', count: 1 }] }, professors: [expect.objectContaining({ name: 'Rana Dania', basis: 1, here: { count: 1 }, teachingNow: true })] });
+    expect(page.professors[0]).not.toHaveProperty('score');
     const prof = await getJson(`${apiUrl}/api/courses?prof=Rana%20Dania`);
-    expect(prof).toMatchObject({ name: 'Rana Dania', rating: { score: 4.3 }, courses: [expect.objectContaining({ code: 'MATH-UH 1012', teachingNow: true, score: 2.3 })] });
+    expect(prof).toMatchObject({ name: 'Rana Dania', rating: { basis: 1 }, courses: [expect.objectContaining({ code: 'MATH-UH 1012', teachingNow: true, score: 2.3, here: { count: 1 } })] });
+    expect(prof.rating).not.toHaveProperty('score');
     const theirs = await getJson(`${apiUrl}/api/board?op=prof_reviews&name=Rana%20Dania`);
     expect(theirs.reviews).toEqual([expect.objectContaining({ code: 'MATH-UH 1012', profRating: 5 })]);
     const mine = await getJson(`${apiUrl}/api/board?op=my_reviews`, { headers });
@@ -553,13 +556,16 @@ describe('api', () => {
       const code = 'MATH-UH%201012';
       const { rating } = await getJson(`${apiUrl}/api/courses?code=${code}&rating=1`);
       expect(rating).toMatchObject({ score: 4.2, difficulty: 3, workload: null, verdict: 'Students like it.', pros: ['Clear lectures'], cons: ['A hard final'], basis: 7, confidence: 'high', counts: { positive: 5, negative: 1, neutral: 1 }, from: '2023-02-01', to: '2026-04-02' });
-      expect(rating.professors).toEqual([{ name: 'Rana Dania', positive: 4, negative: 0, neutral: 1, score: 4.5 }]);
-      expect(rating.sources).toEqual([expect.objectContaining({ url: 'https://fb/p1' })]);
+      // How many ratings it got with each professor, never a professor's score; and no quoted posts.
+      expect(rating.professors).toEqual([{ name: 'Rana Dania', count: 5 }]);
+      expect(rating).not.toHaveProperty('sources');
       expect(rating).not.toHaveProperty('postIds');
     }
+    const { rating: prof } = await getJson(`${apiUrl}/api/courses?prof=Rana%20Dania`);
+    expect(prof).toEqual({ basis: 7, verdict: 'Students like it.', confidence: 'high', difficulty: 3, workload: null, likes: ['Clear lectures'], warnings: ['A hard final'], courses: [{ code: 'MATH-UH 1012', count: 5 }], from: '2023-02-01', to: '2026-04-02' });
     const scores = await getJson(`${apiUrl}/api/courses?ratings=1`);
     expect(scores.courses['MATH-UH 1012']).toEqual({ score: 4.2, basis: 7, difficulty: 3, workload: null, verdict: 'Students like it.' });
-    expect(scores.profs['Rana Dania']).toEqual({ score: 4.2, basis: 7, verdict: 'Students like it.' });
+    expect(scores.profs['Rana Dania']).toEqual({ rank: 4.2, basis: 7, verdict: 'Students like it.' });
     expect(geminiCalls.length).toBe(calls);
   });
 
@@ -567,7 +573,7 @@ describe('api', () => {
     const result = await getJson(`${apiUrl}/api/ask`, { method: 'POST', headers, body: JSON.stringify({ question: 'Is MATH-UH 1012 a good class?', stream: false }) });
     const prompt = geminiCalls.filter((call) => call.url.includes(':streamGenerateContent')).at(-1)!.prompt;
     expect(prompt).toMatch(/^\[1\] What NYUAD students say about MATH-UH 1012 Calculus, from 7 student ratings in the group and on this site, Feb 2023 to Apr 2026 \(3 in the last two years\)\.$/m);
-    expect(prompt).toContain('Taught by Rana Dania: 4.5 out of 5 from 5 ratings (4 positive, 0 negative, 1 neutral).');
+    expect(prompt).toContain('Taught by Rana Dania: 5 ratings.');
     expect(result.sources.map((source: { kind: string }) => source.kind)).not.toContain('digest');
     expect(result.answer).not.toMatch(/\[1\]/);
     expect(result.answer).toContain('[Reviews: MATH-UH 1012](/courses/MATH-UH%201012)');

@@ -66,6 +66,7 @@
 .welcome-signup > p { margin: 12px 0 24px; color: var(--ink-2); font-size: 15px; line-height: 1.6; }
 .welcome-signup .auth-form > .muted { display: none; }
 .welcome-signup .modal-actions .btn { width: 100%; }
+.welcome-signup > .welcome-note { margin: 20px 0 0; color: var(--ink-3); font-size: 13px; line-height: 1.5; }
 
 /* ---------- Scenes ---------- */
 /* Hidden until their turn, so the animation has to end visible rather than at the element's own opacity. */

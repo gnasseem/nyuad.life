@@ -169,7 +169,7 @@ export function PlanPage() {
       for (const section of row.sections) {
         for (const name of section.instructors) {
           const entry = byPerson.get(personKey(name));
-          if (entry && !profs.has(name)) profs.set(name, weigh(entry));
+          if (entry && !profs.has(name)) profs.set(name, weigh({ score: entry.rank, basis: entry.basis }));
         }
       }
     }
@@ -743,9 +743,9 @@ function ChoiceRow({ choice, color, course, profs }: { choice: Choice; color: nu
                         {i > 0 && ', '}
                         <span className="prof">
                           {name}
-                          {prof && (
-                            <button type="button" className={`prof-score${open === id ? ' on' : ''}`} onClick={() => setOpen(open === id ? '' : id)} aria-expanded={open === id} aria-label={`${name}: rated ${prof.score.toFixed(1)} by students. What they say`}>
-                              {prof.score.toFixed(1)}
+                          {prof?.verdict && (
+                            <button type="button" className={`prof-score${open === id ? ' on' : ''}`} onClick={() => setOpen(open === id ? '' : id)} aria-expanded={open === id} aria-label={`${name}: what students say`}>
+                              Reviews
                             </button>
                           )}
                         </span>
