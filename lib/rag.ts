@@ -3,7 +3,7 @@
  * the Albert class schedule for any course or professor the question names and what the student board and the
  * announcements feed know, then check a draft against supporting passages before returning a cited answer.
  */
-import { searchAnnouncements, searchBoard, STANDING_LABELS, unpackReviewText, type Announcement, type Answer, type Digest, type Question } from './board.ts';
+import { JUDGMENT, searchAnnouncements, searchBoard, STANDING_LABELS, TEACHER, unpackReviewText, type Announcement, type Answer, type Digest, type Question } from './board.ts';
 import type { BoardStore } from './board-store.ts';
 import { detectRedirect } from './domains.ts';
 import { embedderForIndex, type Embedder } from './embeddings.ts';
@@ -1325,6 +1325,23 @@ interface Check {
  * Mistakes in a draft that need no model to find: a placeholder or invented citation, a link or a year no source
  * carries, a referral to a group chat. Any of them means the checked answer replaces the draft.
  */
+/**
+ * The answer without its sentences that judge a professor: one using a judging word about a teacher, by role or by
+ * pronoun, or any such sentence when the question is about a teacher. Whatever the models wrote, an answer never says
+ * a professor is bad; what is left keeps grading and workload.
+ */
+export function withoutJudgments(text: string, question: string): string {
+  const aboutTeacher = TEACHER.test(question) || /\b(?:who|whom) (?:to|should i) (?:take|avoid)\b/i.test(question);
+  const judges = (sentence: string) => JUDGMENT.test(sentence) && (aboutTeacher || TEACHER.test(sentence) || /\b(?:he|she|him|his|her)\b/i.test(sentence));
+  const kept = text.split('\n').map((line) => {
+    if (!JUDGMENT.test(line)) return line;
+    const sentences = line.split(/(?<=[.!?])(?<!\b(?:Prof|Dr|Mr|Mrs|Ms|St|vs)\.)\s+/);
+    const left = sentences.filter((sentence) => !judges(sentence));
+    return left.length === sentences.length ? line : left.length ? left.join(' ') : null;
+  }).filter((line): line is string => line !== null).join('\n').trim();
+  return kept || 'Students\' comments here are about the professor rather than their grading or workload, which this site does not repeat. Ask about the workload, exams or grading instead.';
+}
+
 export function draftProblems(draft: string, evidence: ReadonlyMap<number, string>, term = ''): string[] {
   const problems: string[] = [];
   if (/\[n\]/i.test(draft)) problems.push('placeholder citation');
@@ -1394,6 +1411,7 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
   const useCache = (context.cache ?? process.env.ROR_ANSWER_CACHE !== '0') && history.length === 0 && !TIMELY.test(request.question) && !personName(request.question) && !/\b(?:deadlines?|due dates?|registration dates?|last day)\b/i.test(request.question);
   const cached = useCache ? await timed(timings, 'cache', within(cachedAnswer(board, request.question), 800)).catch(() => null) : null;
   if (cached) {
+    cached.answer = withoutJudgments(cached.answer, request.question);
     events.sources?.(cached.sources);
     events.delta?.(cached.answer);
     return { answer: cached.answer, sources: cached.sources, model: cached.model, confidence: cached.confidence, cached: true, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started }, timings: logTimings(timings, started, 'cached') };
@@ -1471,6 +1489,7 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
       console.warn('[ask] source check unavailable:', String((error as Error).message).slice(0, 160));
     }
   }
+  parsed.text = withoutJudgments(parsed.text, request.question);
   // Citations to sources that do not exist cannot stay, checked or not.
   if (outcome === 'unchecked') parsed.text = parsed.text.replace(/\[(\d+)\]/g, (match, n: string) => (evidence.has(Number(n)) ? match : ''));
   parsed.confidence = outcome === 'unchecked'

@@ -292,6 +292,14 @@ function confidenceOf(digest: Digest): 'high' | 'medium' | 'low' {
 
 export const level = (value: number | null) => (value === null ? null : Math.min(5, Math.max(1, Math.round(value))));
 
+/**
+ * Words that judge a professor rather than describe their grading or workload. The free models let some through
+ * whatever their prompts say, so review summaries drop points using one about a professor, and Ask drops sentences
+ * using one about a professor from its answers.
+ */
+export const JUDGMENT = /\b(?:toxic|boring|bored|dull|unengag\w*|disengag\w*|uncommunicative|unresponsive|unavailable|rambl\w*|tangents?|destructive|traumati\w*|nightmare|hell|terrible|awful|horrible|worst|bad|poor(?:ly)?|weak|rude|arrogant|condescending|disrespect\w*|dismissive|petty|spiteful|mean|lazy|incompeten\w*|unprofessional|unqualified|unclear|confus\w*|(?:hard|difficult|impossible) to (?:follow|understand)|disorgani[sz]ed|unorgani[sz]ed|unhelpful|unfair|biased|favou?rit\w*|careless|(?:doesn't|does not|don't|do not) care|uncaring|avoid\w*|steer clear|stay away|caution\w*|(?:not|never) recommend\w*|(?:don't|do not) recommend|(?:advise|warn)\w* against|teaching quality|quality of (?:the )?teaching|low quality|overcomplicat\w*|attitude|ego|scary|unfocused|clueless|(?:doesn't|does not|didn't|did not) know|no idea|waste of time|useless|pointless|annoying|frustrat\w*|hate\w*|dislike\w*|not worth|regret\w*|intimidat\w*|mentally|can'?t teach|cannot teach|not a good|isn'?t good|not good)\b/i;
+export const TEACHER = /\b(?:prof\w*|instructor|teacher|lecturer|teaching|taught|lectures?)\b/i;
+
 /** A course's digest as the course page shows it; a digest left with no ratings (its reviews removed) is none. */
 export function courseRating(digest: Digest | undefined) {
   if (!digest || digest.positive + digest.negative + digest.neutral === 0) return null;

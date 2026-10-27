@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkedAnswer, draftProblems, gatherSources, withoutConfidence, matchesPerson, personName, safeRewrite, parseConfidence, searchQueries, sourcesBlock, systemPrompt } from './rag.ts';
+import { checkedAnswer, draftProblems, gatherSources, withoutConfidence, matchesPerson, personName, safeRewrite, parseConfidence, searchQueries, sourcesBlock, systemPrompt, withoutJudgments } from './rag.ts';
 import type { OfficialCorpus } from './official.ts';
 import type { Archive } from './store.ts';
 import { buildBm25 } from './search.ts';
@@ -290,6 +290,14 @@ it('finds the mistakes in a draft that need no model to see', () => {
   const evidence = new Map([[1, '[1] Official NYUAD page: Card Services, read 2026-10-01\nThe office is in Building A4. https://students.nyuad.nyu.edu/card']]);
   expect(draftProblems('Go to Building A4 [1].', evidence)).toEqual([]);
   expect(draftProblems('Go to A4 [3], see https://example.com since 2019 [n].', evidence)).toEqual(['placeholder citation', 'citation [3] has no source', 'link https://example.com is in no source', 'year 2019 is in no source']);
+});
+
+it('drops the sentences of an answer that judge a professor, keeping grading and workload', () => {
+  const answer = 'Students call her a genius with 18 books of reading [1]. A 2016 comment says she doesn\'t know the subject and the course felt unfocused [2]. Grading is harsh [3].';
+  expect(withoutJudgments(answer, 'Is Prof. Kalantzakos good?')).toBe('Students call her a genius with 18 books of reading [1]. Grading is harsh [3].');
+  expect(withoutJudgments('Students say Prof. X is boring [1]. The curve is strict [2].', 'Is CS-UH 1001 hard?')).toBe('The curve is strict [2].');
+  // About a course, not its teacher, the same words stay.
+  expect(withoutJudgments('The material is confusing at first [1].', 'Is MATH-UH 1012 hard?')).toBe('The material is confusing at first [1].');
 });
 
 it('treats near-duplicate questions as one for the answer cache, and different ones as different', () => {

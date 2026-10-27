@@ -17,7 +17,7 @@
  * by default because their small daily allowances are what Ask answers with.
  */
 import { createHash, createHmac } from 'node:crypto';
-import { unpackReviewText, type CourseReview, type Digest, type DigestPart, type Mention } from './board.ts';
+import { JUDGMENT, TEACHER, unpackReviewText, type CourseReview, type Digest, type DigestPart, type Mention } from './board.ts';
 import type { BoardStore } from './board-store.ts';
 import { baseCode, codeVariants, COMMON_WORDS, currentCode, displayName, termOrder, type Catalog } from './courses.ts';
 import { courseKey, courseNames, courseThreads, fold, mentions, person, personThreads, profKey, type Person } from './entities.ts';
@@ -472,13 +472,6 @@ const SUMMARY_SYSTEM = [
 
 const NOTES_PER_CALL = 40;
 
-/**
- * Words that judge a professor rather than describe their grading or workload. The free models let some through
- * whatever the prompt says, so a summary point using one is dropped (a professor's, or a course's that names its
- * teacher), and a verdict using one is asked for again.
- */
-export const JUDGMENT = /\b(?:toxic|boring|bored|dull|unengag\w*|disengag\w*|uncommunicative|unresponsive|unavailable|rambl\w*|tangents?|destructive|traumati\w*|nightmare|hell|terrible|awful|horrible|worst|bad|poor(?:ly)?|weak|rude|arrogant|condescending|disrespect\w*|dismissive|petty|spiteful|mean|lazy|incompeten\w*|unprofessional|unqualified|unclear|confus\w*|(?:hard|difficult|impossible) to (?:follow|understand)|disorgani[sz]ed|unorgani[sz]ed|unhelpful|unfair|biased|favou?rit\w*|careless|(?:doesn't|does not|don't|do not) care|uncaring|avoid\w*|steer clear|stay away|caution\w*|(?:not|never) recommend\w*|(?:don't|do not) recommend|(?:advise|warn)\w* against|teaching quality|quality of (?:the )?teaching|low quality|overcomplicat\w*|attitude|ego|scary|intimidat\w*|mentally|can'?t teach|cannot teach|not a good|isn'?t good|not good)\b/i;
-const TEACHER = /\b(?:prof\w*|instructor|teacher|lecturer|teaching|taught|lectures?)\b/i;
 
 function mentionRating(mention: Mention): Rating {
   return { key: mention.postId, review: false, date: mention.date, sentiment: mention.sentiment, value: mention.sentiment === 'positive' ? 5 : mention.sentiment === 'negative' ? 1 : 3, pair: mention.pair, difficulty: mention.difficulty, workload: mention.workload, term: mention.term, url: mention.url, note: mention.takeaway };
