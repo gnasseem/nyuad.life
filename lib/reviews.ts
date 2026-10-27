@@ -465,12 +465,20 @@ const SUMMARY_SYSTEM = [
   'For a course, verdict: one direct sentence under 25 words on how students rate taking it. It must agree with the counts: lead with a warning when most ratings are negative, say mixed and name the disagreement when they are split. Say so when the evidence is thin or old.',
   'For a professor, verdict: one sentence under 25 words on what their classes are like: how hard, how heavy, how they grade, how the class runs. Never how good the professor is: never call them bad, weak, unclear, boring, rude or unfair, never advise against taking them, never judge their teaching, attitude or character. Praise students give may be said.',
   'likes: up to 4 specific things students like; warnings: up to 4 specific things they warn about. Each under 14 words, plain words, naming the thing (the final, weekly problem sets, a strict curve). Either list may be empty: never invent a point to balance the other.',
-  'Any warning that touches a professor, in a course\'s summary or a professor\'s, is a concrete fact about grading, exams, workload, pace or class policies only: "hard to get an A", "strict curve", "heavy weekly problem sets", "10% off per missed class". Drop notes that only judge a professor, and never carry over an earlier point that does.',
+  'Any warning that touches a professor, in a course\'s summary or a professor\'s, is a concrete fact about grading, exams, workload, pace or class policies only: "hard to get an A", "strict curve", "heavy weekly problem sets", "10% off per missed class". Drop notes that only judge a professor, and never carry over an earlier point that does. Never write words like toxic, boring, unclear, confusing, rambles, uncommunicative, rude, unfair, attitude, avoid, caution or not recommended about a professor or their lectures.',
   'Keep earlier points that still hold, merge repeats, replace vague points with specific ones, and when recent notes contradict old ones, go with the recent ones. When a point holds only with one professor or in one year, say so in a few words.',
   'Nothing personal about professors. No citations, numbers of notes or student names.',
 ].join('\n');
 
 const NOTES_PER_CALL = 40;
+
+/**
+ * Words that judge a professor rather than describe their grading or workload. The free models let some through
+ * whatever the prompt says, so a summary point using one is dropped (a professor's, or a course's that names its
+ * teacher), and a verdict using one is asked for again.
+ */
+export const JUDGMENT = /\b(?:toxic|boring|bored|dull|unengag\w*|disengag\w*|uncommunicative|unresponsive|unavailable|rambl\w*|tangents?|destructive|traumati\w*|nightmare|hell|terrible|awful|horrible|worst|bad|poor(?:ly)?|weak|rude|arrogant|condescending|disrespect\w*|dismissive|petty|spiteful|mean|lazy|incompeten\w*|unprofessional|unqualified|unclear|confus\w*|(?:hard|difficult|impossible) to (?:follow|understand)|disorgani[sz]ed|unorgani[sz]ed|unhelpful|unfair|biased|favou?rit\w*|careless|(?:doesn't|does not|don't|do not) care|uncaring|avoid\w*|steer clear|stay away|caution\w*|(?:not|never) recommend\w*|(?:don't|do not) recommend|(?:advise|warn)\w* against|teaching quality|quality of (?:the )?teaching|low quality|overcomplicat\w*|attitude|ego|scary|intimidat\w*|mentally|can'?t teach|cannot teach|not a good|isn'?t good|not good)\b/i;
+const TEACHER = /\b(?:prof\w*|instructor|teacher|lecturer|teaching|taught|lectures?)\b/i;
 
 function mentionRating(mention: Mention): Rating {
   return { key: mention.postId, review: false, date: mention.date, sentiment: mention.sentiment, value: mention.sentiment === 'positive' ? 5 : mention.sentiment === 'negative' ? 1 : 3, pair: mention.pair, difficulty: mention.difficulty, workload: mention.workload, term: mention.term, url: mention.url, note: mention.takeaway };
@@ -709,11 +717,20 @@ export async function runReviews(options: ReviewRun): Promise<ReviewResult> {
         'New notes, oldest first:',
         ...notes,
       ].join('\n');
-      const result = await ask<{ verdict?: unknown; likes?: unknown; warnings?: unknown }>(SUMMARY_SYSTEM, prompt, SUMMARY_SCHEMA, 900);
-      if (!result) return 'stopped';
-      const list = (value: unknown) => (Array.isArray(value) ? value.map((point) => withoutStudents(tidy(point, 160), students)).filter((point) => point.length > 3).slice(0, 4) : []);
-      const verdict = withoutStudents(tidy(result.verdict, 300), students);
-      if (verdict) summary = { verdict, likes: list(result.likes), warnings: list(result.warnings) };
+      // A professor's points never judge them; a course's may, unless they are about its teacher.
+      const surnames = counted.breakdown.map((part) => part.name.split(' ').at(-1)!).filter((surname) => surname.length > 2);
+      const fair = (point: string) => !JUDGMENT.test(point) || (base.kind === 'course' && !TEACHER.test(point) && !surnames.some((surname) => point.includes(surname)));
+      let result: { verdict?: unknown; likes?: unknown; warnings?: unknown } | null = null;
+      let verdict = '';
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const asked = attempt ? `${prompt}\n\nYour last verdict judged the professor ("${verdict}"). Write it again saying only what the classes are like: grading, exams, workload, pace.` : prompt;
+        result = await ask<{ verdict?: unknown; likes?: unknown; warnings?: unknown }>(SUMMARY_SYSTEM, asked, SUMMARY_SCHEMA, 900);
+        if (!result) return 'stopped';
+        verdict = withoutStudents(tidy(result.verdict, 300), students);
+        if (fair(verdict)) break;
+      }
+      const list = (value: unknown) => (Array.isArray(value) ? value.map((point) => withoutStudents(tidy(point, 160), students)).filter((point) => point.length > 3 && fair(point)).slice(0, 4) : []);
+      if (verdict) summary = { verdict: fair(verdict) ? verdict : summary.verdict, likes: list(result!.likes), warnings: list(result!.warnings) };
     }
     await store.putDigest({ ...base, ...summary, updatedAt: new Date().toISOString() });
     return 'written';
