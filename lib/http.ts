@@ -165,9 +165,21 @@ export function clientKey(ip: string): string {
 /** Failures of the board's database (lib/board-store.ts storageError), whose messages are for the owner. */
 const STORAGE_CODES = new Set(['board_schema_missing', 'board_schema_outdated', 'board_key_rejected', 'board_url_wrong', 'board_unreachable', 'board_storage']);
 
+/**
+ * Keeps the function running until `work` settles. Vercel freezes an instance as soon as its response has ended, so
+ * anything still in flight then (the usage saves, the answer cache, board reads) stalls, and its timeout fires on the
+ * instance's next request instead. Outside Vercel there is no request context and nothing to do.
+ */
+export function keepAlive<T>(work: Promise<T>): Promise<T> {
+  const context = (globalThis as Record<symbol, { get?: () => { waitUntil?: (work: Promise<unknown>) => void } } | undefined>)[Symbol.for('@vercel/request-context')];
+  context?.get?.().waitUntil?.(work.catch(() => undefined));
+  return work;
+}
+
 /** Wraps a handler with CORS, OPTIONS, method and origin checks, and uniform error JSON. */
 export function route(methods: Array<'GET' | 'POST'>, handler: Handler): Handler {
-  return async (req, res) => {
+  return (req, res) => keepAlive(handle(req, res));
+  async function handle(req: ApiRequest, res: ApiResponse): Promise<void> {
     const started = Date.now();
     cors(req, res);
     res.setHeader('x-content-type-options', 'nosniff');
@@ -203,11 +215,11 @@ export function route(methods: Array<'GET' | 'POST'>, handler: Handler): Handler
       sendJson(res, status >= 400 && status < 600 ? status : 500, { error: code, message });
     } finally {
       recordRequest({ route: routeName(req), status: res.statusCode, ms: Date.now() - started, person: emailSession(req)?.netId, device: clientKey(clientIp(req)) });
-      // The model calls and the request this made, counted in memory, are saved once the response is out, before the
-      // function may be frozen (lib/model-usage.ts, lib/app-usage.ts).
+      // The model calls and the request this made, counted in memory, are saved once the response is out; keepAlive
+      // holds the function open for it (lib/model-usage.ts, lib/app-usage.ts).
       await Promise.all([saveModelUsage(), saveAppUsage()]);
     }
-  };
+  }
 }
 
 interface SseStream {

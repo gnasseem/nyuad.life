@@ -25,8 +25,8 @@ export default route(['GET', 'POST'], async (req, res) => {
   if (req.method === 'GET') {
     rateLimit(req, 30, 30 / 60, 'ask-warm');
     const started = Date.now();
-    warmBoard(boardStore());
-    await Promise.all([warmModels().catch(() => undefined), loadArchive(), loadOfficial().catch(() => null)]);
+    // Everything is awaited: whatever is still loading when the response ends would be frozen with the instance.
+    await Promise.all([warmBoard(boardStore()), warmModels().catch(() => undefined), loadArchive(), loadOfficial().catch(() => null)]);
     loadCatalog();
     sendJson(res, 200, { ok: true, ms: Date.now() - started });
     return;

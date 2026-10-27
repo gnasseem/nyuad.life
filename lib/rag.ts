@@ -12,7 +12,7 @@ import { abuDhabiDate, buildCatalog, CORE_SUBJECTS, courseScheduleText, currentC
 import { cachedAnswer, saveAnswer } from './answer-cache.ts';
 import { aboutTest, courseKey, courseThreads, fold, mentions, person, personThreads, profKey, REVIEWING, threadMentions, type Person } from './entities.ts';
 import { generateStream, geminiKeys, isDailyQuota, isModelUnavailable, keyTag, liveModels, markUnavailable, type GeminiConfig, type GeminiError, type Message } from './gemini.ts';
-import { ApiError } from './http.ts';
+import { ApiError, keepAlive } from './http.ts';
 import { officialCards, officialSourceBlock, retrieveOfficial, type OfficialCorpus } from './official.ts';
 import { screenAsk } from './moderation.ts';
 import { siteCourses } from './plan-schools.ts';
@@ -261,7 +261,7 @@ function memo<T>(store: BoardStore, key: string, ttlMs: number, load: () => Prom
   if (entry && entry.store === store) {
     if (Date.now() - entry.at > ttlMs && !entry.refreshing) {
       entry.refreshing = true;
-      load().then((value) => memos.set(key, { store, at: Date.now(), value: Promise.resolve(value), refreshing: false }), () => { entry.refreshing = false; });
+      void keepAlive(load().then((value) => void memos.set(key, { store, at: Date.now(), value: Promise.resolve(value), refreshing: false }), () => { entry.refreshing = false; }));
     }
     return entry.value as Promise<T>;
   }
@@ -305,10 +305,10 @@ export function forgetBoardReads(): void {
   memos.clear();
 }
 
-/** Starts loading what every answer reads, so the first question on a fresh instance does not wait for it. */
-export function warmBoard(store: BoardStore | null): void {
+/** Loads what every answer reads, so the first question on a fresh instance does not wait for it. Never rejects. */
+export async function warmBoard(store: BoardStore | null): Promise<void> {
   if (!store) return;
-  for (const load of [liveSnapshot, allDigests, allReviews]) void load(store).catch(() => undefined);
+  await Promise.all([liveSnapshot, allDigests, allReviews].map((load) => load(store).catch(() => undefined)));
 }
 
 /** What a source card needs besides itself to be rendered for the model. */
@@ -1396,7 +1396,7 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
   }
 
   // The board's reads do not depend on the question: start them now, use them later.
-  warmBoard(board);
+  void warmBoard(board);
   events.status?.('Reading the question');
   const retrievalStarted = Date.now();
   // The student's own words are searched too, so they are embedded while the model rewrites them.
