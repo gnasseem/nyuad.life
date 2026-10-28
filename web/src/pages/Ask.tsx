@@ -7,7 +7,7 @@ import { RedirectCard } from '../components/RedirectCard';
 import { KIND_LABEL, SourceRow } from '../components/SourceRow';
 import { useApp } from '../context';
 import { formatDate, initials, plural, relativeDate } from '../format';
-import { IconArrow, IconChat, IconCheck, IconChevron, IconCopy, IconPlus, IconSidebar, IconStop } from '../icons';
+import { IconArrow, IconChat, IconCheck, IconChevron, IconCopy, IconPlus, IconSidebar, IconStop, IconThumbDown, IconThumbUp, IconUsers } from '../icons';
 import { Markdown } from '../markdown';
 import { useMedia } from '../motion';
 import { navigate, onLinkClick } from '../router';
@@ -145,6 +145,7 @@ export function AskPage({ resumeId, history }: Props) {
             onDelta: (text) => patchMessage(modelMessage.id, (message) => ({ content: message.content + text, status: undefined })),
             onReplace: (text) => patchMessage(modelMessage.id, { content: text, status: undefined }),
             onDone: ({ confidence }) => patchMessage(modelMessage.id, (message) => ({ confidence, content: stripConfidence(message.content) })),
+            onLog: (logId) => patchMessage(modelMessage.id, { logId }),
           },
           controller.signal,
         );
@@ -257,6 +258,17 @@ export function AskPage({ resumeId, history }: Props) {
     setHot({ messageId, n, rect });
   };
 
+  /** Thumbs on an answer: kept with the conversation and sent to the admins' Ask log. Tapping the same one again clears it. */
+  const vote = (modelId: string, value: 'up' | 'down') => {
+    const message = conversationRef.current.messages.find((entry) => entry.id === modelId);
+    if (!message) return;
+    const next = message.vote === value ? undefined : value;
+    patchMessage(modelId, { vote: next });
+    saveConversation(conversationRef.current);
+    if (message.logId) void api.markAnswer(message.logId, { vote: next ?? null }).catch(() => undefined);
+    if (next === 'down') toast('Thanks. The admins will look at it.');
+  };
+
   /** Posts the question this answer was for to students, anonymously; their answers then show up under it. */
   const askStudents = async (modelId: string) => {
     const question = questionBefore(conversationRef.current.messages, modelId);
@@ -265,6 +277,9 @@ export function AskPage({ resumeId, history }: Props) {
     try {
       const result = await api.board.ask({ text: question, key: askerKey() });
       if (result.question) {
+        // A question the answer did not settle: flagged in the admins' Ask log.
+        const logId = conversationRef.current.messages.find((message) => message.id === modelId)?.logId;
+        if (logId) void api.markAnswer(logId, { asked: true }).catch(() => undefined);
         const similar = (result.similar ?? []).filter((entry) => entry.answers.length).slice(0, 2).map((entry) => ({ text: entry.text, answer: entry.answers[0]!.text }));
         patchMessage(modelId, { asked: { id: result.question.id, at: result.question.createdAt, similar } });
         saveConversation(conversationRef.current);
@@ -279,6 +294,9 @@ export function AskPage({ resumeId, history }: Props) {
       setPosting(null);
     }
   };
+
+  // "Ask students" sits under the latest answer, and under any earlier one the student marked down.
+  const lastAnswerId = [...conversation.messages].reverse().find((message) => message.role === 'model')?.id;
 
   // Answers students sent to this conversation's questions count as read once they are on screen.
   const askedIds = conversation.messages.flatMap((message) => (message.asked ? [message.asked.id] : []));
@@ -446,12 +464,15 @@ export function AskPage({ resumeId, history }: Props) {
                         </>
                       )}
                     </button>
-                    <button type="button" className="foot-btn" onClick={() => { setReportId(reportId === message.id ? null : message.id); setReportReason(''); }}>Report answer</button>
-                    {(!message.confidence || message.confidence.level !== 'high') && !message.asked && (
-                      <button type="button" className="foot-btn ask-students" onClick={() => void askStudents(message.id)} disabled={posting === message.id}>
-                        {posting === message.id ? 'Asking students…' : <>Ask students <IconArrow /></>}
+                    <button type="button" className="foot-btn" onClick={() => { setReportId(reportId === message.id ? null : message.id); setReportReason(''); }}>Report<span className="wide-only"> answer</span></button>
+                    <span className="votes" role="group" aria-label="Was this helpful?">
+                      <button type="button" className={`foot-btn vote${message.vote === 'up' ? ' on' : ''}`} onClick={() => vote(message.id, 'up')} aria-pressed={message.vote === 'up'} title="Helpful">
+                        <IconThumbUp />
                       </button>
-                    )}
+                      <button type="button" className={`foot-btn vote${message.vote === 'down' ? ' on' : ''}`} onClick={() => vote(message.id, 'down')} aria-pressed={message.vote === 'down'} title="Not helpful">
+                        <IconThumbDown />
+                      </button>
+                    </span>
                   </div>
                 )}
                 {reportId === message.id && !message.pending && message.content && (
@@ -460,7 +481,7 @@ export function AskPage({ resumeId, history }: Props) {
                     <textarea id={`report-${message.id}`} className="input" rows={2} maxLength={1000} value={reportReason} onChange={(event) => setReportReason(event.target.value)} placeholder="Incorrect fact, missed review, outdated professor…" />
                     <button type="button" className="btn sm primary" disabled={!reportReason.trim() || reporting} onClick={() => {
                       setReporting(true);
-                      void api.reportAnswer(questionBefore(conversation.messages, message.id), message.content, reportReason.trim(), (message.sources ?? []).map((source) => source.url).filter(Boolean))
+                      void api.reportAnswer(questionBefore(conversation.messages, message.id), message.content, reportReason.trim(), (message.sources ?? []).map((source) => source.url).filter(Boolean), message.logId)
                         .then(() => { setReportId(null); setReportReason(''); toast('Report saved for the admins'); })
                         .catch((error) => toast(error instanceof Error ? error.message : 'Could not save the report.'))
                         .finally(() => setReporting(false));
@@ -468,6 +489,18 @@ export function AskPage({ resumeId, history }: Props) {
                   </div>
                 )}
                 {!message.pending && message.confidence?.reason && message.confidence.level !== 'high' && <p className="confidence-reason">{message.confidence.reason}</p>}
+                {!message.pending && message.content && !message.asked && !message.redirect && (message.id === lastAnswerId || message.vote === 'down') && (
+                  <div className={`ask-bar${message.vote === 'down' || (message.confidence && message.confidence.level !== 'high') ? ' strong' : ''}`} data-line="questions">
+                    <IconUsers />
+                    <p>
+                      <b>{message.vote === 'down' ? 'Sorry it missed.' : message.confidence?.level === 'high' ? 'Want a second opinion?' : 'Not sure this is right?'}</b>{' '}
+                      Students who have been through it can answer, anonymously.
+                    </p>
+                    <button type="button" className="btn sm" onClick={() => void askStudents(message.id)} disabled={posting === message.id}>
+                      {posting === message.id ? 'Asking…' : <>Ask students <IconArrow /></>}
+                    </button>
+                  </div>
+                )}
                 {message.asked && <StudentReplies asked={message.asked} question={students.questions.get(message.asked.id)} />}
                 {message.sources && message.sources.length > 0 && (
                   <div className={`collapse${expanded.has(message.id) || message.error ? ' open' : ''}`} inert={!expanded.has(message.id) && !message.error}>

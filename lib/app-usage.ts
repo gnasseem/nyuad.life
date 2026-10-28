@@ -246,16 +246,59 @@ const QUESTIONS = 'asklog:';
 const QUESTION_DAYS = 90;
 let lastQuestionSweep = 0;
 
+/** How an Ask question went: answered, answered saying it could not find it, cut short, refused, sent elsewhere, failed. */
+export type AskOutcome = 'answered' | 'missing' | 'truncated' | 'screened' | 'redirect' | 'failed' | 'stopped';
+
+export interface AskLogEntry {
+  question: string;
+  followUp: boolean;
+  outcome: AskOutcome;
+  model: string;
+  confidence: string;
+  sources: string[];
+  cached: boolean;
+  /** Kept for older rows, which have no outcome: the answer said it could not find anything. */
+  missing: boolean;
+  firstMs?: number;
+  /** The first part of the answer, or why it failed. */
+  answer?: string;
+  error?: string;
+}
+
+/** What the student did with an answer afterwards, merged into its row. */
+export interface AskMarks {
+  vote?: 'up' | 'down' | null;
+  asked?: boolean;
+  reported?: boolean;
+}
+
+/** The row an Ask question will be kept under, made before it is answered so the client can point back at it. */
+export function askLogKey(now = Date.now()): string {
+  return `${QUESTIONS}${new Date(now).toISOString()}:${randomUUID().slice(0, 8)}`;
+}
+
+export function isAskLogKey(key: unknown): key is string {
+  return typeof key === 'string' && /^asklog:\d{4}-\d\d-\d\dT[\d:.]+Z:[a-f0-9]{8}$/.test(key);
+}
+
 /**
- * Each Ask question, kept for 90 days without who asked it, with how it went: what it was answered from, whether the
- * answer said it could not find anything, and how long the first words took. Read offline to see what students ask
- * and where answers miss.
+ * Each Ask question, kept for 90 days without who asked it, with how it went: its outcome, what it was answered from,
+ * the start of the answer, and how long the first words took. The admin page lists them; the student's thumbs, a
+ * report or putting the question to students are merged in later (markAskLog).
  */
-export async function recordQuestion(store: BoardStore | null, entry: { question: string; followUp: boolean; model: string; confidence: string; sources: string[]; cached: boolean; missing: boolean; firstMs?: number }, now = Date.now()): Promise<void> {
+export async function recordQuestion(store: BoardStore | null, key: string, entry: AskLogEntry, now = Date.now()): Promise<void> {
   if (!store?.persistent || process.env.VITEST) return;
-  await store.putSummary(`${QUESTIONS}${new Date(now).toISOString()}:${randomUUID().slice(0, 8)}`, { ...entry, question: entry.question.slice(0, 600) });
+  await store.putSummary(key, { ...entry, question: entry.question.slice(0, 600), answer: entry.answer?.slice(0, 2400) });
   if (now - lastQuestionSweep > 6 * 3_600_000) {
     lastQuestionSweep = now;
     await store.deleteSummaries(QUESTIONS, new Date(now - QUESTION_DAYS * 86_400_000).toISOString());
   }
+}
+
+/** Adds what the student did with an answer to its row; a row that is not there (not saved yet, or swept) is left alone. */
+export async function markAskLog(store: BoardStore, key: string, marks: AskMarks): Promise<boolean> {
+  const entry = await store.getSummary(key);
+  if (!entry || !entry.payload || typeof entry.payload !== 'object') return false;
+  await store.putSummary(key, { ...(entry.payload as Record<string, unknown>), ...marks });
+  return true;
 }

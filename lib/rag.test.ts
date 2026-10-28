@@ -91,6 +91,8 @@ it('preserves full person identities and rejects rewritten substitutions', () =>
   expect(personName('pool hours')).toBeNull();
   expect(personName('IT support')).toBeNull();
   expect(personName('Read and Refuel Cafe hours')).toBeNull();
+  expect(personName('how is this HIST-UH 2123')).toBeNull();
+  expect(personName('Tell me about MIDSAI program')).toBeNull();
   expect(matchesPerson('George Smith is a professor', 'Morgan Testname')).toBe(false);
   expect(matchesPerson('Written by Morgan Testname.', 'Morgan Testname')).toBe(true);
   expect(matchesPerson('Morgan Testnameson', 'Morgan Testname')).toBe(false);
@@ -139,6 +141,8 @@ it('finds Card Services for the misspelled replacement question without a model 
   expect(personName(question)).toBeNull();
   expect(searchQueries(question)).toContain('card services');
   expect(searchQueries('I lost my Emirates ID, where do I get a new one?')).not.toContain('card services');
+  expect(searchQueries('When is the add/drop deadline?')).toContain('undergraduate academic calendar');
+  expect(searchQueries('Which dining hall is open latest?')).toContain('restaurant days hours');
   const result = await gatherSources(archive, question, question, { cfg: null, official, catalog: null, reranker: { name: 'down', rerank: async () => { throw new Error('unavailable'); } }, board: null });
   expect(result.cards[0]).toMatchObject({ kind: 'official', postId: 'cards' });
   expect(result.cards[0]?.text).toContain('A4 - Level 1');

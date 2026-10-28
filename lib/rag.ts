@@ -98,6 +98,8 @@ export function personName(question: string): string | null {
   const candidate = (explicit?.split(/\s+(?:at|as|from|in|on|to|and|or|vs|versus|with|who|is|was|this|next|teach(?:es|ing)?|taught|grading|grades?|class(?:es)?|courses?|sections?|prof(?:essor)?s?|lectures?|exams?|reviews?|like|really|good|bad|a|an|the|for)\b/i)[0]
     ?? capitalized ?? (/^[\p{L}'’-]+\s+[\p{L}'’-]+$/u.test(clean) ? clean : '')).replace(/^(?:professor|prof\.?|dr\.?)\s+/i, '').replace(/['’]s$/, '');
   if (!candidate || candidate.split(/\s+/).length < 2) return null;
+  // "how is this HIST-UH 2123", "tell me about MIDSAI program": a pronoun, a course code or a programme is not a person.
+  if (/\b(?:this|that|it|these|those|he|she|they|him|her|them|program(?:me)?s?|majors?|minors?|clubs?|office|department|lab|uh)\b/i.test(candidate) || /\d|\p{Lu}{2,}-/u.test(candidate)) return null;
   if (/\b(?:for|the|of|to|with|is|a|an|professor|prof|calculus|algebra|physics|economics|chemistry|biology|french|arabic|pool|gym|hours|timings|course|courses|class|classes|dining|housing|campus|deadline|registration|meal|plan|falcon|dirhams|computer|science|machine|learning|nyu|abu|dhabi|core|curriculum|study|away|financial|aid|health|wellness|student|portal|career|center|best|easy|easiest|math|requirements|waitlist|library|academic|calendar|shuttle|bus|laundry|tuition|lost|lot|found|id|card|replace|replacement|new|one|make|where|how|what|missing|restaurant|marketplace|cafe|coffee|refuel|mart|technology|printing|support|wifi|resed|rrc|arc|cdc)\b/i.test(candidate)) return null;
   return candidate;
 }
@@ -465,6 +467,39 @@ function strongOfficial(candidates: OfficialCandidates): OfficialCandidates['hit
   return scored.slice(0, MAX_OFFICIAL).map((entry) => entry.hit);
 }
 
+/**
+ * "Which dining hall is open latest" needs the whole timetable, not its best-matching part; so does a date on the academic
+ * calendar, whose best-matching part is often another term's.
+ */
+const COMPARES_VENUES = /\b(?:latest|earliest|late at night|late[- ]night|open late|still open|open now|which|where)\b/i;
+const TIMETABLE_PARTS = 5;
+
+/** The best timetable hit with the rest of its page's timetable parts, in page order, then the other hits. */
+function wholeTimetable(corpus: OfficialCorpus, hits: OfficialCandidates['hits']): OfficialCandidates['hits'] {
+  const first = hits[0];
+  if (!first) return hits;
+  const parts: OfficialCandidates['hits'] = [];
+  for (let chunk = 0; chunk < corpus.chunks.length && parts.length < TIMETABLE_PARTS; chunk++) {
+    if (corpus.chunkDoc[chunk] !== first.doc) continue;
+    if (chunk === first.chunk || /(?:\d{1,2}[.:]?\d{0,2}\s*(?:am|pm)|24\/7|\bClosed\b)/i.test(corpus.chunks[chunk]!.text)) parts.push(chunk === first.chunk ? first : { doc: first.doc, chunk, score: first.score });
+  }
+  return [first, ...parts.filter((hit) => hit !== first), ...hits.filter((hit) => hit.doc !== first.doc)].slice(0, TIMETABLE_PARTS + 1);
+}
+
+/** A question about the site itself: who made it, what it reads, whether it is an AI. */
+const ABOUT_SITE = /\b(?:nyuad\.life|this (?:site|website|web ?app|app|page|platform|tool|bot|chatbot|ai)|who (?:made|built|created|developed|runs|owns|maintains|is behind) (?:this|it|you|the site)|(?:are|r) (?:you|u) (?:an? )?(?:ai|bot|chat ?gpt|gpt|robot|human)|(?:what|which) (?:ai |language )?model (?:are|r) (?:you|u)|who are you|admins? of (?:this|the) (?:site|page))\b/i;
+
+/** What the site says about itself in Settings, as a source the answer can use. */
+function aboutSite(): LiveSource {
+  const text = [
+    'About nyuad.life, from the site itself:',
+    'nyuad.life is an independent student project made by George Nasseem (nasseem.dev), not affiliated with or endorsed by NYU Abu Dhabi. Anything official should be checked with the university.',
+    'Ask answers from the Room of Requirement Facebook group archive, official NYUAD web pages, the Albert class schedule, and reviews and answers students write on the site. Free AI models write each answer from the sources found for it; it does not browse the web or run commands, and it can be wrong.',
+    'Ideas, problems or a post to take down go to the admins through the Feedback button at the top of the site; Settings has these details.',
+  ].join('\n');
+  return { digestText: text, card: { n: 0, kind: 'digest', postId: 'about', title: 'About nyuad.life', url: '/settings', author: '', date: abuDhabiDate(new Date()), text, commentCount: 0, reactions: 0, topics: [], courses: [], snippet: '', score: 1 } };
+}
+
 /** Official pages as sources (numbered later): they are the authority on facts. */
 function officialSources(candidates: OfficialCandidates | null, hits: OfficialCandidates['hits']): LiveSource[] {
   if (!candidates || hits.length === 0) return [];
@@ -655,8 +690,8 @@ async function courseReviewSources(store: BoardStore | null, codes: string[]): P
  */
 const DETAIL = /\b(?:exams?|midterms?|finals?|quiz(?:zes)?|tests?|textbooks?|readings?|syllabus|curved?|attendance|projects?|assignments?|homework|psets?|problem sets?|papers?|essays?|labs?|recitations?|office hours|prereq\w*|calculators?|laptops?|cheat\w*|plagiari\w*|online|zoom|happened|story|stories)\b/i;
 /** A question asking for courses or professors ranked ("easiest Arts Core", "best CS professors"), not about one. */
-const RANKING = /\b(?:easiest|hardest|best|worst|top|favou?rites?|chill(?:est)?|lightest|heaviest|most|least|recommend\w*|avoid|good|easy|hard|fun)\b/i;
-const MANY = /\b(?:courses|classes|electives|cores?|colloquiums?|colloquia|professors|profs|instructors|(?:which|what|any|an?) (?:\w+ )?(?:course|class|prof\w*|core|elective|colloquium))\b/i;
+const RANKING = /\b(?:easiest|hardest|best|worst|top|highest|lowest|(?:most|best|top|highly) (?:rated|liked|loved|popular)|favou?rites?|chill(?:est)?|lightest|heaviest|most|least|recommend\w*|avoid|good|easy|hard|fun)\b/i;
+const MANY = /\b(?:courses|classes|electives|cores?|colloquiums?|colloquia|professors|profs|instructors|(?:which|what|any|an?|the) (?:\w+ ){0,2}(?:course|class|prof\w*|core|elective|colloquium)|(?:best|top|easiest|hardest|highest[- ]rated) (?:\w+ ){0,2}(?:course|class|core|elective))\b/i;
 /** How students name a subject: "Arts Core", "CS", "econ". A Core area named outright beats "core" alone. */
 const SUBJECT_WORDS: Array<[RegExp, string]> = [
   [/\b(?:arts?,? (?:design|core)|adt)\b/i, 'CADT'],
@@ -937,7 +972,7 @@ Use official pages for procedures, requirements, deadlines and policies; Albert 
 
 Write plain, direct sentences. Usually 1–3 sentences, 30–90 words; at most 140 words when the question requires detail. Use up to three bullets only for distinct steps or choices. No preamble, restating the question, generic advice, forced sections, rhetorical hooks, "the catch", "next step", "overall" or "it is important to note". Integrate any downside or uncertainty into the answer where it affects the decision. For best/easiest questions give at most three supported choices. Don't pad a simple answer.
 
-Cite each factual claim with its actual source number, for example [1] or [2], at most three citations per claim. Never write a literal placeholder such as [n]. Only cite evidence that actually says it. Named people must match; never substitute someone with a similar name. Authorship is not a review or biography. Preserve qualifications such as optional versus required and occasional versus regular. Date reviews instead of calling old feedback current. If no evidence answers the question, lead with exactly what you couldn't confirm and link [Questions](/questions) if peer help is appropriate. Absence from these sources does not establish that a policy or service does not exist.
+Cite each factual claim with its actual source number, for example [1] or [2], at most three citations per claim. Never write a literal placeholder such as [n]. Only cite evidence that actually says it. Named people must match; never substitute someone with a similar name. Authorship is not a review or biography. Preserve qualifications such as optional versus required and occasional versus regular. Date reviews instead of calling old feedback current. If no evidence answers the question, lead with exactly what you couldn't confirm and, if peer help is appropriate, say the Ask students button under the answer puts the question to students. Absence from these sources does not establish that a policy or service does not exist.
 Never send students to Facebook, WhatsApp, ROR or a group chat to ask, post, search or get an answer. Those threads are historical evidence, not a destination. For a lost-item notice use [Lost & found](/market/lost-found); for replacement questions answer the procedure first. For live requests, say the student can ask other students with the Ask students button under the answer, or use the Market. Route schedule building to [Plan](/plan), course and professor browsing to [Reviews](/courses), rides to [Rides](/market/rides), and trades to their Market tabs. These internal paths are allowed without a citation. When asked for a link, link directly to the requested table, form or file when its URL appears in the evidence, instead of its parent page or navigation instructions. Address each subject in a combined question, stating any evidence gap for that subject.
 
 For opening hours, read the table row for the requested venue, counter and day. Do not turn one counter’s hours into the whole building’s hours. Report split service windows and weekend closures when relevant, and state the posted term. A counter closing time is not a building closing time; a dietitian’s appointments or a hotline’s availability are not clinic opening hours.
@@ -1477,7 +1512,7 @@ export async function ask(archive: Archive, cfg: GeminiConfig | null, request: A
 
   if (cards.length === 0) {
     const name = personName(request.question);
-    const missing = name ? `I couldn’t find reliable NYUAD information for ${name}. I won’t substitute another person with a similar name. Add a course or role to narrow the search, or ask students on the Questions page.` : /\b(?:deadline|due date|last day)\b/i.test(searchQuery) ? "I couldn't confirm a deadline for the requested term from the available dated sources." : NO_SOURCES;
+    const missing = name ? `I couldn’t find reliable NYUAD information for ${name}. I won’t substitute another person with a similar name. Add a course or role to narrow the search, or use Ask students below.` : /\b(?:deadline|due date|last day)\b/i.test(searchQuery) ? "I couldn't confirm a deadline for the requested term from the available dated sources." : NO_SOURCES;
     events.delta?.(missing);
     return { answer: missing, sources: [], model: writerName, confidence: { level: 'low', reason: 'nothing on this in the sources' }, retrieval: { candidates: 0, reranked: false, ms: Date.now() - started }, timings: logTimings(timings, started, 'no sources') };
   }
@@ -1609,7 +1644,7 @@ export async function gatherSources(
   context = { ...context, catalog: questionCatalog(context.catalog, resolved) };
   const schedule = scheduleSources(context.catalog, `${originalQuestion}\n${resolved}`, resolved);
   const scheduleQuestion = /\b(?:who teaches|who is teaching|what (?:does|courses|classes)|which (?:courses|classes)|when|where|schedule|seats|credits)\b/i.test(question);
-  const experience = !scheduleQuestion && (/\b(?:reviews?|opinions?|good|bad|dislike|worth|easiest|hardest|easy|hard|workload|grading|grades?|professors?|prof|teach|taught|like|avoid|recommend|best|worst|experience)\b/i.test(question) || /\b(?:how is|how are|thoughts on|what about)\b/i.test(question));
+  const experience = !scheduleQuestion && (/\b(?:reviews?|rated|ratings?|highest|lowest|opinions?|good|bad|dislike|worth|easiest|hardest|easy|hard|workload|grading|grades?|professors?|prof|teach|taught|like|avoid|recommend|best|worst|experience)\b/i.test(question) || /\b(?:how is|how are|thoughts on|what about)\b/i.test(question));
   const hybrid = context.retrievalMode === 'hybrid' || process.env.ROR_RETRIEVAL === 'hybrid' || (process.env.ROR_RETRIEVAL !== 'keyword' && experience);
   const reviewCodes = [...schedule.codes];
   if (experience && context.catalog && schedule.instructors.length) {
@@ -1689,7 +1724,7 @@ export async function gatherSources(
   const archiveHits = summarized ? reviewed.slice(0, DIGEST_THREADS) : [...courseReviews.slice(0, 3), ...reviewed.slice(0, 1), ...critical.slice(0, 2), ...linkedReviews.slice(0, 6), ...reviewed].filter((hit, index, all) => all.findIndex((other) => other.post === hit.post) === index).slice(0, MAX_SOURCES);
   const timetables = officialPool ? strongOfficial(officialPool).filter((hit) => officialMatch(officialPool.corpus, hit, resolved, resolved).hours) : [];
   const officialHits = HOURS_QUESTION.test(resolved) && timetables.length
-    ? timetables
+    ? (COMPARES_VENUES.test(resolved) || /academic-calendar/.test(officialPool!.corpus.docs[timetables[0]!.doc]!.url) ? wholeTimetable(officialPool!.corpus, timetables) : timetables)
     : ranked.official;
   const official = officialSources(officialPool, officialHits);
   const live = ranked.live;
@@ -1718,6 +1753,7 @@ export async function gatherSources(
     : experience
     ? [...eligibleReviews, ...threads, ...live, ...schedule.sources, ...usefulOfficial]
     : courseFirst ? [...schedule.sources, ...usefulOfficial, ...threads, ...live] : [...usefulOfficial, ...schedule.sources, ...threads, ...live];
+  if (ABOUT_SITE.test(originalQuestion)) entries = [aboutSite(), ...entries];
   entries = entries.filter((entry) => {
     const about = entry.card.kind === 'digest' || (entry.card.kind === 'archive' ? threadMentions(archive, archive.postPosition.get(entry.card.postId)!, people) : named(`${entry.card.author} ${entry.card.title} ${entry.card.text} ${entry.scheduleText ?? ''}`));
     if (!about) return false;
@@ -1792,6 +1828,10 @@ export function searchQueries(question: string, rewritten = question): string[] 
       : 'housing options');
   }
   if (/\b(?:meal swipe|meal plan|flex dining|campus dirham)/i.test(expanded)) services.push('undergraduate meal plan');
+  // Every term date (add/drop, withdrawal, pass/fail, registration, breaks, exams) is on the academic calendar.
+  if (/\b(?:add[\s/-]*drop|withdraw\w*|pass[\s/-]*fail|grading basis|registration|register|shopping cart|(?:fall|spring|winter|summer|reading|national day) (?:break|holiday)s?|breaks?|final exams?|exam week|first day of (?:classes|class|school)|last day of (?:classes|class)|semester (?:start|end|begin)s?|classes (?:start|begin|end)|legislative day)\b/i.test(expanded) && !/\b[A-Z]{2,7}[- ]?UH[- ]?\d{4}\b/i.test(expanded)) services.push('undergraduate academic calendar');
+  // Which venue is open, and until when, is the dining "What's Open" table.
+  if (timing && /\b(?:dining|dining halls?|restaurants?|eat|food|cafes?|marketplace|d1|d2|coffee|late[- ]night|pizza|delivery|convenience store|day mart)\b/i.test(expanded)) services.push('restaurant days hours');
   if (/\bfalcons?\b/i.test(expanded) && !/\b(?:falconry|birds?|team|club|hospital)\b/i.test(expanded)) services.push('falcon dirhams');
   if (/\b(?:transportation|transport)\b/i.test(expanded) && /contact|email|call|reach/i.test(expanded)) services.push('shuttle contact');
   if (/\b(?:equivalen\w*|alternates?)\b/i.test(expanded)) services.push('course alternates');

@@ -22,6 +22,9 @@ export interface Message {
   truncated?: boolean;
   /** Put to students with "Ask students": the board question, and answers to close questions it already had. */
   asked?: { id: string; at: string; similar?: Array<{ text: string; answer: string }> };
+  /** The question's row in the admins' Ask log, and the student's thumbs on the answer. */
+  logId?: string;
+  vote?: 'up' | 'down';
 }
 
 export interface Conversation {

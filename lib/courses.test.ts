@@ -152,6 +152,7 @@ describe('matching a question', () => {
   it('finds professors by full name, or by surname next to a teaching word', () => {
     expect(matchSchedule(catalog, 'is professor potsch good').instructors).toEqual(['Thomas Pötsch']);
     expect(matchSchedule(catalog, 'Thomas Pötsch grading?').instructors).toEqual(['Thomas Pötsch']);
+    expect(matchSchedule(catalog, 'how is Pötsch, Thomas').instructors).toEqual(['Thomas Pötsch']);
     expect(matchSchedule(catalog, 'what is pötsch like').instructors).toEqual([]);
     // "young" is an ordinary word, so a surname match alone does not count.
     expect(matchSchedule(catalog, 'which class is best for young students').instructors).toEqual([]);

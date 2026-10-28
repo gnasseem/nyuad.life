@@ -4,6 +4,7 @@ import { api, onRecount, type CourseReview, type CourseView, type Profile, type 
 import { useApp } from '../context';
 import { IconClose, IconStar } from '../icons';
 import { useRoute } from '../router';
+import { claimNudge, mayNudge } from '../nudges';
 import { loadPlanned } from '../store';
 import { Modal } from './Modal';
 
@@ -284,12 +285,10 @@ function endedTerm(asked: Set<string>, terms: Term[]): Took | null {
   return null;
 }
 
-let promptedThisVisit = false;
-
 /**
  * A small card asking how a course went: after a term the student planned here ends, or a while after they open a
- * course they likely took. Once per course, ever (it is marked asked as it shows), at most once a visit, and "Don't ask
- * again" turns it off for good.
+ * course they likely took. Once per course, ever (it is marked asked as it shows), within the corner cards' shared
+ * budget (web/src/nudges.ts), and "Don't ask again" turns it off for good.
  */
 export function RatePrompt() {
   const { profile } = useApp();
@@ -320,7 +319,7 @@ export function RatePrompt() {
   useEffect(() => onRecount((code) => setMine((current) => current && { ...current, asked: new Set([...current.asked, code]), rated: [...current.rated, code] })), []);
 
   useEffect(() => {
-    if (!profile || !mine || mine.off || promptedThisVisit || shown || rating) return;
+    if (!profile || !mine || mine.off || shown || rating || !mayNudge('rate')) return;
     const took = page ? (!mine.asked.has(page) ? likelyTook(page, profile, mine.rated, terms) : null) : endedTerm(mine.asked, terms);
     if (!took) return;
     let live = true;
@@ -328,8 +327,7 @@ export function RatePrompt() {
       api.courses
         .view(took.code)
         .then((view) => {
-          if (!live || promptedThisVisit) return;
-          promptedThisVisit = true;
+          if (!live || !claimNudge('rate')) return;
           setShown({ ...took, title: view.title });
           setMine((current) => current && { ...current, asked: new Set([...current.asked, took.code]) });
           void api.board.prompted({ code: took.code }).catch(() => undefined);

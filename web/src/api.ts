@@ -215,6 +215,26 @@ export interface AdminMember {
   standing: string;
 }
 
+/** One Ask question in the admins' log (lib/app-usage.ts), with what the student did with the answer. */
+export interface AskLogRow {
+  id: string;
+  at: string;
+  question: string;
+  followUp: boolean | null;
+  outcome: 'answered' | 'missing' | 'truncated' | 'screened' | 'redirect' | 'failed' | 'stopped' | null;
+  model: string | null;
+  confidence: string | null;
+  sources: string[] | null;
+  cached: boolean | null;
+  missing: boolean | null;
+  firstMs: number | null;
+  answer: string | null;
+  error: string | null;
+  vote: 'up' | 'down' | null;
+  asked: boolean | null;
+  reported: boolean | null;
+}
+
 /** The admin page's numbers (lib/admin.ts dashboard). */
 export interface AdminDashboard {
   day: string;
@@ -602,8 +622,10 @@ function post<T>(path: string, body: unknown): Promise<T> {
 
 export const api = {
   health: () => request<Health>('/api/health'),
-  feedback: (message: string, page: string) => post<{ ok: true }>('/api/feedback', { message, page }),
-  reportAnswer: (question: string, answer: string, reason: string, sources: string[]) => post<{ ok: true }>('/api/feedback', { kind: 'ask-report', question, answer, message: reason, sources }),
+  feedback: (message: string, page: string, rating?: number) => post<{ ok: true }>('/api/feedback', { message, page, rating }),
+  reportAnswer: (question: string, answer: string, reason: string, sources: string[], logId?: string) => post<{ ok: true }>('/api/feedback', { kind: 'ask-report', question, answer, message: reason, sources, logId }),
+  /** What the student did with an answer, for the admins' Ask log. */
+  markAnswer: (logId: string, marks: { vote?: 'up' | 'down' | null; asked?: true }) => post<{ ok: boolean }>('/api/feedback', { kind: 'ask-mark', logId, ...marks }),
   chatgpt: {
     me: () => request<ChatGPTStatus>('/api/chatgpt?op=me'),
     logout: () => post<{ ok: true }>('/api/chatgpt', { op: 'logout' }),
@@ -671,6 +693,7 @@ export const api = {
     resolveReport: (id: string, resolved: boolean) => post<{ ok: true }>('/api/admin', { op: 'resolve-report', id, resolved }),
     stats: () => request<AdminDashboard>('/api/admin?op=stats'),
     audit: () => request<{ audit: Array<{ action: string; target: string; createdAt: string }> }>('/api/admin?op=audit'),
+    askLog: () => request<{ questions: AskLogRow[] }>('/api/admin?op=ask-log'),
     askReports: () => request<{ reports: Array<{ id: string; createdAt: string; question: string; answer: string; reason: string; sources: string[]; resolvedAt: string | null }> }>('/api/admin?op=ask-reports'),
   },
   plan: {
@@ -696,6 +719,8 @@ interface AskHandlers {
   /** The answer shown so far is replaced: the source check corrected it. */
   onReplace?(text: string): void;
   onDone?(info: { model: string; confidence: Confidence | null; truncated: boolean }): void;
+  /** The key the server keeps this question under in the admins' Ask log. */
+  onLog?(logId: string): void;
 }
 
 let warmedAt = 0;
@@ -758,10 +783,12 @@ export async function askStream(question: string, history: ChatTurn[], handlers:
         break;
       case 'done':
         finished = true;
+        if (typeof payload.logId === 'string') handlers.onLog?.(payload.logId);
         truncated = payload.truncated === true;
         handlers.onDone?.({ model: String(payload.model ?? ''), confidence: (payload.confidence as Confidence | null) ?? null, truncated });
         break;
       case 'error':
+        if (typeof payload.logId === 'string') handlers.onLog?.(payload.logId);
         streamError = new ApiError(500, String(payload.code ?? 'stream_error'), String(payload.message ?? 'The answer failed.'));
         break;
     }

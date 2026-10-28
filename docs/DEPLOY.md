@@ -100,6 +100,7 @@ The group archive and its search index are not in the repository (see "Data and 
    | `GEMINI_API_KEY` | Answers for students not signed in with ChatGPT, question tagging, course summaries. Several keys from different Google projects, separated by commas, multiply the free quota. |
    | `ZAI_API_KEY`, `GROQ_API_KEY`, `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `AI_GATEWAY_API_KEY` | Backup models when Gemini is overloaded or out of quota (below). Any or all; each variable takes several keys separated by commas, subject to shared account limits. |
    | `ROR_ADMIN_NETIDS` | Comma-separated verified administrator NetIDs, for example `gnn9245`. |
+   | `ROR_JOB_TOKEN` | Optional: 64 hex characters (`openssl rand -hex 32`). A script holding it can time Ask on production (`POST /api/admin` `op=ask-profile` with `Authorization: Bearer <token>`) without the production Supabase key. |
    | `RESEND_API_KEY`, `RESEND_FROM`, `SESSION_SECRET` | NYU email login: a verified Resend sender and a 32+ character session secret. |
    | `OPENAI_CLIENT_ID`, `SESSION_SECRET`, `ROR_SITE_URL` | Sign in with ChatGPT: answers on each student's own plan (below). |
    | `VOYAGE_API_KEY` | Semantic search (must be the provider that built the index) and the reranker. |
@@ -369,6 +370,10 @@ gets admin controls after verifying their NYU email and saving their profile. Th
 admin request. Removing a NetID from it removes its privileges without waiting for the login session to expire.
 Admins can remove posts and bar or unbar accounts from any page; actions are recorded in `admin_audit`. Shared admin
 codes are no longer accepted.
+
+The admin page's Ask log lists every Ask question of the last 90 days (kept without who asked) with its outcome:
+answered, not found, cut short, failed, refused or sent elsewhere, plus the student's thumbs up or down, a report, and
+whether they put the question to students. Those last three flag an answer that did not work.
 
 The admin page (`/admin`, the Admin badge in the bar) has four tabs:
 

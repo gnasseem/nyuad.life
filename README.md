@@ -10,9 +10,9 @@ schedule. Live at **[nyuad.life](https://nyuad.life)** (NYU sign-in required).
 ## What it does
 
 - **Ask.** A question is answered from the Room of Requirement forum archive, official NYUAD pages, the Albert class
-  schedule and answers other students wrote here, with numbered citations and a confidence level. When the archive
-  falls short, one tap asks other students; their answers appear under the question and in the asker's history, and
-  become sources for Ask. Students likely to know see a "can you answer?" card on the Ask home page.
+  schedule and answers other students wrote here, with numbered citations and a confidence level. Under the latest
+  answer, one tap asks other students; their answers appear under the question and in the asker's history, and
+  become sources for Ask. Thumbs, reports and questions put to students show in the admins' Ask log. Students likely to know see a "can you answer?" card on the Ask home page.
 - **Plan.** One box: "calc, intro to CS, any Arts Core, nothing before 10, Fridays off" becomes clash-free weeks to
   swipe through, ranked by how students rate the professors and courses. What it understood shows as removable chips,
   and "move the lab to Tuesday" or "no 9am" changes the plan.

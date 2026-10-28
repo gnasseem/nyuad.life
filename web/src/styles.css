@@ -589,7 +589,22 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .foot-btn svg { width: 14px; height: 14px; }
 .foot-btn .chev { transition: transform 0.35s var(--ease); }
 .foot-btn.open .chev { transform: rotate(180deg); }
-.foot-btn.ask-students { color: var(--green-ink); }
+.votes { display: inline-flex; gap: 2px; margin-left: auto; }
+.foot-btn.vote { justify-content: center; width: 32px; border-radius: 8px; color: var(--ink-3); }
+.foot-btn.vote:hover { background: var(--rule); color: var(--ink); }
+.foot-btn.vote.on { color: var(--green-ink); }
+.foot-btn.vote.on svg path { fill: color-mix(in srgb, currentColor 22%, transparent); }
+.foot-btn.vote + .foot-btn.vote.on { color: var(--scarlet-ink); }
+/* Under every answer: putting the question to students, louder when the answer was unsure or a thumbs down. */
+.ask-bar { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px; border: 1px solid var(--rule); border-radius: 14px; background: color-mix(in srgb, var(--plate) 70%, transparent); animation: rise-in 0.4s var(--ease) 0.15s both; }
+.ask-bar > svg { flex: none; width: 18px; height: 18px; color: var(--line-ink); }
+.ask-bar p { flex: 1; margin: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.45; }
+.ask-bar p b { color: var(--ink); font-weight: 680; }
+.ask-bar .btn { flex: none; }
+.ask-bar .btn svg { width: 14px; height: 14px; }
+.ask-bar.strong { border-color: color-mix(in srgb, var(--line) 45%, var(--rule)); background: var(--line-soft); }
+.ask-bar.strong .btn { border-color: transparent; background: var(--line-fill); color: var(--line-on); }
+@media (max-width: 520px) { .answer-foot { gap: 4px 12px; } .wide-only { display: none; } .ask-bar { flex-wrap: wrap; } .ask-bar p { flex-basis: calc(100% - 30px); } .ask-bar .btn { margin-left: 30px; } }
 .confidence { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 999px; background: var(--tone-soft); color: var(--tone-ink); font-size: 12.5px; font-weight: 650; }
 .confidence .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--tone); }
 .confidence.medium { --tone: var(--amber); --tone-soft: var(--amber-soft); --tone-ink: var(--amber-ink); }
@@ -990,6 +1005,15 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .review-nudge p { color: var(--ink-2); font-size: 13.5px; line-height: 1.45; }
 .review-nudge-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 4px; }
 @media (max-width: 640px) { .review-nudge { right: 16px; bottom: 16px; } }
+.site-score { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: 4px; }
+.site-score button { height: 40px; border: 1px solid var(--rule); border-radius: 10px; background: var(--plate); color: var(--ink-2); font: 720 15px/1 var(--sign); transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.12s var(--ease); }
+.site-score button:hover { border-color: var(--rule-2); color: var(--ink); }
+.site-score button:active { transform: scale(0.94); }
+.site-score button.on { border-color: transparent; background: var(--line-fill); color: var(--line-on); }
+.site-score-ends { display: flex; justify-content: space-between; color: var(--ink-3); font-size: 11.5px; font-weight: 560; }
+.site-review-more { display: grid; gap: 8px; margin-top: 4px; animation: rise-in 0.25s var(--ease); }
+.site-review-more textarea { min-height: 64px; resize: vertical; }
+.site-review-more .review-nudge-actions { justify-content: flex-end; margin-top: 0; }
 .star-pick { display: flex; gap: 2px; }
 .star-pick button { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--ink-3); transition: color 0.12s, transform 0.12s var(--ease); }
 .star-pick button.on, .star-pick:hover button { color: var(--amber); }
@@ -1387,6 +1411,22 @@ button.prof-score:hover, .prof-score.on { background: var(--ink); color: var(--g
 .admin-block > h2, .admin-block-head h2 { font: 720 15px/1.2 var(--sign); letter-spacing: -0.005em; }
 .admin-block-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
 .admin-filter { width: min(280px, 100%); height: 36px; }
+.ask-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+.ask-tiles > div { display: grid; gap: 6px; min-width: 0; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 14px; background: var(--plate); }
+.ask-tiles span { color: var(--ink-3); font: 700 11px/1.2 var(--sign); letter-spacing: 0.08em; text-transform: uppercase; }
+.ask-tiles b { color: var(--tone-ink, var(--ink)); font: 800 30px/1 var(--sign); font-stretch: 84%; font-variant-numeric: tabular-nums; }
+.ask-tiles small { color: var(--ink-3); font-size: 12px; }
+.ask-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-log { display: grid; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.ask-log li { border-bottom: 1px solid var(--rule); }
+.ask-log li.flagged { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--scarlet) 60%, transparent); }
+.ask-log-q { display: grid; gap: 6px; width: 100%; padding: 12px 6px 12px 14px; border: 0; background: none; color: var(--ink); text-align: left; }
+.ask-log-q:hover { background: color-mix(in srgb, var(--plate-3) 60%, transparent); }
+.ask-log-text { font-size: 14.5px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
+.ask-log-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 6px; }
+.ask-log-answer { margin: 0 6px 14px 14px; padding: 12px 14px; border-radius: 10px; background: var(--plate-3); color: var(--ink-2); font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 900px) { .ask-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .ask-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .chart-grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .chart { display: grid; gap: 10px; margin: 0; padding: 16px 16px 12px; border: 1px solid var(--rule); border-radius: 16px; background: var(--plate); box-shadow: var(--shadow-1); }
 .chart-head { display: grid; gap: 4px; }

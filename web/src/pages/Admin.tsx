@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { api, type AdminDashboard, type ModelCheck, type UsageDayStats, type UsageReport, type UsageState } from '../api';
+import { api, type AdminDashboard, type AskLogRow, type ModelCheck, type UsageDayStats, type UsageReport, type UsageState } from '../api';
 import { Flap } from '../components/Flap';
 import { Segmented } from '../components/Segmented';
 import { Sign } from '../components/Sign';
@@ -7,10 +7,11 @@ import { useApp } from '../context';
 import { plural, relativeDate } from '../format';
 import { IconRefresh, IconShield } from '../icons';
 
-type Tab = 'usage' | 'members' | 'data' | 'models' | 'moderation' | 'reports';
+type Tab = 'usage' | 'ask' | 'members' | 'data' | 'models' | 'moderation' | 'reports';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'usage', label: 'Usage' },
+  { id: 'ask', label: 'Ask log' },
   { id: 'members', label: 'Members' },
   { id: 'data', label: 'Data sources' },
   { id: 'models', label: 'Models' },
@@ -130,12 +131,114 @@ export function AdminPage() {
       </div>
       <div className="tab-body" key={`${tab}-${refresh}`}>
         {tab === 'usage' && <UsageTab stats={stats} />}
+        {tab === 'ask' && <AskLogTab />}
         {tab === 'members' && <MembersTab stats={stats} />}
         {tab === 'data' && <DataTab />}
         {tab === 'models' && <ModelsTab />}
         {tab === 'moderation' && <ModerationTab stats={stats} />}
         {tab === 'reports' && <ReportsTab />}
       </div>
+    </div>
+  );
+}
+
+/** Why an Ask question counts as not having worked, in the words the log shows; none means it worked. */
+function askFlags(row: AskLogRow): string[] {
+  const flags: string[] = [];
+  const outcome = row.outcome ?? (row.missing ? 'missing' : 'answered');
+  if (outcome === 'failed') flags.push('Failed');
+  if (outcome === 'stopped') flags.push('Stopped');
+  if (outcome === 'truncated') flags.push('Cut short');
+  if (outcome === 'missing') flags.push('Not found');
+  if (row.confidence === 'low' && outcome !== 'failed') flags.push('Low confidence');
+  if (row.vote === 'down') flags.push('Thumbs down');
+  if (row.asked) flags.push('Sent to students');
+  if (row.reported) flags.push('Reported');
+  return flags;
+}
+
+type AskFilter = 'all' | 'missed' | 'asked' | 'down' | 'failed' | 'worked';
+const ASK_FILTERS: Array<{ id: AskFilter; label: string; test(row: AskLogRow, flags: string[]): boolean }> = [
+  { id: 'missed', label: 'Did not work', test: (_, flags) => flags.length > 0 },
+  { id: 'asked', label: 'Sent to students', test: (row) => Boolean(row.asked) },
+  { id: 'down', label: 'Thumbs down', test: (row) => row.vote === 'down' },
+  { id: 'failed', label: 'Failed', test: (row) => row.outcome === 'failed' || row.outcome === 'stopped' },
+  { id: 'worked', label: 'Worked', test: (row, flags) => flags.length === 0 && row.outcome !== 'screened' && row.outcome !== 'redirect' },
+  { id: 'all', label: 'All', test: () => true },
+];
+const OUTCOME_LABEL: Record<NonNullable<AskLogRow['outcome']>, string> = { answered: 'Answered', missing: 'Not found', truncated: 'Cut short', screened: 'Refused', redirect: 'Sent elsewhere', failed: 'Failed', stopped: 'Stopped' };
+
+/**
+ * Every Ask question of the last 90 days (newest 400), with how it went: what it was answered from, the confidence, the
+ * student's thumbs, and whether they put it to students instead, which means Ask could not settle it.
+ */
+function AskLogTab() {
+  const [rows, setRows] = useState<AskLogRow[] | null>(null);
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState<AskFilter>('missed');
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    setError('');
+    try { setRows((await api.admin.askLog()).questions); }
+    catch (problem) { setError(problem instanceof Error ? problem.message : 'Could not load the Ask log.'); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const flagged = useMemo(() => (rows ?? []).map((row) => ({ row, flags: askFlags(row) })), [rows]);
+  if (error) return <div className="alert error" role="alert">{error} <button type="button" className="btn sm" onClick={() => void load()}>Retry</button></div>;
+  if (!rows) return <Loading />;
+
+  const count = (id: AskFilter) => flagged.filter(({ row, flags }) => ASK_FILTERS.find((entry) => entry.id === id)!.test(row, flags)).length;
+  const firsts = rows.map((row) => row.firstMs).filter((ms): ms is number => typeof ms === 'number' && ms > 0).sort((a, b) => a - b);
+  const median = firsts.length ? firsts[Math.floor(firsts.length / 2)]! : 0;
+  const worked = count('worked');
+  const answered = rows.filter((row) => row.outcome !== 'screened' && row.outcome !== 'redirect').length;
+  const needle = query.trim().toLowerCase();
+  const test = ASK_FILTERS.find((entry) => entry.id === filter)!.test;
+  const shown = flagged.filter(({ row, flags }) => test(row, flags) && (!needle || row.question.toLowerCase().includes(needle)));
+
+  return (
+    <div className="admin-stack">
+      <div className="ask-tiles">
+        <div><span>Questions</span><b>{rows.length.toLocaleString()}</b><small>since {relativeDate(rows[rows.length - 1]?.at ?? new Date().toISOString())}</small></div>
+        <div className="tone-ok"><span>Worked</span><b>{answered ? Math.round((worked / answered) * 100) : 0}%</b><small>{plural(worked, 'answer')} with no flag</small></div>
+        <div className="tone-alert"><span>Did not work</span><b>{count('missed')}</b><small>{count('failed')} failed outright</small></div>
+        <div className="tone-line" data-line="notices"><span>Sent to students</span><b>{count('asked')}</b><small>Ask could not settle these</small></div>
+        <div><span>Thumbs</span><b>{rows.filter((row) => row.vote === 'up').length} / {count('down')}</b><small>up / down</small></div>
+        <div><span>First words</span><b>{median ? `${(median / 1000).toFixed(1)}s` : '—'}</b><small>median wait</small></div>
+      </div>
+      <section className="admin-block">
+        <div className="admin-block-head">
+          <div className="ask-filters" role="group" aria-label="Show">
+            {ASK_FILTERS.map((entry) => (
+              <button key={entry.id} type="button" className={`chip${filter === entry.id ? ' on' : ''}`} onClick={() => setFilter(entry.id)}>
+                {entry.label} <span className="n">{count(entry.id)}</span>
+              </button>
+            ))}
+          </div>
+          <input className="input admin-filter" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a question" aria-label="Find a question" />
+        </div>
+        {shown.length === 0 && <p className="muted">Nothing here.</p>}
+        <ol className="ask-log">
+          {shown.slice(0, 300).map(({ row, flags }) => (
+            <li key={row.id} className={flags.length ? 'flagged' : undefined}>
+              <button type="button" className="ask-log-q" onClick={() => setOpen(open === row.id ? null : row.id)} aria-expanded={open === row.id}>
+                <span className="ask-log-text">{row.followUp && <span className="faint">Follow-up · </span>}{row.question}</span>
+                <span className="ask-log-meta">
+                  {flags.map((flag) => <span key={flag} className={`pill ${flag === 'Sent to students' ? 'tone-line' : 'tone-alert'}`} data-line="notices">{flag}</span>)}
+                  {!flags.length && <span className={`pill ${row.outcome === 'screened' || row.outcome === 'redirect' ? 'tone-slate' : 'tone-ok'}`}>{OUTCOME_LABEL[row.outcome ?? 'answered']}</span>}
+                  {row.vote === 'up' && <span className="pill tone-ok">Thumbs up</span>}
+                  {row.confidence && <span className="tag">{row.confidence}</span>}
+                  {(row.sources ?? []).map((source) => <span key={source} className="tag">{source}</span>)}
+                  {row.cached && <span className="tag">cached</span>}
+                  <span className="faint small">{relativeDate(row.at)}{row.firstMs ? ` · ${(row.firstMs / 1000).toFixed(1)}s` : ''}{row.model ? ` · ${row.model}` : ''}</span>
+                </span>
+              </button>
+              {open === row.id && <p className="ask-log-answer">{row.error ? `Error: ${row.error}` : row.answer || 'The answer was not kept for this question (asked before the log kept answers).'}</p>}
+            </li>
+          ))}
+        </ol>
+      </section>
     </div>
   );
 }

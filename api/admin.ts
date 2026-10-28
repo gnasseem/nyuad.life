@@ -95,6 +95,14 @@ export default route(['GET', 'POST'], async (req, res) => {
       sendJson(res, 200, { reports: entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((entry) => ({ id: entry.key, ...entry.fields, createdAt: entry.fields.reportedAt || entry.createdAt })) });
       return;
     }
+    case 'ask-log': {
+      // The newest Ask questions with how each went, for the Ask log tab.
+      const limit = Math.min(1000, Math.max(50, Number(queryString(req, 'limit')) || 400));
+      const fields = ['question', 'followUp', 'outcome', 'model', 'confidence', 'sources', 'cached', 'missing', 'firstMs', 'answer', 'error', 'vote', 'asked', 'reported'];
+      const rows = await need(store).listSummaryFields('asklog:', fields, { limit, newest: true });
+      sendJson(res, 200, { questions: rows.map((row) => ({ id: row.key, at: row.key.slice('asklog:'.length, -9), ...row.fields })) });
+      return;
+    }
     case 'resolve-report': {
       if (req.method !== 'POST') break;
       const id = String(body.id ?? '');
@@ -170,11 +178,16 @@ export default route(['GET', 'POST'], async (req, res) => {
   throw new ApiError(400, 'Unknown admin operation.', 'bad_op');
 });
 
-/** Whether the request carries the review job's token, which only someone holding the Supabase service key can make. */
+/**
+ * Whether the request carries the job token: the one made from the Supabase service key, or ROR_JOB_TOKEN (64 hex
+ * characters), which lets a script on a laptop without the production key profile Ask.
+ */
 function jobToken(req: ApiRequest): boolean {
-  const key = supabaseConfig()?.serviceKey;
   const given = /^Bearer ([a-f0-9]{64})$/.exec(String(req.headers.authorization ?? ''))?.[1];
-  return Boolean(key && given && timingSafeEqual(Buffer.from(given), Buffer.from(reviewsJobToken(key))));
+  if (!given) return false;
+  const key = supabaseConfig()?.serviceKey;
+  const fixed = /^[a-f0-9]{64}$/.test(process.env.ROR_JOB_TOKEN ?? '') ? process.env.ROR_JOB_TOKEN! : '';
+  return [key ? reviewsJobToken(key) : '', fixed].some((token) => token && timingSafeEqual(Buffer.from(given), Buffer.from(token)));
 }
 
 function need(store: BoardStore | null): BoardStore {

@@ -6,6 +6,7 @@ import { Feedback } from './components/Feedback';
 import { Wordmark } from './components/Logo';
 import { ProfileModal } from './components/ProfileForm';
 import { RatePrompt } from './components/Rate';
+import { SiteReview } from './components/SiteReview';
 import { AppContext, type Prefill, type ProfileRequest, type StudentAnswers } from './context';
 import { initials } from './format';
 import { IconAsk, IconBag, IconBook, IconCalendar, IconMegaphone, IconShield, IconUser } from './icons';
@@ -367,6 +368,7 @@ export function App() {
         </div>
       )}
       {profile && !gate && <RatePrompt />}
+      {profile && !gate && <SiteReview />}
       <ProfileModal open={profileAsk !== null && !gate} title={profileAsk?.title ?? ''} reason={profileAsk?.reason ?? ''} onClose={() => finishProfile(false)} onDone={() => finishProfile(true)} />
       {gate && !authLoading && (
         <Suspense fallback={null}>

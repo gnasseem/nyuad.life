@@ -1,5 +1,5 @@
 import { alertModelsDown } from '../lib/admin.ts';
-import { recordEvent, recordQuestion } from '../lib/app-usage.ts';
+import { askLogKey, recordEvent, recordQuestion, type AskOutcome } from '../lib/app-usage.ts';
 import { boardStore } from '../lib/board-store.ts';
 import { addCookies, chatgptConfig, ChatGPTError, freshSession, readSession, sessionCookies } from '../lib/chatgpt.ts';
 import { geminiConfig } from '../lib/gemini.ts';
@@ -80,20 +80,37 @@ export default route(['GET', 'POST'], async (req, res) => {
   // Saving the answer to the cache happens after the student has it; the function stays up until it is done.
   const deferred: Array<Promise<unknown>> = [warming];
   const defer = (work: Promise<unknown>) => void deferred.push(work.catch(() => undefined));
+  // Every question is kept with how it went (lib/app-usage.ts); the client gets the row's key to mark it later.
+  const logId = askLogKey();
+  const followUp = (request.history?.length ?? 0) > 0;
   const noteQuestion = (result: AskResponse) => {
-    if (result.screened || result.redirect) return;
-    defer(recordQuestion(board, {
+    const missing = /couldn[’']t (?:confirm|find|verify)|do(?:es)? not (?:contain|specify|state|provide|mention)|no (?:information|evidence)/i.test(result.answer.slice(0, 200));
+    const outcome: AskOutcome = result.screened ? 'screened' : result.redirect ? 'redirect' : result.truncated ? 'truncated' : missing ? 'missing' : 'answered';
+    defer(recordQuestion(board, logId, {
       question: request.question,
-      followUp: (request.history?.length ?? 0) > 0,
+      followUp,
+      outcome,
       model: result.model,
       confidence: result.confidence?.level ?? '',
       sources: [...new Set(result.sources.map((card) => card.kind))],
       cached: result.cached ?? false,
-      missing: /couldn[’']t (?:confirm|find|verify)|do(?:es)? not (?:contain|specify|state|provide|mention)|no (?:information|evidence)/i.test(result.answer.slice(0, 200)),
+      missing,
       firstMs: result.timings?.first,
+      answer: result.redirect ? `${result.redirect.domain}: ${result.redirect.title}` : result.screened ? result.screened : result.answer,
     }));
   };
-  const noteFailure = (error: unknown) => {
+  const noteFailure = (error: unknown, stopped = false) => {
+    defer(recordQuestion(board, logId, {
+      question: request.question,
+      followUp,
+      outcome: stopped ? 'stopped' : 'failed',
+      model: '',
+      confidence: '',
+      sources: [],
+      cached: false,
+      missing: false,
+      error: error instanceof ApiError ? `${error.code}: ${error.message}` : String((error as Error)?.message ?? error).slice(0, 300),
+    }));
     if (!(error instanceof ApiError) || !MODELS_DOWN.has(error.code)) return;
     recordEvent('ask_failed');
     defer(alertModelsDown(error.message));
@@ -105,7 +122,7 @@ export default route(['GET', 'POST'], async (req, res) => {
       console.info(`[ask] model=${result.model} cached=${Boolean(result.cached)} truncated=${Boolean(result.truncated)} sources=${result.sources.length}`);
       recordEvent(result.cached ? 'ask_cached' : 'ask');
       noteQuestion(result);
-      sendJson(res, 200, result);
+      sendJson(res, 200, { ...result, logId });
     } catch (error) {
       noteFailure(error);
       throw error;
@@ -140,13 +157,13 @@ export default route(['GET', 'POST'], async (req, res) => {
     console.info(`[ask] model=${result.model} cached=${Boolean(result.cached)} truncated=${Boolean(result.truncated)} sources=${result.sources.length}`);
     recordEvent(result.cached ? 'ask_cached' : 'ask');
     noteQuestion(result);
-    sse.send('done', { model: result.model, confidence: result.confidence, truncated: result.truncated ?? false, cached: result.cached ?? false, retrieval: result.retrieval });
+    sse.send('done', { model: result.model, confidence: result.confidence, truncated: result.truncated ?? false, cached: result.cached ?? false, retrieval: result.retrieval, logId });
   } catch (error) {
-    noteFailure(error);
+    noteFailure(error, controller.signal.aborted);
     if (!(error instanceof ApiError) || error.status >= 500) console.error('[ask]', error);
     // Only our own errors are worded for students; anything else ("Gemini 503: …") stays in the log.
     const message = error instanceof ApiError ? error.message : 'Something went wrong while answering. Try again in a moment.';
-    sse.send('error', { message, code: error instanceof ApiError ? error.code : 'error' });
+    sse.send('error', { message, code: error instanceof ApiError ? error.code : 'error', logId });
   } finally {
     sse.close();
     await Promise.all(deferred);

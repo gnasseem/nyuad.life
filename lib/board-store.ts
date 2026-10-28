@@ -76,7 +76,8 @@ export interface BoardStore {
   /** Drops cached entries whose key starts with `prefix` and that were written before `before` (an ISO time). */
   deleteSummaries(prefix: string, before: string): Promise<void>;
   /** Cached entries whose key starts with `prefix`, with only the named top-level payload fields: the course list's scores. */
-  listSummaryFields(prefix: string, fields: string[]): Promise<Array<{ key: string; createdAt: string; fields: Record<string, unknown> }>>;
+  /** Chosen fields of every row under a prefix, oldest key first; `newest` reverses that and `limit` keeps that many. */
+  listSummaryFields(prefix: string, fields: string[], options?: { limit?: number; newest?: boolean }): Promise<Array<{ key: string; createdAt: string; fields: Record<string, unknown> }>>;
   /** Counts one hit against `bucket`, across every instance, and says whether it went over `max` in the window. */
   hit(bucket: string, max: number, windowSeconds: number): Promise<boolean>;
   listReviews(code: string): Promise<CourseReview[]>;
@@ -345,9 +346,11 @@ export class MemoryBoardStore implements BoardStore {
   async deleteSummaries(prefix: string, before: string): Promise<void> {
     for (const [key, entry] of this.summaries) if (key.startsWith(prefix) && entry.createdAt < before) this.summaries.delete(key);
   }
-  async listSummaryFields(prefix: string, fields: string[]): Promise<Array<{ key: string; createdAt: string; fields: Record<string, unknown> }>> {
-    return [...this.summaries]
-      .filter(([key]) => key.startsWith(prefix))
+  async listSummaryFields(prefix: string, fields: string[], options: { limit?: number; newest?: boolean } = {}): Promise<Array<{ key: string; createdAt: string; fields: Record<string, unknown> }>> {
+    const rows = [...this.summaries].filter(([key]) => key.startsWith(prefix)).sort(([a], [b]) => a.localeCompare(b));
+    if (options.newest) rows.reverse();
+    return rows
+      .slice(0, options.limit ?? rows.length)
       .map(([key, entry]) => ({ key, createdAt: entry.createdAt, fields: Object.fromEntries(fields.map((field) => [field, (entry.payload as Record<string, unknown> | null)?.[field] ?? null])) }));
   }
   private hits = new Map<string, { count: number; start: number }>();
@@ -823,9 +826,10 @@ export class SupabaseBoardStore implements BoardStore {
   async deleteSummaries(prefix: string, before: string): Promise<void> {
     await this.call(`guide_summaries?key=like.${enc(`${prefix}*`)}&created_at=lt.${enc(before)}`, { method: 'DELETE', headers: this.headers('return=minimal') });
   }
-  async listSummaryFields(prefix: string, fields: string[]): Promise<Array<{ key: string; createdAt: string; fields: Record<string, unknown> }>> {
+  async listSummaryFields(prefix: string, fields: string[], options: { limit?: number; newest?: boolean } = {}): Promise<Array<{ key: string; createdAt: string; fields: Record<string, unknown> }>> {
     const columns = fields.filter((field) => /^[a-z]+$/i.test(field)).map((field) => `${field}:payload->${field}`);
-    const rows = await this.selectAll('guide_summaries', `select=key,created_at,${columns.join(',')}&key=like.${enc(`${prefix}*`)}&order=key.asc`);
+    const query = `select=key,created_at,${columns.join(',')}&key=like.${enc(`${prefix}*`)}&order=key.${options.newest ? 'desc' : 'asc'}`;
+    const rows = options.limit ? await this.select('guide_summaries', `${query}&limit=${Math.max(1, Math.floor(options.limit))}`) : await this.selectAll('guide_summaries', query);
     return rows.map((row) => ({ key: String(row.key), createdAt: String(row.created_at), fields: Object.fromEntries(fields.map((field) => [field, row[field] ?? null])) }));
   }
   async hit(bucket: string, max: number, windowSeconds: number): Promise<boolean> {

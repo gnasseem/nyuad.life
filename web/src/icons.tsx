@@ -248,3 +248,15 @@ export const IconUsers = (p: SVGProps<SVGSVGElement>) => (
     <path d="M15.5 5.6a3.2 3.2 0 0 1 0 5.8M17.5 14.4c1.6.7 2.6 2.4 3 4.6" />
   </svg>
 );
+export const IconThumbUp = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M7 10v10H4a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1h3z" />
+    <path d="M7 10l4-7a2.5 2.5 0 0 1 2.5 2.8L13 9h5.6a2 2 0 0 1 2 2.4l-1.4 7A2 2 0 0 1 17.2 20H7" />
+  </svg>
+);
+export const IconThumbDown = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}>
+    <path d="M17 14V4h3a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-3z" />
+    <path d="M17 14l-4 7a2.5 2.5 0 0 1-2.5-2.8L11 15H5.4a2 2 0 0 1-2-2.4l1.4-7A2 2 0 0 1 6.8 4H17" />
+  </svg>
+);

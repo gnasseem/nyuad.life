@@ -417,7 +417,8 @@ export function matchSchedule(catalog: Catalog, question: string, limits = { cou
     if (instructors.length >= limits.instructors) break;
     const parts = key.split(' ');
     const surname = parts.at(-1)!;
-    const full = parts.length > 1 && folded.includes(` ${key} `);
+    // Albert prints "Carpano, Davide", and students paste it that way.
+    const full = parts.length > 1 && (folded.includes(` ${key} `) || folded.includes(` ${[surname, ...parts.slice(0, -1)].join(' ')} `));
     const bySurname = teaching && surname.length >= 4 && !COMMON_WORDS.has(surname) && folded.includes(` ${surname} `);
     if (full || bySurname) instructors.push(name);
   }
