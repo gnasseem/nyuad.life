@@ -37,7 +37,7 @@ import {
 } from '../lib/board.ts';
 import { recordEvent } from '../lib/app-usage.ts';
 import { boardStore, type BoardStore } from '../lib/board-store.ts';
-import { displayName, loadCatalog } from '../lib/courses.ts';
+import { displayName, isCampusCode, loadCatalog } from '../lib/courses.ts';
 import { courseKey, profKey } from '../lib/entities.ts';
 import { refreshDigests } from '../lib/reviews.ts';
 import { detectRedirect } from '../lib/domains.ts';
@@ -167,19 +167,22 @@ export default route(['GET', 'POST'], async (req, res) => {
       rateLimit(req, 10, 4, 'board-review');
       const profile = await requireProfile(store, body.netId, body.key);
       const code = courseCode(body.code);
+      if (!isCampusCode(code)) throw new ApiError(400, 'Reviews are for NYU Abu Dhabi courses.', 'not_campus');
       const draft = validateReview(body);
       const professor = collapseWhitespace(String(body.professor ?? '')).slice(0, 100);
       const taught = loadCatalog().byCode.get(code)?.flatMap((offering) => offering.sections.flatMap((section) => section.instructors.map(displayName))) ?? [];
       if (professor && !taught.includes(professor)) throw new ApiError(400, 'Choose a professor who taught this course.', 'bad_professor');
       if (draft.profRating && !professor) throw new ApiError(400, 'Choose the professor you took it with.', 'bad_professor');
-      if (!draft.rating && !draft.profRating) throw new ApiError(400, 'Choose a rating from 1 to 5.', 'bad_review');
+      // A review of a professor needs no stars, only what their class was like.
+      if (!draft.rating && !draft.profRating && !(professor && draft.text)) throw new ApiError(400, professor ? 'Rate the course or write a line about the class.' : 'Choose a rating from 1 to 5.', 'bad_review');
       allow('review', draft.text);
       if (draft.text) await review('review', `Course: ${code}`, `Professor: ${professor || 'Not specified'}`, `Course rating: ${draft.rating ? `${draft.rating} of 5` : 'not given'}`, draft.profRating ? `Professor rating: ${draft.profRating} of 5` : '', `Review: ${draft.text}`);
       const before = (await store.listReviewsByAuthor(profile.netId).catch(() => [])).find((entry) => entry.code === code);
       const text = packReviewText({ professor, profRating: draft.profRating, courseRated: draft.rating !== null, text: draft.text });
       const anonymous = body.anonymous === true;
-      // A student rating only the professor leaves the course unrated: the rating column then holds the professor's stars.
-      const saved = await store.upsertReview({ rating: draft.rating ?? draft.profRating!, difficulty: draft.difficulty, workload: draft.workload, term: draft.term, text, code, netId: profile.netId, authorName: anonymous ? 'Anonymous' : profile.name.split(' ')[0] ?? profile.name, authorMajor: anonymous ? '' : profile.major, authorYear: anonymous ? '' : standingFor(profile.classOf) }).catch((error: unknown) => {
+      // A student reviewing only the professor leaves the course unrated: the rating column then holds the professor's
+      // stars, or a neutral 3 for a written review without them.
+      const saved = await store.upsertReview({ rating: draft.rating ?? draft.profRating ?? 3, difficulty: draft.difficulty, workload: draft.workload, term: draft.term, text, code, netId: profile.netId, authorName: anonymous ? 'Anonymous' : profile.name.split(' ')[0] ?? profile.name, authorMajor: anonymous ? '' : profile.major, authorYear: anonymous ? '' : standingFor(profile.classOf) }).catch((error: unknown) => {
         if (error instanceof ApiError && error.code === 'board_schema_missing') throw new ApiError(503, 'Course reviews are not open yet. Try again soon.', 'reviews_unavailable');
         throw error;
       });

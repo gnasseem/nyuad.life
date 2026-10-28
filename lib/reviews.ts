@@ -479,7 +479,8 @@ function mentionRating(mention: Mention): Rating {
 
 /**
  * A review written here, as the digests count it: for its course when the student rated the course, and for the
- * professor it names with the stars they gave the professor (or, when they gave none, the course's).
+ * professor it names with the stars they gave the professor (or, when they gave none, the course's; a written review
+ * of the professor with neither counts as neutral).
  */
 function reviewRatings(review: CourseReview, catalog: Catalog): Array<{ entity: string; rating: Rating }> {
   const { professor, profRating, courseRated, text } = unpackReviewText(review.text);
@@ -489,7 +490,7 @@ function reviewRatings(review: CourseReview, catalog: Catalog): Array<{ entity: 
   const rating = (value: number, pair: string): Rating => ({ key: `${review.id}@${review.updatedAt}`, review: true, date: review.updatedAt.slice(0, 10), sentiment: value >= 4 ? 'positive' : value <= 2 ? 'negative' : 'neutral', value, pair, difficulty: review.difficulty, workload: review.workload, term: review.term, url: '', note });
   const out: Array<{ entity: string; rating: Rating }> = [];
   if (courseRated) out.push({ entity: course, rating: rating(review.rating, prof) });
-  const profValue = profRating ?? (courseRated ? review.rating : null);
+  const profValue = profRating ?? (courseRated ? review.rating : 3);
   if (prof && profValue) out.push({ entity: prof, rating: rating(profValue, course) });
   return out;
 }

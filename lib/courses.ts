@@ -223,6 +223,11 @@ function sectionRow(section: Section, withNotes: boolean): SectionRow {
   };
 }
 
+/** An NYU Abu Dhabi course ("CS-UH 1001"): the only kind Reviews shows and takes reviews for. */
+export function isCampusCode(code: string): boolean {
+  return /^[A-Z]+-UH /.test(code);
+}
+
 export function subjectOf(code: string): string {
   return code.split('-')[0] ?? code;
 }
@@ -396,31 +401,39 @@ export function matchSchedule(catalog: Catalog, question: string, limits = { cou
     if (found) add(currentCode(catalog, found));
   }
   const folded = ` ${fold(question)} `;
-  const titled: Array<{ code: string; length: number }> = [];
+  const titled: Array<{ code: string; title: string }> = [];
   for (const [title, codes] of titleIndex(catalog)) {
     // "Capstone Project" is eight courses: naming it does not say which, so it picks none.
-    if (codes.length === 1 && title.length >= 8 && folded.includes(` ${title} `)) titled.push({ code: codes[0]!, length: title.length });
+    if (codes.length === 1 && title.length >= 8 && folded.includes(` ${title} `) && (title.includes(' ') || namedAlone(question, title))) titled.push({ code: codes[0]!, title });
   }
   // The longest titles first: "Multivariable Calculus" before "Calculus".
-  titled.sort((a, b) => b.length - a.length);
+  titled.sort((a, b) => b.title.length - a.title.length);
+  let rest = folded;
   for (const entry of titled) {
-    const title = fold(catalog.byCode.get(entry.code)![0]!.title);
-    const inside = courses.some((code) => fold(catalog.byCode.get(code)![0]!.title).includes(title));
-    if (!inside) add(currentCode(catalog, entry.code));
+    if (!rest.includes(` ${entry.title} `)) continue;
+    rest = rest.replaceAll(` ${entry.title} `, ' | ');
+    add(currentCode(catalog, entry.code));
   }
-  // How students actually name courses: "calculus", "intro to cs", "linear algebra workload".
-  if (courses.length === 0) for (const code of matchTitleHeads(catalog, question)) add(code);
+  // How students actually name courses: "calculus", "intro to cs", "linear algebra workload". Read in what the full
+  // titles left, so "discrete math, data structures and MVC" finds all three.
+  const listed = /,| and | or | vs | plus /.test(` ${question} `);
+  if (!courses.length || listed) for (const code of matchTitleHeads(catalog, rest.replaceAll(' | ', ' '), question, listed ? 6 : 3)) add(code);
 
   const instructors: string[] = [];
   const teaching = TEACHING.test(folded);
+  const said = folded.trim().split(' ');
   for (const [key, name] of catalog.instructors) {
     if (instructors.length >= limits.instructors) break;
     const parts = key.split(' ');
     const surname = parts.at(-1)!;
+    // "Yves Le Jan": a surname of two words is distinctive on its own.
+    const long = parts.length > 2 ? parts.slice(1).join(' ') : '';
     // Albert prints "Carpano, Davide", and students paste it that way.
     const full = parts.length > 1 && (folded.includes(` ${key} `) || folded.includes(` ${[surname, ...parts.slice(0, -1)].join(' ')} `));
     const bySurname = teaching && surname.length >= 4 && !COMMON_WORDS.has(surname) && folded.includes(` ${surname} `);
-    if (full || bySurname) instructors.push(name);
+    // A first name misspelt beside the right surname ("Eves Le Jan").
+    const misspelt = parts.length > 1 && parts[0]!.length >= 4 && said.some((word, i) => word.length >= 3 && editDistance(word, parts[0]!) <= 1 && ` ${said.slice(i + 1).join(' ')} `.startsWith(` ${parts.slice(1).join(' ')} `));
+    if (full || bySurname || misspelt || (long.length >= 5 && folded.includes(` ${long} `))) instructors.push(name);
   }
   // A short title initialism is usable when a named teacher makes it unambiguous; bare initials may name a city.
   if (!courses.length && teaching) {
@@ -441,6 +454,14 @@ export function matchSchedule(catalog: Catalog, question: string, limits = { cou
     const first = fold(name).split(' ')[0]!;
     return first.length >= 4 && (!COMMON_WORDS.has(first) || new RegExp(`\\b(?:with|prof(?:essor)?) ${first}\\b`).test(folded)) && folded.includes(` ${first} `);
   });
+  // A surname misspelt by a letter once the course has narrowed the roster ("Data Analysis with Kauffman").
+  if (!instructors.length && !firstMatches.length) {
+    const close = [...new Set(courseTeachers)].filter((name) => {
+      const surname = fold(name).split(' ').at(-1)!;
+      return surname.length >= 5 && said.some((word) => word.length >= 5 && editDistance(word, surname) <= 1);
+    });
+    if (close.length === 1) instructors.push(close[0]!);
+  }
   if (firstMatches.length === 1) {
     if (!instructors.includes(firstMatches[0]!)) instructors.push(firstMatches[0]!);
     if (courses.length > 1 && !/\b(?:or|versus|vs|compare|between)\b/i.test(question)) {
@@ -461,16 +482,49 @@ function titleIndex(catalog: Catalog): Map<string, string[]> {
     for (const [code, offerings] of catalog.byCode) {
       const title = fold(offerings[0]!.title);
       index.set(title, [...(index.get(title) ?? []), code]);
+      // "FYWS: Graphic Violence" is named "Graphic Violence" too.
+      const after = /^[A-Z]{2,6}:\s+(.+)$/.exec(offerings[0]!.title)?.[1];
+      if (after) index.set(fold(after), [...(index.get(fold(after)) ?? []), code]);
     }
     titleIndexes.set(catalog, index);
   }
   return index;
 }
 
+/**
+ * Whether a one-word title ("Thinking", "Violence", "Chance") or the one word naming a course ("calculus") is meant as
+ * the course: capitalised inside the sentence, next to a word like "class", "with" or "midterm", or what the question
+ * asks about ("is mechanics a hard class"). "I'm thinking about taking" and "available seats" name no course.
+ */
+function namedAlone(question: string, title: string): boolean {
+  for (const match of question.matchAll(new RegExp(`\\b${title}\\w*`, 'gi'))) {
+    const before = question.slice(0, match.index).trim().split(/\s+/).at(-1) ?? '';
+    const after = question.slice(match.index! + match[0].length).trim().split(/\s+/)[0] ?? '';
+    if (/^\p{Lu}/u.test(match[0]) && before && !/[.!?:]$/.test(before)) return true;
+    if (/^(?:the|core|colloquium|course|class|took|take|taking|fyws)$/i.test(before) || /^(?:course|class|colloquium|core|with|midterms?|finals?|exams?|quiz\w*|workload|grading|homework|hw|syllabus|textbook|prof\w*)\b/i.test(after)) return true;
+    // "is mechanics a hard class", "how's chance": the word the question is about.
+    if (/^(?:is|hows|how's|about)$/i.test(before) && !/^(?:about|of|that|to|it|you|i)$/i.test(after) && COURSE_INTENT.test(question)) return true;
+  }
+  return false;
+}
+
+/** Letters to change, add or drop to turn one word into another. */
+export function editDistance(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) next.push(Math.min(row[j]! + 1, next[j - 1]! + 1, row[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1)));
+    row = next;
+  }
+  return row[b.length]!;
+}
+
 /** Words students shorten. Expanded before matching titles. */
 const ALIASES: Record<string, string> = {
   mvc: 'multivariable calculus',
   calc: 'calculus',
+  math: 'mathematics',
+  maths: 'mathematics',
   multivar: 'multivariable',
   linalg: 'linear algebra',
   orgo: 'organic chemistry',
@@ -530,9 +584,10 @@ function titleEntries(catalog: Catalog): TitleEntry[] {
       if (termOrder(offerings[0]!.term) < recent || currentCode(catalog, code) !== code) continue;
       const title = offerings[0]!.title;
       // "Calculus with Applications to Economics" is named by "Calculus"; "Introduction to Computer Science" by "Computer Science".
-      const head = tokenize(title.split(/\s+(?:with|for|in|through)\s+|:|\s[-–]\s/i)[0]!).filter((word) => !TITLE_FILLER.has(word));
+      // Spelt out as questions are ("Discrete Math" is "discrete mathematics" there too).
+      const head = tokenize(expandAliases(title.split(/\s+(?:with|for|in|through)\s+|:|\s[-–]\s/i)[0]!)).filter((word) => !TITLE_FILLER.has(word));
       if (head.length === 0) continue;
-      entries.push({ code, title: fold(title), head, words: new Set(tokenize(title)), live: offerings.some((offering) => live.has(offering.term)) });
+      entries.push({ code, title: fold(title), head, words: new Set(tokenize(expandAliases(title))), live: offerings.some((offering) => live.has(offering.term)) });
     }
     headIndexes.set(catalog, entries);
   }
@@ -544,30 +599,32 @@ function titleEntries(catalog: Catalog): TitleEntry[] {
  * (abbreviations expanded), more of the full title breaks ties, and a one-word title only counts in a question about
  * courses. "Multivariable calculus" wins over "Calculus"; courses still offered come first. At most three.
  */
-export function matchTitleHeads(catalog: Catalog, question: string): string[] {
+export function matchTitleHeads(catalog: Catalog, question: string, original = question, limit = 3): string[] {
   const words = new Set(tokenize(expandAliases(question)));
   const intent = COURSE_INTENT.test(question);
   const hits = titleEntries(catalog)
-    .filter((entry) => entry.head.every((word) => words.has(word)) && (entry.head.length > 1 || (intent && entry.head[0]!.length >= 4)))
+    .filter((entry) => entry.head.every((word) => words.has(word)) && (entry.head.length > 1 || (intent && entry.head[0]!.length >= 4 && (namedAlone(original, entry.head[0]!) || namedAlone(expandAliases(original), entry.head[0]!)))))
     .map((entry) => ({ entry, score: entry.head.length * 2 + [...entry.words].filter((word) => words.has(word)).length + (entry.live ? 0.5 : 0) }));
   if (hits.length === 0) return [];
   // A longer head that matched means the shorter ones inside it were not what the student meant.
-  const longest = Math.max(...hits.map((hit) => hit.entry.head.length));
+  const within = (hit: (typeof hits)[number]) => hits.some((other) => other.entry.head.length > hit.entry.head.length && hit.entry.head.every((word) => other.entry.head.includes(word)));
   // "Capstone Project" is the full title of a dozen courses: naming it does not say which. ("Calculus with
   // Applications to Economics" and "… to Science" share only a head, and both are worth showing.)
   const titles = new Map<string, number>();
   for (const hit of hits) titles.set(hit.entry.title, (titles.get(hit.entry.title) ?? 0) + 1);
-  let best = hits.filter((hit) => hit.entry.head.length === longest && titles.get(hit.entry.title) === 1);
+  let best = hits.filter((hit) => !within(hit) && titles.get(hit.entry.title) === 1);
   // The two MVC courses share a head, but "MVC for Econ" names the Economics version specifically.
-  if (words.has('economic') && !words.has('science') && !words.has('engineer') && best.some((hit) => hit.entry.title.includes('economics'))) {
-    best = best.filter((hit) => hit.entry.title.includes('economics'));
-  }
-  if ((words.has('science') || words.has('engineer')) && !words.has('economic') && best.some((hit) => hit.entry.title.includes('science'))) {
-    best = best.filter((hit) => hit.entry.title.includes('science'));
-  }
-  if (best.length > 3) return [];
+  const variant = (hit: (typeof hits)[number]) => best.some((other) => other !== hit && other.entry.head.join(' ') === hit.entry.head.join(' '));
+  const pick = (title: string) => {
+    if (best.some((hit) => variant(hit) && hit.entry.title.includes(title))) best = best.filter((hit) => !variant(hit) || hit.entry.title.includes(title));
+  };
+  if (words.has('economic') && !words.has('science') && !words.has('engineer')) pick('economics');
+  if ((words.has('science') || words.has('engineer')) && !words.has('economic')) pick('science');
+  if (best.length > limit) return [];
+  // "Discrete math" is Discrete Mathematics before Fundamentals of Discrete Math: fewer title words left unsaid first.
+  const unsaid = (hit: (typeof hits)[number]) => [...hit.entry.words].filter((word) => !words.has(word) && !TITLE_FILLER.has(word)).length;
   return best
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => unsaid(a) - unsaid(b) || b.score - a.score)
     .map((hit) => hit.entry.code);
 }
 
@@ -673,6 +730,30 @@ export function courseScheduleText(catalog: Catalog, code: string): string {
   }
   if (history.description) lines.push(`Description: ${truncate(history.description, 600)}`);
   return lines.join('\n');
+}
+
+/**
+ * Every class of some subjects in one term, one line each with who teaches it and its seats, for "CSTS for spring
+ * 2027" or "which SOCSC classes still have seats in Fall 2". A half ('71', '72') keeps the classes running in it.
+ */
+export function subjectScheduleText(catalog: Catalog, subjects: string[], term: string, half: '71' | '72' | '' = ''): string {
+  const lines: string[] = [];
+  for (const row of courseRows(catalog, term)) {
+    if (!subjects.includes(row.subject)) continue;
+    const sections = row.sections.filter((section) => section.status !== 'cancelled' && section.component !== 'Recitation' && section.component !== 'Laboratory' && (!half || section.session === (half === '71' ? 'First 7 weeks' : 'Second 7 weeks')));
+    if (!sections.length) continue;
+    const who = [...new Set(sections.flatMap((section) => section.instructors))];
+    const seats = (['open', 'waitlist', 'closed'] as const).map((status) => [status, sections.filter((section) => section.status === status).length] as const).filter(([, count]) => count > 0).map(([status, count]) => `${count} ${status}`);
+    const weeks = [...new Set(sections.map((section) => section.session).filter(Boolean))];
+    lines.push(`- ${row.code} ${row.title}${row.credits ? ` (${row.credits} credits)` : ''}: ${who.length ? who.join(', ') : 'instructor not listed'}${weeks.length ? ` · ${weeks.join(', ')}` : ''} · ${plural(sections.length, 'section')}: ${seats.join(', ')}`);
+  }
+  const which = `${subjects.map((subject) => `${subject}-UH`).join(', ')} classes in ${term}${half ? ` (${half === '71' ? 'first' : 'second'} seven weeks)` : ''}`;
+  if (!lines.length) return `Albert class schedule, read on ${catalog.scraped.slice(0, 10)}: no ${which}.`;
+  return [`Albert class schedule: every ${which}, with seats as Albert showed them on ${catalog.scraped.slice(0, 10)} (open, waitlist or closed per section):`, ...lines].join('\n');
+}
+
+function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
 }
 
 /** Everything a professor teaches or taught, by term, for the answer model. */

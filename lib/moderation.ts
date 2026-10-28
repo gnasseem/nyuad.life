@@ -88,6 +88,10 @@ const SELF_HARM = /\s(?:kill (?:my ?self|myself)|end (?:my|it) (?:life|all)|end 
 
 /** Looking a person up: their WhatsApp, Instagram, room or home. Offices' numbers are fine to ask for. */
 const PERSONAL_FIELD = '(?:whatsapp|instagram|insta|snapchat|snap|room number|dorm room|home address|personal (?:number|phone|email))';
+// "What do you know about the student Omar X": Ask describes courses and campus life, never a fellow student.
+const STUDENT_PROFILE = /\s(?:who is|whos|know about|tell me about|info(?:rmation)? (?:on|about)|thoughts on|what about) (?:the |this |a )?student (?:named |called )?[a-z]+/;
+// "Worst prof", "professors to avoid": the site never ranks a professor as bad, so the question gets a pointer instead.
+const PROFESSOR_SHAMING = /\s(?:(?:worst|bad|terrible|awful|horrible|evil|meanest|harshest) (?:[a-z]+ ){0,2}(?:profs?|professors?|instructors?|teachers?|lecturers?)|(?:profs?|professors?|instructors?|teachers?|lecturers?) (?:to avoid|i should avoid|(?:you |i )?(?:should|would) avoid|not to take))\s/;
 const DOXXING = new RegExp(`\\s(?:${PERSONAL_FIELD} (?:of|for) (?!the |a |an )[a-z]+|(?:what is|whats|find|get|give me|anyone (?:have|has|know)|does anyone (?:have|know)) [a-z]+(?: [a-z]+)?s ${PERSONAL_FIELD}|where does (?!a |an |the |one |everyone |everybody |someone |anyone )[a-z]+(?: [a-z]+)? live|which (?:room|apartment) (?:does|is) [a-z]+ (?:in|live))\\s`);
 
 const PHONE = /(?:\+|\b00)\s?\d{1,3}[\s-]?\(?\d{1,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}|\b05\d[\s-]?\d{3}[\s-]?\d{4}\b/;
@@ -197,6 +201,8 @@ export function screenAsk(question: string): AskScreen | null {
   if (SLURS.test(text) || THREATS.test(text)) return { reason: 'abuse', reply: "I can't help with that. Ask me anything about life at NYUAD." };
   if (MANIPULATION.test(text)) return { reason: 'manipulation', reply: 'I only answer questions about NYUAD, from the group, official pages and the class schedule. What would you like to know?' };
   if (DOXXING.test(text)) return { reason: 'personal_data', reply: "I can't help find someone's number, room or where they live. If you need to reach a student, ask in the group or through their NYU email." };
+  if (STUDENT_PROFILE.test(text)) return { reason: 'personal_data', reply: "I don't look up or describe individual students. Ask me about courses, professors' classes, or anything about life at NYUAD." };
+  if (PROFESSOR_SHAMING.test(text)) return { reason: 'harassment', reply: 'nyuad.life doesn\'t rank professors as the worst or tell anyone to avoid one. Ask what a class is like instead: "which CS classes grade hardest?", "how heavy is MVC?" or "how are the exams in Discrete Math?"' };
   if (academicService(text)) return { reason: 'academic', reply: MESSAGES.academic };
   if (SEXUAL.test(text)) return { reason: 'sexual', reply: "I can't help with that. Ask me anything about life at NYUAD." };
   if (ACQUIRE.test(text) && DRUGS.test(text)) return { reason: 'prohibited', reply: "I can't help with getting drugs or prescription medicine without a prescription. The UAE has very strict drug laws, including for some medicines that are legal elsewhere. If you have a prescription, ask how to bring or fill it here, and the Health Center can help." };

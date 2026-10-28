@@ -703,7 +703,7 @@ export const api = {
   courses: {
     terms: (school?: string) => cached(`terms:${school ?? ''}`, () => request<{ terms: Term[]; current: string; scraped: string; schools?: PlanSchool[] }>(`/api/courses${school ? `?school=${encodeURIComponent(school)}` : ''}`)),
     list: (term: string, school?: string) => cached(`courses:${term}:${school ?? ''}`, () => request<{ term: string; courses: CourseRow[] }>(`/api/courses?term=${encodeURIComponent(term)}${school ? `&school=${encodeURIComponent(school)}` : ''}`)),
-    all: () => cached('courses:all:2', () => request<{ courses: CourseEntry[] }>('/api/courses?all=2')),
+    all: () => cached('courses:all:3', () => request<{ courses: CourseEntry[] }>('/api/courses?all=3')),
     detail: (code: string) => request<CourseDetail>(`/api/courses?code=${encodeURIComponent(code)}`),
     scores: () => cached('scores', () => request<ScoreIndex>('/api/courses?ratings=1')),
     view: (code: string) => request<CourseView>(`/api/courses?code=${encodeURIComponent(code)}&view=1${freshness(code)}`),

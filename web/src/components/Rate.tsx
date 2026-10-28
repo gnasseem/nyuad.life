@@ -11,12 +11,12 @@ import { Modal } from './Modal';
 export const SCALE = ['', 'Very light', 'Light', 'Moderate', 'Heavy', 'Very heavy'];
 export const HARDNESS = ['', 'Easy', 'Manageable', 'Moderate', 'Hard', 'Very hard'];
 
-/** What to rate: a course, or a professor through one of the courses they taught. */
+/** What to rate: a course, or a professor to review through one of the courses they taught. */
 export interface RateTarget {
   code: string;
-  /** Stars already chosen, from the prompt or a page's star row. */
+  /** Stars already chosen for the course, from the prompt or a page's star row. */
   stars?: number;
-  /** Rating a professor first: their name, and the courses of theirs to choose from. */
+  /** Reviewing a professor: their name, and the courses of theirs to choose from. */
   prof?: { name: string; courses: Array<{ code: string; title: string; terms: string[] }> };
 }
 
@@ -46,12 +46,13 @@ export function whenTaken(term: string, terms: Term[]): string {
 
 /**
  * Rating in a few taps: the stars first, then, all optional, who taught it and when (both filled in from the schedule
- * and the student's plan), the professor's own stars, difficulty, workload and one line. Rating a professor works the
- * same way, through the course they took with them.
+ * and the student's plan), the professor's own stars, difficulty, workload and one line. A professor is reviewed, not
+ * rated: no stars for them, but a few lines on what their class was like (grading, exams, workload, how it ran),
+ * through the course the student took with them, whose stars stay optional.
  */
 export function RateSheet({ target, onClose }: { target: RateTarget | null; onClose(): void }) {
   return (
-    <Modal open={Boolean(target)} onClose={onClose} title={target?.prof ? `Rate ${target.prof.name}` : target ? `Rate ${target.code}` : ''} width={480}>
+    <Modal open={Boolean(target)} onClose={onClose} title={target?.prof ? `Review ${target.prof.name}` : target ? `Rate ${target.code}` : ''} width={480}>
       {target && <RateForm key={`${target.code}|${target.prof?.name ?? ''}`} target={target} onClose={onClose} />}
     </Modal>
   );
@@ -65,7 +66,7 @@ function RateForm({ target, onClose }: { target: RateTarget; onClose(): void }) 
   const [mine, setMine] = useState<CourseReview | null | undefined>();
   const [terms, setTerms] = useState<Term[]>([]);
   const [rating, setRating] = useState<number | null>(prof ? null : target.stars ?? null);
-  const [profRating, setProfRating] = useState<number | null>(prof ? target.stars ?? null : null);
+  const [profRating, setProfRating] = useState<number | null>(null);
   const [term, setTerm] = useState('');
   const [professor, setProfessor] = useState(prof?.name ?? '');
   const [difficulty, setDifficulty] = useState<number | null>(null);
@@ -104,9 +105,9 @@ function RateForm({ target, onClose }: { target: RateTarget; onClose(): void }) 
     setTerm(chosen);
     if (!prof) setProfessor(mine?.professor || defaultProfessor(offered.find((offering) => offering.term === chosen)?.professors ?? [], planned.find(([name]) => name === chosen)?.[1][code] ?? []));
     if (mine) {
-      if (!prof && target.stars === undefined && mine.rating) setRating(mine.rating);
-      if (prof && mine.rating) setRating(mine.rating);
-      if (mine.profRating && (!prof || target.stars === undefined)) setProfRating(mine.profRating);
+      if (!prof && target.stars === undefined && mine.rating && mine.courseRated) setRating(mine.rating);
+      if (prof && mine.rating && mine.courseRated) setRating(mine.rating);
+      if (mine.profRating) setProfRating(mine.profRating);
       setDifficulty(mine.difficulty);
       setWorkload(mine.workload);
       setText(mine.text);
@@ -122,10 +123,11 @@ function RateForm({ target, onClose }: { target: RateTarget; onClose(): void }) 
     if (!now.includes(professor)) setProfessor(defaultProfessor(now, planned.find(([name]) => name === next)?.[1][code] ?? []));
   };
 
-  const ready = prof ? Boolean(profRating) : Boolean(rating);
+  // A professor's review is its words; a course rating, its stars.
+  const ready = prof ? text.trim().length >= 12 : Boolean(rating);
   const save = async () => {
     if (!profile) {
-      requestProfile({ title: 'Log in to rate', reason: 'Ratings come from NYU students: log in with your NYU email first. You can still post anonymously.' });
+      requestProfile({ title: prof ? 'Log in to review' : 'Log in to rate', reason: 'Reviews come from NYU students: log in with your NYU email first. You can still post anonymously.' });
       return;
     }
     if (!ready || busy) return;
@@ -134,7 +136,7 @@ function RateForm({ target, onClose }: { target: RateTarget; onClose(): void }) 
     try {
       const result = await api.board.review({ code, rating, profRating: professor ? profRating : null, difficulty, workload, text: text.trim(), term, professor, anonymous });
       const score = prof ? undefined : result.course?.score;
-      toast(score ? `Thanks. ${code} is now ${score.toFixed(1)}.` : 'Thanks. Your rating helps the next student choose.');
+      toast(score ? `Thanks. ${code} is now ${score.toFixed(1)}.` : prof ? 'Thanks. Your review helps the next student choose.' : 'Thanks. Your rating helps the next student choose.');
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save your rating.');
@@ -146,10 +148,19 @@ function RateForm({ target, onClose }: { target: RateTarget; onClose(): void }) 
   const first = prof?.name.split(' ')[0] ?? '';
   return (
     <div className="rate-form">
-      <div className="rate-stars">
-        <span>{prof ? `How was ${first} as a teacher?` : view ? `How was ${view.title}?` : 'How was it?'}</span>
-        <StarPick value={prof ? profRating : rating} onChange={prof ? setProfRating : setRating} size={34} autofocus />
-      </div>
+      {!prof && (
+        <div className="rate-stars">
+          <span>{view ? `How was ${view.title}?` : 'How was it?'}</span>
+          <StarPick value={rating} onChange={setRating} size={34} autofocus />
+        </div>
+      )}
+      {prof && (
+        <label className="review-row review-words">
+          <span>What was {first}’s class like?</span>
+          <textarea className="input" rows={4} maxLength={600} value={text} onChange={(event) => setText(event.target.value)} placeholder="Grading, exams, workload, how the class ran: what the next student should know." data-autofocus />
+          <small>Stick to the class: praise is welcome, and criticism as facts about grading, exams and workload.</small>
+        </label>
+      )}
       {prof && (
         <label className="review-row">
           <span>Course you took with {first}</span>
@@ -185,13 +196,13 @@ function RateForm({ target, onClose }: { target: RateTarget; onClose(): void }) 
       )}
       {prof && (
         <div className="review-row">
-          <span>And the course?</span>
+          <span>Rate the course too?</span>
           <StarPick value={rating} onChange={setRating} size={24} />
         </div>
       )}
       <ScalePick label="Difficulty" words={HARDNESS} value={difficulty} onChange={setDifficulty} />
       <ScalePick label="Workload" words={SCALE} value={workload} onChange={setWorkload} />
-      <input className="input" maxLength={600} value={text} onChange={(event) => setText(event.target.value)} placeholder="One line for the next student (optional)" aria-label="One line about it" />
+      {!prof && <input className="input" maxLength={600} value={text} onChange={(event) => setText(event.target.value)} placeholder="One line for the next student (optional)" aria-label="One line about it" />}
       <label className="check">
         <input type="checkbox" checked={anonymous} onChange={(event) => setAnonymous(event.target.checked)} /> Post anonymously
       </label>
@@ -202,7 +213,7 @@ function RateForm({ target, onClose }: { target: RateTarget; onClose(): void }) 
           Cancel
         </button>
         <button type="button" className="btn primary sm" onClick={() => void save()} disabled={!ready || busy}>
-          {busy ? 'Saving' : mine ? 'Update rating' : 'Post rating'}
+          {busy ? 'Saving' : prof ? (mine?.professor === prof.name ? 'Update review' : 'Post review') : mine ? 'Update rating' : 'Post rating'}
         </button>
       </div>
     </div>

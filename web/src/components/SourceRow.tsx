@@ -13,9 +13,12 @@ export const KIND_LABEL: Record<SourceCard['kind'], string> = { archive: 'Group 
 
 /** One numbered source under an answer: what kind, who, when, the matching passage and where it opens. Its colour is the line it lives on. */
 export function SourceRow({ source, hot, id, onHover }: Props) {
+  const campus = /^[A-Z]+-UH /.test(source.postId);
   const open = () => {
     if (source.kind === 'archive') navigate({ name: 'post', id: source.postId });
-    else if (source.kind === 'schedule') navigate(source.postId.startsWith('instructor:') ? { name: 'courses' } : { name: 'courses', code: source.postId }, source.postId.startsWith('instructor:') ? { search: `q=${encodeURIComponent(source.postId.slice(11))}` } : {});
+    else if (source.kind === 'schedule' && source.postId.startsWith('instructor:')) navigate({ name: 'courses' }, { search: `q=${encodeURIComponent(source.postId.slice(11))}` });
+    // Reviews cover Abu Dhabi courses; a subject's list or a study away class opens in Plan.
+    else if (source.kind === 'schedule') navigate(campus ? { name: 'courses', code: source.postId } : { name: 'plan' }, campus || source.postId.startsWith('subject:') ? {} : { search: `add=${encodeURIComponent(source.postId)}` });
     else if (source.kind === 'review') navigate({ name: 'courses', code: source.postId });
     else if (source.url) window.open(source.url, '_blank', 'noreferrer');
     else navigate({ name: 'announcements' });
@@ -34,7 +37,7 @@ export function SourceRow({ source, hot, id, onHover }: Props) {
       {/* A student's answer is all there is to it: it opens nowhere. */}
       {source.kind !== 'board' && <div className="source-links">
         <button type="button" onClick={open}>
-          {source.kind === 'official' ? 'Open page' : source.kind === 'schedule' || source.kind === 'review' ? 'Open in Courses' : 'Open'}
+          {source.kind === 'official' ? 'Open page' : source.kind === 'review' || (source.kind === 'schedule' && (campus || source.postId.startsWith('instructor:'))) ? 'Open in Reviews' : source.kind === 'schedule' ? 'Open in Plan' : 'Open'}
         </button>
         {source.kind === 'archive' && source.url && (
           <a href={source.url} target="_blank" rel="noreferrer">

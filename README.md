@@ -16,10 +16,10 @@ schedule. Live at **[nyuad.life](https://nyuad.life)** (NYU sign-in required).
 - **Plan.** One box: "calc, intro to CS, any Arts Core, nothing before 10, Fridays off" becomes clash-free weeks to
   swipe through, ranked by how students rate the professors and courses. What it understood shows as removable chips,
   and "move the lab to Tuesday" or "no 9am" changes the plan.
-- **Reviews.** Every course and professor in Albert's schedule, summarised from every forum post and comment about them
-  (read offline into one digest each) and reviews students wrote here. Courses get a score; professors never do. What
-  is said about a professor is what their classes are like (how hard the A is, the workload, the exams), never whether
-  they are good or bad.
+- **Reviews.** Every NYU Abu Dhabi course and professor in Albert's schedule, summarised from every forum post and
+  comment about them (read offline into one digest each) and reviews students wrote here. Courses get stars and a
+  score; professors never do: students review them in words, about what their classes are like (how hard the A is, the
+  workload, the exams), never whether they are good or bad.
 - **Independent.** A student project, not affiliated with or endorsed by NYU Abu Dhabi; the login screen and Settings
   say so.
 - **Events and Market.** Campus events, things for sale, Falcon and Campus Dirham trades, and shared rides.

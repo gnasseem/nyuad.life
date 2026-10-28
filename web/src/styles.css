@@ -1024,6 +1024,9 @@ html[data-line='ask'] .toast::before { background: var(--amber); }
 .star-pick button:active { transform: scale(0.88); }
 .review-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; color: var(--ink-2); font-size: 13.5px; font-weight: 620; }
 .review-row select.input { width: auto; min-width: 150px; height: 38px; }
+.review-words { display: grid; gap: 8px; padding-bottom: 4px; color: var(--ink); font: 700 16px/1.35 var(--sign); }
+.review-words textarea.input { min-height: 104px; font: 400 15px/1.5 var(--text); color: var(--ink); }
+.review-words small { color: var(--ink-3); font: 500 12.5px/1.4 var(--text); }
 .scale-pick { display: flex; align-items: center; gap: 4px; }
 .scale-pick button { width: 34px; height: 34px; border: 1px solid var(--rule); border-radius: 8px; background: var(--plate); color: var(--ink-2); font: 700 13px/1 var(--sign); transition: background 0.15s, color 0.15s, border-color 0.15s; }
 .scale-pick button.on { border-color: transparent; background: var(--line-fill); color: var(--line-on); }

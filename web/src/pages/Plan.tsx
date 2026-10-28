@@ -704,10 +704,17 @@ function ChoiceRow({ choice, color, course, profs }: { choice: Choice; color: nu
   return (
     <div className="choice" style={{ '--c': `var(--plan-${Math.max(0, color) % 6})` } as CSSProperties}>
       <div className="choice-head">
-        <a className="choice-title" href={`/courses/${encodeURIComponent(choice.code)}`} onClick={onLinkClick}>
-          <span className="code">{choice.code}</span>
-          <b>{choice.title}</b>
-        </a>
+        {/^[A-Z]+-UH /.test(choice.code) ? (
+          <a className="choice-title" href={`/courses/${encodeURIComponent(choice.code)}`} onClick={onLinkClick}>
+            <span className="code">{choice.code}</span>
+            <b>{choice.title}</b>
+          </a>
+        ) : (
+          <span className="choice-title">
+            <span className="code">{choice.code}</span>
+            <b>{choice.title}</b>
+          </span>
+        )}
         {course && (
           <span className="choice-rating" title={course.verdict || `Rated by ${course.basis} students in the group`}>
             {course.score.toFixed(1)}

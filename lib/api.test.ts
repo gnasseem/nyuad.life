@@ -50,6 +50,16 @@ const classes = [
     ],
     scraped: '2026-10-02T00:00:00.000Z',
   },
+  {
+    term: 'Fall 2026',
+    code: 'MATH-UA 121',
+    title: 'Calculus I',
+    description: 'Taught in New York.',
+    sections: [
+      { classNumber: '901', section: '001', component: 'Lecture', topic: '', units: '4', status: 'Open', session: '1', startDate: '2026-09-02', endDate: '2026-12-14', grading: '', mode: 'In-Person', location: 'Washington Square', instructors: ['Stone, Pat'], meetings: [{ days: ['Tue'], startTime: '09:30', endTime: '10:45', room: 'Silver 101', startDate: '2026-09-02', endDate: '2026-12-14' }], notes: '' },
+    ],
+    scraped: '2026-10-02T00:00:00.000Z',
+  },
 ];
 
 let fakeGemini: Server;
@@ -493,6 +503,24 @@ describe('api', () => {
     expect(answer.sources).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'review', author: 'Anonymous', postId: 'MATH-UH 1012' })]));
   });
 
+  it('reviews a professor in words, without stars, and keeps Reviews to Abu Dhabi courses', async () => {
+    const post = (body: Record<string, unknown>) => fetch(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
+    const words = { op: 'review', code: 'MATH-UH 1012', rating: null, profRating: null, difficulty: 2, workload: null, text: 'Weekly quizzes, a fair curve and long office hours.', term: 'Fall 2026', professor: 'Rana Dania', anonymous: true };
+    const written = await (await post(words)).json();
+    expect(written.review).toMatchObject({ professor: 'Rana Dania', courseRated: false, profRating: null, text: words.text });
+    expect(written.profs['Rana Dania']).toMatchObject({ basis: 1 });
+    expect((await post({ ...words, professor: '' })).status).toBe(400);
+    expect((await post({ ...words, text: '' })).status).toBe(400);
+    expect((await post({ ...words, code: 'MATH-UA 121', professor: 'Pat Stone' })).status).toBe(400);
+    const list = await getJson(`${apiUrl}/api/courses?all=3`);
+    expect(list.courses.map((course: { code: string }) => course.code)).toEqual(['MATH-UH 1012']);
+    expect((await fetch(`${apiUrl}/api/courses?code=MATH-UA%20121&view=1`)).status).toBe(404);
+    expect((await fetch(`${apiUrl}/api/courses?prof=Pat%20Stone`)).status).toBe(404);
+    expect((await fetch(`${apiUrl}/api/courses?code=MATH-UA%20121`)).status).toBe(200);
+    // Rating the course as well puts the review back among the course's ratings.
+    expect((await (await post({ ...words, rating: 4 })).json()).review).toMatchObject({ courseRated: true, rating: 4 });
+  });
+
   it('refuses posts from another site, and from the asker to their own question', async () => {
     const crossSite = await fetch(`${apiUrl}/api/board`, { method: 'POST', headers: { ...headers, origin: 'https://evil.example' }, body: JSON.stringify({ op: 'ask', key: MEMBER.key, text: 'Which dining hall is open late on Fridays?' }) });
     expect(crossSite.status).toBe(403);
@@ -528,7 +556,7 @@ describe('api', () => {
     expect(abuDhabiTerms.terms).toEqual([expect.objectContaining({ name: 'Fall 2026', courses: 1 })]);
     expect((await fetch(`${apiUrl}/api/courses?school=NYU%20Paris%20(Global)`)).status).toBe(400);
     const list = await getJson(`${apiUrl}/api/courses?term=Fall%202026`);
-    expect(list.courses.map((row: { code: string }) => row.code)).toEqual(['MATH-UH 1012']);
+    expect(list.courses.map((row: { code: string }) => row.code)).toEqual(['MATH-UA 121', 'MATH-UH 1012']);
     const detail = await getJson(`${apiUrl}/api/courses?code=MATH-UH%201012`);
     expect(detail).toMatchObject({ code: 'MATH-UH 1012', title: 'Calculus', credits: '4' });
     expect(detail).toMatchObject({ currentTerm: 'Fall 2026', instructors: expect.any(Array) });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { abuDhabiDate, allCourses, buildCatalog, courseRows, courseScheduleText, currentTerm, instructorScheduleText, liveTerms, matchSchedule, seatStatus, termOrder, type Offering } from './courses.ts';
+import { abuDhabiDate, allCourses, buildCatalog, courseRows, courseScheduleText, currentTerm, instructorScheduleText, liveTerms, matchSchedule, seatStatus, subjectScheduleText, termOrder, type Offering } from './courses.ts';
 import { schoolRows } from './plan-school.ts';
 import { planSchools } from './plan-schools.ts';
 
@@ -166,6 +166,24 @@ describe('matching a question', () => {
     expect(matchSchedule(mvc, 'Nizar MVC').courses).toEqual(['MATH-UH 1021']);
     expect(matchSchedule(mvc, 'Nizar MVC').instructors).toEqual(['Nizar Demni']);
   });
+  it('finds every course a question lists, and one-word titles only when meant as a course', () => {
+    const list = buildCatalog([
+      offering('Fall 2026', 'CS-UH 1002', 'Discrete Mathematics', ['Mahmoud, Reem']),
+      offering('Fall 2026', 'CS-UH 1050', 'Data Structures', ['Young, Ana']),
+      offering('Fall 2026', 'MATH-UH 1020', 'Multivariable Calculus with Applications to Science and Engineering', ['Rossi, Marco']),
+      offering('Fall 2026', 'CSTS-UH 1006', 'Thinking', ['Fougnie, Daryl']),
+      offering('Fall 2026', 'CSTS-UH 1007', 'Chance', ['Le Jan, Yves']),
+      offering('Fall 2026', 'WRIT-UH 1125', 'FYWS: Graphic Violence', ['Anderson, Samuel Mark']),
+      offering('Fall 2026', 'POLSC-UH 2211', 'Data Analysis', ['Kaufman, Aaron']),
+    ], new Date('2026-10-12'));
+    expect(matchSchedule(list, 'taking discrete math, data structures and multivariable calculus together').courses).toEqual(['CS-UH 1050', 'CS-UH 1002', 'MATH-UH 1020']);
+    expect(matchSchedule(list, "i'm thinking about taking the FYWS: graphic violence").courses).toEqual(['WRIT-UH 1125']);
+    expect(matchSchedule(list, 'Thinking about taking Chance next term').courses).toEqual(['CSTS-UH 1007']);
+    // A first name misspelt, a surname of two words, a surname off by a letter once the course is named.
+    expect(matchSchedule(list, 'what about eves le jan').instructors).toEqual(['Yves Le Jan']);
+    expect(matchSchedule(list, 'is data analysis with Eric Kauffman difficult').instructors).toEqual(['Aaron Kaufman']);
+    expect(matchSchedule(list, 'REEM for discrete math')).toEqual({ courses: ['CS-UH 1002'], instructors: ['Reem Mahmoud'] });
+  });
   it('shows current instructors ahead of teachers from a future term', () => {
     const mvc = buildCatalog([
       offering('January 2027', 'MATH-UH 1021', 'Multivariable Calculus with Applications to Economics', ['Mustafa, Rai'], 'Open', ['2027-01-05', '2027-01-15']),
@@ -176,6 +194,10 @@ describe('matching a question', () => {
 });
 
 describe('schedule text for the answer model', () => {
+  it("lists a subject's classes in a term with their seats", () => {
+    expect(subjectScheduleText(catalog, ['CS'], 'Fall 2026')).toContain('- CS-UH 1001 Introduction to Computer Science (4 credits): Thomas Pötsch · 1 section: 1 open');
+    expect(subjectScheduleText(catalog, ['CS'], 'Fall 2026', '72')).toContain('no CS-UH classes in Fall 2026 (second seven weeks)');
+  });
   it('gives live terms in full and earlier terms as who taught them', () => {
     const text = courseScheduleText(catalog, 'CS-UH 1001');
     expect(text).toContain('Albert class schedule: CS-UH 1001 Introduction to Computer Science (4 credits)');

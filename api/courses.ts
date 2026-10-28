@@ -1,7 +1,8 @@
 /**
  * Courses from Albert's schedule, and how students rate them and their professors: the review digests that
  * scripts/reviews.ts builds offline from the Room of Requirement archive and the reviews written here. Nothing here
- * calls a model; a course or professor nobody has written about simply has no rating yet.
+ * calls a model; a course or professor nobody has written about simply has no rating yet. Reviews cover NYU Abu Dhabi
+ * courses (-UH) and the professors who teach them; the planner still reads every school's schedule.
  *
  *   GET /api/courses                               the terms, and which one is current
  *   GET /api/courses?term=Fall%202026               every course offered that term, with sections (the planner)
@@ -14,7 +15,7 @@
  */
 import { courseRating, level, profRating, type Digest } from '../lib/board.ts';
 import { boardStore } from '../lib/board-store.ts';
-import { allCourses, courseHistory, courseRows, currentCode, displayName, loadCatalog, termOrder, type Catalog } from '../lib/courses.ts';
+import { allCourses, courseHistory, courseRows, currentCode, displayName, isCampusCode, loadCatalog, termOrder, type Catalog } from '../lib/courses.ts';
 import { courseKey, profKey } from '../lib/entities.ts';
 import { ApiError, queryString, rateLimit, route, sendJson } from '../lib/http.ts';
 import { normalizeCode } from '../lib/html.ts';
@@ -51,6 +52,7 @@ export default route(['GET'], async (req, res) => {
       return;
     }
     if (queryString(req, 'view')) {
+      if (!isCampusCode(normalized)) throw new ApiError(404, 'Reviews cover NYU Abu Dhabi courses only.', 'not_found');
       sendJson(res, 200, await courseView(official, catalog, normalized), 60);
       return;
     }
@@ -58,7 +60,7 @@ export default route(['GET'], async (req, res) => {
     return;
   }
   if (queryString(req, 'all')) {
-    sendJson(res, 200, { courses: allCourses(catalog) }, 3600);
+    sendJson(res, 200, { courses: allCourses(catalog).filter((course) => isCampusCode(course.code)) }, 3600);
     return;
   }
   if (term) {
@@ -143,12 +145,13 @@ async function courseView(official: OfficialCorpus | null, catalog: Catalog, cod
 
 const profIndexes = new WeakMap<Catalog, Map<string, { name: string; courses: Map<string, { title: string; terms: string[] }> }>>();
 
-/** Everyone who taught a lecture or seminar, by profKey, with what they taught and when (newest first). */
+/** Everyone who taught an NYU Abu Dhabi lecture or seminar, by profKey, with what they taught and when (newest first). */
 function profIndex(catalog: Catalog) {
   let index = profIndexes.get(catalog);
   if (index) return index;
   index = new Map();
   for (const [code, offerings] of catalog.byCode) {
+    if (!isCampusCode(code)) continue;
     const current = currentCode(catalog, code);
     for (const offering of offerings) {
       for (const section of offering.sections) {
