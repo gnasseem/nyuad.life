@@ -506,7 +506,7 @@ describe('api', () => {
   it('reviews a professor in words, without stars, and keeps Reviews to Abu Dhabi courses', async () => {
     const post = (body: Record<string, unknown>) => fetch(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(body) });
     const words = { op: 'review', code: 'MATH-UH 1012', rating: null, profRating: null, difficulty: 2, workload: null, text: 'Weekly quizzes, a fair curve and long office hours.', term: 'Fall 2026', professor: 'Rana Dania', anonymous: true };
-    const written = await (await post(words)).json();
+    const written = await getJson(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify(words) });
     expect(written.review).toMatchObject({ professor: 'Rana Dania', courseRated: false, profRating: null, text: words.text });
     expect(written.profs['Rana Dania']).toMatchObject({ basis: 1 });
     expect((await post({ ...words, professor: '' })).status).toBe(400);
@@ -518,7 +518,7 @@ describe('api', () => {
     expect((await fetch(`${apiUrl}/api/courses?prof=Pat%20Stone`)).status).toBe(404);
     expect((await fetch(`${apiUrl}/api/courses?code=MATH-UA%20121`)).status).toBe(200);
     // Rating the course as well puts the review back among the course's ratings.
-    expect((await (await post({ ...words, rating: 4 })).json()).review).toMatchObject({ courseRated: true, rating: 4 });
+    expect((await getJson(`${apiUrl}/api/board`, { method: 'POST', headers, body: JSON.stringify({ ...words, rating: 4 }) })).review).toMatchObject({ courseRated: true, rating: 4 });
   });
 
   it('refuses posts from another site, and from the asker to their own question', async () => {

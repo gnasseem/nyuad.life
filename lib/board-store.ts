@@ -97,8 +97,9 @@ export interface BoardStore {
   getDigests(entities: string[]): Promise<Digest[]>;
   /** Every digest without what it read, for the course and professor lists. */
   listDigestScores(): Promise<Array<Pick<Digest, 'entity' | 'kind' | 'name' | 'positive' | 'negative' | 'neutral' | 'score' | 'difficulty' | 'workload' | 'verdict'>>>;
-  /** Every digest in full, for scripts/reviews.ts. */
-  listDigests(): Promise<Digest[]>;
+  /** Every digest in full, for scripts/reviews.ts; brief leaves out what each one read (its threads, reviews and
+   * sources, two thirds of the bytes), which Ask does not use. */
+  listDigests(brief?: boolean): Promise<Digest[]>;
   putDigest(digest: Digest): Promise<void>;
   /** Thread id -> the post and comment ids of it already read. */
   listReviewThreads(): Promise<Map<string, string[]>>;
@@ -884,8 +885,9 @@ export class SupabaseBoardStore implements BoardStore {
       return { entity: digest.entity, kind: digest.kind, name: digest.name, positive: digest.positive, negative: digest.negative, neutral: digest.neutral, score: digest.score, difficulty: digest.difficulty, workload: digest.workload, verdict: digest.verdict };
     });
   }
-  async listDigests(): Promise<Digest[]> {
-    return (await this.selectAll('review_digests', `select=${DIGEST_COLUMNS},post_ids,review_keys&order=entity.asc`)).map(digestFrom);
+  async listDigests(brief = false): Promise<Digest[]> {
+    const columns = brief ? DIGEST_COLUMNS.replace(',sources', '') : `${DIGEST_COLUMNS},post_ids,review_keys`;
+    return (await this.selectAll('review_digests', `select=${columns}&order=entity.asc`)).map(digestFrom);
   }
   async putDigest(digest: Digest): Promise<void> {
     await this.write('POST', 'review_digests?on_conflict=entity', {

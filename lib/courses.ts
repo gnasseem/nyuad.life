@@ -433,7 +433,9 @@ export function matchSchedule(catalog: Catalog, question: string, limits = { cou
     const bySurname = teaching && surname.length >= 4 && !COMMON_WORDS.has(surname) && folded.includes(` ${surname} `);
     // A first name misspelt beside the right surname ("Eves Le Jan").
     const misspelt = parts.length > 1 && parts[0]!.length >= 4 && said.some((word, i) => word.length >= 3 && editDistance(word, parts[0]!) <= 1 && ` ${said.slice(i + 1).join(' ')} `.startsWith(` ${parts.slice(1).join(' ')} `));
-    if (full || bySurname || misspelt || (long.length >= 5 && folded.includes(` ${long} `))) instructors.push(name);
+    // "Rashmi Devi" for Rashmi Devi Sawhney: the first two of three names.
+    const leading = parts.length > 2 && parts[0]!.length >= 4 && parts[1]!.length >= 4 && folded.includes(` ${parts[0]} ${parts[1]} `);
+    if (full || bySurname || misspelt || leading || (long.length >= 5 && folded.includes(` ${long} `))) instructors.push(name);
   }
   // A short title initialism is usable when a named teacher makes it unambiguous; bare initials may name a city.
   if (!courses.length && teaching) {

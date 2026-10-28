@@ -292,7 +292,7 @@ function liveSnapshot(store: BoardStore): Promise<LiveSnapshot> {
 
 /** Every review digest by entity key. */
 function allDigests(store: BoardStore): Promise<Map<string, Digest>> {
-  return memo(store, 'digests', DIGESTS_TTL_MS, async () => new Map((await store.listDigests()).map((digest) => [digest.entity, digest])));
+  return memo(store, 'digests', DIGESTS_TTL_MS, async () => new Map((await store.listDigests(true)).map((digest) => [digest.entity, digest])));
 }
 
 /** Every review written on this site, by course code, newest first. */
@@ -547,7 +547,7 @@ function closeName(question: string, name: string): boolean {
   const parts = fold(name).split(' ');
   const folded = ` ${fold(question)} `;
   const surname = parts.at(-1)!;
-  return (parts.length > 2 && folded.includes(` ${parts.slice(1).join(' ')} `)) || (surname.length >= 5 && folded.trim().split(' ').some((word) => word.length >= 5 && editDistance(word, surname) === 1));
+  return (parts.length > 2 && (folded.includes(` ${parts.slice(1).join(' ')} `) || folded.includes(` ${parts.slice(0, 2).join(' ')} `))) || (surname.length >= 5 && folded.trim().split(' ').some((word) => word.length >= 5 && editDistance(word, surname) === 1));
 }
 
 function scheduleSources(catalog: Catalog | null, question: string, rewrite: string): { sources: LiveSource[]; codes: string[]; named: string[]; instructors: string[] } {
@@ -592,6 +592,8 @@ function questionPeople(archive: Archive, catalog: Catalog | null, instructors: 
   });
   if (named.length) return named.map((name) => person(name, archive, catalog));
   const name = personName(question) ?? personName(rewrite);
+  // "How is global ethics and AI and philosophy": words of a course title are not a person.
+  if (name && catalog && [...catalog.byCode.values()].some((offerings) => ` ${fold(offerings[0]!.title)} `.includes(` ${fold(name)} `))) return [];
   return name ? [person(name, archive, catalog)] : [];
 }
 
@@ -1717,9 +1719,10 @@ export async function gatherSources(
   const ranking = RANKING.test(question) && MANY.test(question) && (!entities.length || (!people.length && !/\b[A-Z]{2,7}[- ]?(?:UH[- ]?)?\d{4}\b/i.test(question) && rankingSubjects(question, context.catalog!).length > 0));
   if (ranking) entities = [];
   const listing = !ranking && !schedule.named.length ? subjectListing(context.catalog, `${originalQuestion}\n${question}`) : null;
+  // A fresh instance reads every digest first (about a second); they are what students said, so they are waited for.
   const digestsPromise: Promise<LiveSource[]> = !experience ? Promise.resolve([])
-    : entities.length ? timed(t, 'digests', within(digestSources(context.board, context.catalog, entities), 2_000)).catch(() => [])
-    : ranking ? timed(t, 'digests', within(rankingSource(context.board, context.catalog, question), 2_500)).then((source) => (source ? [source] : [])).catch(() => []) : Promise.resolve([]);
+    : entities.length ? timed(t, 'digests', within(digestSources(context.board, context.catalog, entities), 4_000)).catch(() => [])
+    : ranking ? timed(t, 'digests', within(rankingSource(context.board, context.catalog, question), 4_000)).then((source) => (source ? [source] : [])).catch(() => []) : Promise.resolve([]);
   const named = (text: string) => people.length === 0 || people.some((who) => mentions(text, who));
   const queries = searchQueries(originalQuestion, searchQuery);
   const campusCard = queries.includes('card services');
