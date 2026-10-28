@@ -1,0 +1,152 @@
+/* The closed-for-works page: the four lines run into Central and stop at a works barrier. Same enamel palette and
+   type as the app (web/src/styles.css). Plain CSS because the CSP allows no inline styles or scripts. */
+:root {
+  color-scheme: light;
+  --text: 'Mona Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --sign: 'Hubot Sans', 'Mona Sans', ui-sans-serif, system-ui, sans-serif;
+  --ar: 'Noto Kufi Arabic', 'Geeza Pro', 'Segoe UI', sans-serif;
+  --ground: #eef1f6;
+  --plate: #ffffff;
+  --rule: #dce1ec;
+  --rule-2: #c4cbdc;
+  --ink: #0b1230;
+  --ink-2: #434d75;
+  --ink-3: #5f688e;
+  --scarlet: #e0281e;
+  --cobalt: #1e5bff;
+  --amber: #f5b400;
+  --amber-fill: #ffc21a;
+  --green: #0f9a4c;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(1100px 600px at 50% -10%, rgba(30, 91, 255, 0.08), transparent 60%),
+    radial-gradient(700px 420px at 85% 110%, rgba(255, 194, 26, 0.12), transparent 60%),
+    var(--ground);
+  color: var(--ink);
+  font: 400 16px/1.55 var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.works {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 16px calc(32px + env(safe-area-inset-bottom));
+  text-align: center;
+}
+
+.map { width: min(640px, 100%); height: auto; overflow: visible; margin-bottom: 28px; animation: rise 0.9s var(--ease) both; }
+
+.lines use { fill: none; stroke-width: 9; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 700; stroke-dashoffset: 700; animation: draw 1.6s var(--ease) forwards; }
+.lines .green { stroke: var(--green); animation-delay: 0.1s; }
+.lines .amber { stroke: var(--amber); animation-delay: 0.2s; }
+.lines .scarlet { stroke: var(--scarlet); animation-delay: 0.3s; }
+.lines .cobalt { stroke: var(--cobalt); animation-delay: 0.4s; }
+
+.closed path { fill: none; stroke: var(--rule-2); stroke-width: 6; stroke-linecap: round; stroke-dasharray: 2 14; opacity: 0; animation: fade 0.8s ease 1.4s forwards; }
+
+.stops circle { fill: var(--plate); stroke: var(--ink); stroke-width: 3; opacity: 0; animation: fade 0.5s ease 1.2s forwards; }
+
+.trains { opacity: 0; animation: fade 0.6s ease 1.6s forwards; }
+.train { stroke: var(--plate); stroke-width: 2.5; }
+.train.green { fill: var(--green); }
+.train.amber { fill: var(--amber-fill); }
+.train.scarlet { fill: var(--scarlet); }
+.train.cobalt { fill: var(--cobalt); }
+
+.central .plate { fill: var(--ink); }
+.central .halo { fill: none; stroke: var(--ink); stroke-width: 2; opacity: 0.35; transform-box: fill-box; transform-origin: center; animation: pulse 2.8s ease-out infinite; }
+.central .mark rect { fill: none; stroke: #f0f2fa; stroke-width: 2.6; stroke-linejoin: round; }
+.central .mark { transform-box: fill-box; transform-origin: center; animation: turn 14s linear infinite; }
+.central .hub { fill: var(--amber-fill); }
+
+.barrier .post { fill: none; stroke: var(--ink); stroke-width: 2.5; }
+.barrier { transform-box: fill-box; transform-origin: 50% 100%; animation: drop 0.8s var(--ease) 0.9s both; }
+.barrier .lamp { fill: var(--amber-fill); stroke: var(--ink); stroke-width: 2.5; animation: blink 1.2s steps(1) infinite; }
+
+.sign {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 18px;
+  padding: 8px 14px 8px 12px;
+  border-radius: 9px;
+  background: var(--ink);
+  color: #fff;
+  font: 700 12.5px/1 var(--sign);
+  font-stretch: 110%;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), 0 10px 24px -14px rgba(11, 18, 48, 0.6);
+  animation: rise 0.8s var(--ease) 0.15s both;
+}
+.sign-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--amber-fill); animation: blink 1.2s steps(1) infinite; }
+
+h1 {
+  max-width: 18ch;
+  margin: 0 0 12px;
+  font: 800 clamp(30px, 6vw, 46px)/1.05 var(--sign);
+  font-stretch: 92%;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  animation: rise 0.8s var(--ease) 0.25s both;
+}
+.lede {
+  max-width: 44ch;
+  margin: 0 0 28px;
+  color: var(--ink-2);
+  font-size: 17px;
+  text-wrap: pretty;
+  animation: rise 0.8s var(--ease) 0.35s both;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 4px 28px;
+  padding: 14px 20px;
+  border-radius: 14px;
+  background: #0b1230;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(11, 18, 48, 0.07), 0 24px 52px -20px rgba(11, 18, 48, 0.36);
+  text-align: start;
+  animation: rise 0.8s var(--ease) 0.45s both;
+}
+.board-label { color: #9aa3c7; font: 650 11px/1 var(--sign); letter-spacing: 0.14em; text-transform: uppercase; }
+.board-value { grid-row: 2; display: inline-flex; align-items: baseline; gap: 2px; color: var(--amber-fill); font: 750 26px/1.1 var(--sign); font-stretch: 85%; font-variant-numeric: tabular-nums; }
+.board-ar { grid-row: 1 / 3; grid-column: 2; padding-left: 22px; border-left: 1px solid rgba(255, 255, 255, 0.14); color: #f0f2fa; font: 600 19px/1.4 var(--ar); }
+.dots { display: inline-flex; gap: 3px; margin-inline-start: 3px; }
+.dots i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: dot 1.4s ease-in-out infinite; }
+.dots i:nth-child(2) { animation-delay: 0.18s; }
+.dots i:nth-child(3) { animation-delay: 0.36s; }
+
+.foot { max-width: 48ch; margin: 32px 0 0; color: var(--ink-3); font-size: 13px; animation: rise 0.8s var(--ease) 0.55s both; }
+
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes fade { to { opacity: 1; } }
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } }
+@keyframes drop { from { opacity: 0; transform: translateY(-18px) scaleY(0.6); } }
+@keyframes pulse { 0% { transform: scale(1); opacity: 0.4; } 80%, 100% { transform: scale(1.55); opacity: 0; } }
+@keyframes turn { to { transform: rotate(360deg); } }
+@keyframes blink { 50% { opacity: 0.25; } }
+@keyframes dot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.45; } 30% { transform: translateY(-5px); opacity: 1; } }
+
+@media (max-width: 480px) {
+  .board { grid-template-columns: 1fr; text-align: center; justify-items: center; }
+  .board-ar { grid-row: auto; grid-column: auto; padding: 8px 0 0; border: 0; border-top: 1px solid rgba(255, 255, 255, 0.14); width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; animation-delay: 0s !important; }
+  .trains { display: none; }
+}

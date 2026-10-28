@@ -2,11 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
-    <title>nyuad.life</title>
-    <meta name="description" content="An independent student project, not affiliated with or endorsed by NYU Abu Dhabi. Answers for students, with sources: the Room of Requirement archive, public university pages and other students." />
-    <meta property="og:title" content="nyuad.life" />
-    <meta property="og:description" content="An independent student project, not affiliated with or endorsed by NYU Abu Dhabi." />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>nyuad.life · back soon</title>
+    <meta name="description" content="nyuad.life is closed for maintenance and will be back soon. An independent student project, not affiliated with or endorsed by NYU Abu Dhabi." />
+    <meta property="og:title" content="nyuad.life · back soon" />
+    <meta property="og:description" content="Closed for maintenance. We'll be back soon." />
     <meta property="og:type" content="website" />
     <meta name="theme-color" content="#eef1f6" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -14,11 +14,85 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Hubot+Sans:wdth,wght@75..125,500..900&family=Mona+Sans:wdth,wght@75..125,400..800&family=Noto+Kufi+Arabic:wght@500..700&display=swap" rel="stylesheet" />
-    <!-- Set light mode before the first paint. -->
-    <script src="/theme.js"></script>
+    <!-- The app is closed while it is being worked on. Every page path rewrites here (vercel.json); the API stays up. -->
+    <link rel="stylesheet" href="/maintenance.css" />
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <main class="works">
+      <svg class="map" viewBox="0 0 640 220" role="img" aria-label="Four lines meet at Central and stop at a works barrier">
+        <defs>
+          <pattern id="hazard" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <rect width="14" height="14" fill="#ffc21a" />
+            <rect width="7" height="14" fill="#0b1230" />
+          </pattern>
+          <path id="l-green" d="M0 46 H150 C230 46 240 110 320 110 C400 110 410 46 490 46" />
+          <path id="l-amber" d="M0 88 H150 C230 88 240 110 320 110 C400 110 410 88 490 88" />
+          <path id="l-scarlet" d="M0 132 H150 C230 132 240 110 320 110 C400 110 410 132 490 132" />
+          <path id="l-cobalt" d="M0 174 H150 C230 174 240 110 320 110 C400 110 410 174 490 174" />
+        </defs>
+
+        <g class="closed">
+          <path d="M530 46 H640 M530 88 H640 M530 132 H640 M530 174 H640" />
+        </g>
+        <g class="lines">
+          <use href="#l-green" class="green" />
+          <use href="#l-amber" class="amber" />
+          <use href="#l-scarlet" class="scarlet" />
+          <use href="#l-cobalt" class="cobalt" />
+        </g>
+
+        <g class="stops">
+          <circle cx="90" cy="46" r="6" /><circle cx="90" cy="88" r="6" /><circle cx="90" cy="132" r="6" /><circle cx="90" cy="174" r="6" />
+          <circle cx="449" cy="53" r="6" /><circle cx="449" cy="90" r="6" /><circle cx="449" cy="130" r="6" /><circle cx="449" cy="167" r="6" />
+        </g>
+
+        <g class="trains">
+          <rect class="train green" x="-11" y="-6" width="22" height="12" rx="6">
+            <animateMotion dur="7s" begin="0s" repeatCount="indefinite" rotate="auto" calcMode="spline" keyPoints="0;1;1" keyTimes="0;0.72;1" keySplines="0.45 0 0.2 1;0 0 1 1"><mpath href="#l-green" /></animateMotion>
+            <animate attributeName="opacity" dur="7s" begin="0s" repeatCount="indefinite" values="0;1;1;1;0" keyTimes="0;0.06;0.72;0.92;1" />
+          </rect>
+          <rect class="train amber" x="-11" y="-6" width="22" height="12" rx="6">
+            <animateMotion dur="7s" begin="-1.75s" repeatCount="indefinite" rotate="auto" calcMode="spline" keyPoints="0;1;1" keyTimes="0;0.72;1" keySplines="0.45 0 0.2 1;0 0 1 1"><mpath href="#l-amber" /></animateMotion>
+            <animate attributeName="opacity" dur="7s" begin="-1.75s" repeatCount="indefinite" values="0;1;1;1;0" keyTimes="0;0.06;0.72;0.92;1" />
+          </rect>
+          <rect class="train scarlet" x="-11" y="-6" width="22" height="12" rx="6">
+            <animateMotion dur="7s" begin="-3.5s" repeatCount="indefinite" rotate="auto" calcMode="spline" keyPoints="0;1;1" keyTimes="0;0.72;1" keySplines="0.45 0 0.2 1;0 0 1 1"><mpath href="#l-scarlet" /></animateMotion>
+            <animate attributeName="opacity" dur="7s" begin="-3.5s" repeatCount="indefinite" values="0;1;1;1;0" keyTimes="0;0.06;0.72;0.92;1" />
+          </rect>
+          <rect class="train cobalt" x="-11" y="-6" width="22" height="12" rx="6">
+            <animateMotion dur="7s" begin="-5.25s" repeatCount="indefinite" rotate="auto" calcMode="spline" keyPoints="0;1;1" keyTimes="0;0.72;1" keySplines="0.45 0 0.2 1;0 0 1 1"><mpath href="#l-cobalt" /></animateMotion>
+            <animate attributeName="opacity" dur="7s" begin="-5.25s" repeatCount="indefinite" values="0;1;1;1;0" keyTimes="0;0.06;0.72;0.92;1" />
+          </rect>
+        </g>
+
+        <g class="central" transform="translate(320 110)">
+          <rect class="halo" x="-30" y="-30" width="60" height="60" rx="16" />
+          <rect class="plate" x="-26" y="-26" width="52" height="52" rx="13" />
+          <g class="mark">
+            <rect x="-12" y="-12" width="24" height="24" rx="2.5" />
+            <rect x="-12" y="-12" width="24" height="24" rx="2.5" transform="rotate(45)" />
+          </g>
+          <circle class="hub" r="4.2" />
+        </g>
+
+        <g class="barrier">
+          <rect x="500" y="24" width="20" height="172" rx="5" fill="url(#hazard)" />
+          <rect class="post" x="500" y="24" width="20" height="172" rx="5" />
+          <circle class="lamp" cx="510" cy="14" r="6" />
+        </g>
+      </svg>
+
+      <p class="sign"><span class="sign-dot"></span>Planned works</p>
+      <h1>We're doing some work on the line.</h1>
+      <p class="lede">nyuad.life is closed for maintenance for a little while. Service resumes soon, thanks for bearing with us.</p>
+
+      <div class="board" aria-label="Next service: soon">
+        <span class="board-label">Next service</span>
+        <span class="board-value">Soon<span class="dots"><i></i><i></i><i></i></span></span>
+        <span class="board-ar" lang="ar" dir="rtl">نعود قريبًا</span>
+      </div>
+
+      <p class="foot">Made by a student, not affiliated with or endorsed by NYU Abu Dhabi.</p>
+    </main>
   </body>
 </html>
